@@ -515,7 +515,7 @@ ifeq ($(WINDOWS_BUILD),1) # fixes compilation in MXE on Linux and WSL
   OBJDUMP := $(CROSS)objdump
 else ifeq ($(OSX_BUILD),1)
   ifeq ($(TARGET_IOS),1)
-    CPP := cpp -P
+    CPP := clang -E -P -x c
   else
     CPP := cpp-12 -P
   endif
