@@ -33,6 +33,7 @@
 - Run `41131076590` got past those assembler options but showed Clang treats `-MD` as a dependency-generation switch without a positional output path; the following `.d` path was mistaken for an input file. iOS assembly rules now use `-x assembler-with-cpp -MMD -MP -MF` and explicitly name the object target. A local sample sound sequence assembles and produces its dependency file with that command.
 - Run `41131410186` then exposed that `assembler-with-cpp` runs C preprocessing over the GAS `\parameter` macro syntax, so sound macro arguments were erased before assembly. The sequence source uses assembler directives rather than C preprocessor directives; iOS now invokes clang as plain `assembler`, retaining `.ifdef`, `.include`, and GAS parameter expansion. A sample sequence assembles locally with the resulting command. The source `.d` dependency file is not emitted for iOS assembly objects; this only affects incremental rebuild tracking, not clean CI builds.
 - Run `41131741491` confirmed Apple's Darwin assembler is still incompatible with the project's GAS `.section .rodata` and named macro syntax. Since these sound sequence objects are data-only and only `.rodata` is consumed, the iOS build now assembles them as temporary x86_64 Linux ELF objects with clang and extracts `.rodata` using GNU `gobjcopy`. This ELF is an intermediate asset-generation format and is never linked into the arm64 app. The workflow installs Homebrew binutils for `gobjcopy`.
+- Run `41132238484` reached the full app build after successfully validating the private asset bundle and pinned SDL2 library. It failed because the temporary ELF assembly recipe omitted clang's `-c` flag, causing an unwanted link attempt on macOS. Both iOS `.s` rules now explicitly compile only; Linux checks assert this wiring, and the sample conversion still passes. The Linux job and SDL2 build passed in this run.
 
 ## Validation
 
@@ -57,7 +58,7 @@
 ## Outstanding work
 
 - Review Metal API runtime semantics: validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime on simulator/device.
-- Local Linux checks and a sound-sequence ELF-to-`.m64` proof pass with the current workaround. The latest Makefile, workflow, test, and build-document changes remain uncommitted; next commit and push them, recreate the short-lived private asset release, and rerun the iOS build. Continue from any game link/package errors.
+- Local Linux checks and a sound-sequence ELF-to-`.m64` proof pass with the current workaround. The `-c` correction and wiring assertion are pending commit/push; then recreate the short-lived private asset release and rerun the iOS build. Continue from any compile, link, or packaging errors.
 - SDL2 headers/static libraries are built by the new pinned helper but remain unvalidated until macOS CI runs. The current Linux host has no `xcodebuild`.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
