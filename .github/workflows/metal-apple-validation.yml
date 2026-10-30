@@ -1,0 +1,50 @@
+name: Metal Apple SDK validation
+
+on:
+  push:
+    branches: [ios, "metal-validation/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 headers for syntax checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev pkg-config
+      - name: Run Linux validation suite
+        run: tests/run_linux_checks.sh
+
+  ios-metal-compile:
+    runs-on: macos-15
+    needs: linux-checks
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run portable Linux-available checks
+        run: |
+          tests/run_metal_shader_codegen_test.sh
+          tests/run_metal_state_test.sh
+          tests/run_scene_capture_test.sh
+          tests/run_scene_bvh_test.sh
+          tests/check_metal_project_wiring.sh
+      - name: Compile iOS Metal backend and generated MSL
+        env:
+          METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/metal-apple-validation
+        run: |
+          mkdir -p "$METAL_VALIDATION_OUTPUT_DIR"
+          ios/validate-metal-apple.sh 2>&1 | tee "$METAL_VALIDATION_OUTPUT_DIR/validation.log"
+      - name: Save Apple SDK logs and binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metal-apple-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/metal-apple-validation
+          if-no-files-found: warn
+          retention-days: 30
