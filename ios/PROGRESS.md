@@ -15,6 +15,7 @@
 - `tests/run_metal_shader_codegen_test.sh`: passing on Linux (portable C code only; this does not compile MSL or the Objective-C Metal backend).
 - `tests/run_scene_capture_test.sh`: passing on Linux (disabled/enabled storage, copied vertex/matrix values, and stable-key checks).
 - `tests/run_linux_checks.sh`: passing; runs shader generation, sampler/pipeline state translation, and scene-capture tests; Clang syntax-checks `gfx_pc.c`, scene capture, and shader generation under both `RAPI_GL` and `RAPI_METAL`; checks that the Metal Objective-C file excludes cleanly on non-Apple hosts; and builds host tools.
+- `make -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL` confirms the Makefile selects `sm64ios`, defines `RAPI_METAL`, and includes the new Metal sources. A full target dry run cannot reach compilation because the ROM image required for asset extraction is absent.
 - `bash -n build.sh build_ios.sh tests/run_linux_checks.sh tests/run_scene_capture_test.sh` and `git diff --check`: passing.
 - `make -C tools -j2`: passed earlier in this checkout; only existing toolchain deprecation/format warnings were emitted.
 - Full SM64 build remains blocked on the absent `baserom.us.z64` and ROM-derived assets. `xcodebuild` and Apple SDKs are not installed in this Linux environment.

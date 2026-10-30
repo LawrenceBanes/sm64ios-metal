@@ -2,26 +2,42 @@ codesign --remove-signature "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
 
 case ${PLATFORM_NAME} in
     iphoneos)
-        export CC="clang -arch arm64 --target=arm64-apple-ios -mios-version-min=13.2 -fobjc-weak -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
-        export CXX="clang++ -arch arm64 -mios-version-min=13.2 -fobjc-weak -std=c++11 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        RENDER_API=METAL
+        IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+        IOS_CC=$(xcrun --sdk iphoneos --find clang)
+        IOS_CXX=$(xcrun --sdk iphoneos --find clang++)
+        export CC="$IOS_CC -arch arm64 -mios-version-min=13.2 -fobjc-weak -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CXX="$IOS_CXX -arch arm64 -mios-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
         export TARGET_OS_IOS=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
     iphonesimulator)
-        export CC="clang -arch $(eval "uname -m") -mios-simulator-version-min=13.2 -fobjc-weak -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
-        export CXX="clang++ -arch $(eval "uname -m") -mios-simulator-version-min=13.2 -fobjc-weak -std=c++11 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        RENDER_API=METAL
+        IOS_SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+        IOS_SIM_CC=$(xcrun --sdk iphonesimulator --find clang)
+        IOS_SIM_CXX=$(xcrun --sdk iphonesimulator --find clang++)
+        export CC="$IOS_SIM_CC -arch $(uname -m) -mios-simulator-version-min=13.2 -fobjc-weak -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CXX="$IOS_SIM_CXX -arch $(uname -m) -mios-simulator-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
         export TARGET_OS_IOS=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
     appletvos)
-        export CC="clang -arch arm64 -mtvos-version-min=13.2 -fobjc-weak -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
-        export CXX="clang++ -arch arm64 -mtvos-version-min=13.2 -fobjc-weak -std=c++11 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
+        RENDER_API=GL
+        TV_SDK=$(xcrun --sdk appletvos --show-sdk-path)
+        TV_CC=$(xcrun --sdk appletvos --find clang)
+        TV_CXX=$(xcrun --sdk appletvos --find clang++)
+        export CC="$TV_CC -arch arm64 -mtvos-version-min=13.2 -fobjc-weak -isysroot $TV_SDK -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
+        export CXX="$TV_CXX -arch arm64 -mtvos-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $TV_SDK -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
         export TARGET_OS_TV=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64tvos/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
     appletvsimulator)
-        export CC="clang -arch $(eval "uname -m") -mtvos-simulator-version-min=13.2 -fobjc-weak -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/AppleTVSimulator.platform/Developer/SDKs/AppleTVSimulator.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
-        export CXX="clang++ -arch $(eval "uname -m") -mtvos-simulator-version-min=13.2 -fobjc-weak -std=c++11 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/AppleTVSimulator.platform/Developer/SDKs/AppleTVSimulator.sdk -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
+        RENDER_API=GL
+        TV_SIM_SDK=$(xcrun --sdk appletvsimulator --show-sdk-path)
+        TV_SIM_CC=$(xcrun --sdk appletvsimulator --find clang)
+        TV_SIM_CXX=$(xcrun --sdk appletvsimulator --find clang++)
+        export CC="$TV_SIM_CC -arch $(uname -m) -mtvos-simulator-version-min=13.2 -fobjc-weak -isysroot $TV_SIM_SDK -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
+        export CXX="$TV_SIM_CXX -arch $(uname -m) -mtvos-simulator-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $TV_SIM_SDK -DUSE_GLES -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_TV"
         export TARGET_OS_TV=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64tvos/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
@@ -30,7 +46,7 @@ esac
 export IOSINCLUDE="${SDL2_INCLUDE_DIR}/"
 export IOSLIBS="${BUILT_PRODUCTS_DIR}/"
 
-gmake -j4 TARGET_IOS=1
+gmake -j4 TARGET_IOS=1 RENDER_API=${RENDER_API:-GL}
 
 GAMEDIR_CP_SRC="build/us_pc/sm64ios"
 if [[ $EXTERNAL_DATA -eq 1 ]]; then

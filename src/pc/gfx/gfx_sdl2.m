@@ -1,5 +1,11 @@
 #ifdef WAPI_SDL2
 
+#if defined(__APPLE__)
+#import <TargetConditionals.h>
+#elif !defined(TARGET_OS_IOS)
+#define TARGET_OS_IOS 0
+#endif
+
 #ifdef __MINGW32__
 #define FOR_WINDOWS 1
 #else
@@ -32,6 +38,9 @@
 #include "gfx_window_manager_api.h"
 #include "gfx_screen_config.h"
 #include "gfx_uikit.h"
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+#include "gfx_metal.h"
+#endif
 #include "../pc_main.h"
 #include "../configfile.h"
 #include "../cliopts.h"
@@ -178,6 +187,10 @@ static int test_vsync(void) {
 }
 
 static inline void gfx_sdl_set_vsync(const bool enabled) {
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+    (void)enabled;
+    use_timer = true;
+#else
     if (enabled) {
         // try to detect refresh rate
         SDL_GL_SetSwapInterval(1);
@@ -195,6 +208,15 @@ static inline void gfx_sdl_set_vsync(const bool enabled) {
     use_timer = true;
     //use_timer = false;
     SDL_GL_SetSwapInterval(0);
+#endif
+}
+
+static void gfx_sdl_get_drawable_size(SDL_Window *window, int *width, int *height) {
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+    SDL_GetWindowSize(window, width, height);
+#else
+    SDL_GL_GetDrawableSize(window, width, height);
+#endif
 }
 
 static void gfx_sdl_set_fullscreen(void) {
@@ -219,7 +241,7 @@ static void gfx_sdl_reset_dimension_and_pos(void) {
     if (configWindow.reset) {
         configWindow.x = WAPI_WIN_CENTERPOS;
         configWindow.y = WAPI_WIN_CENTERPOS;
-        SDL_GL_GetDrawableSize(wnd, &configWindow.w, &configWindow.h);
+        gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
         configWindow.reset = false;
     } else if (!configWindow.settings_changed) {
         return;
@@ -235,12 +257,15 @@ static void gfx_sdl_reset_dimension_and_pos(void) {
 }
 
 void gfx_sdl_swap_buffer(void) {
+#if !defined(RAPI_METAL) || !TARGET_OS_IOS
     SDL_GL_SwapWindow(wnd);
+#endif
 }
 
 static void gfx_sdl_init(const char *window_title) {
     SDL_Init(SDL_INIT_VIDEO);
 
+#if !defined(RAPI_METAL) || !TARGET_OS_IOS
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
@@ -249,6 +274,7 @@ static void gfx_sdl_init(const char *window_title) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     #endif
+#endif
 
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
@@ -259,13 +285,20 @@ static void gfx_sdl_init(const char *window_title) {
     wnd = SDL_CreateWindow(
         window_title,
         xpos, ypos, configWindow.w, configWindow.h,
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+        SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_FULLSCREEN
+#else
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_FULLSCREEN
+#endif
     );
-    
+#if !defined(RAPI_METAL) || !TARGET_OS_IOS
     ctx = SDL_GL_CreateContext(wnd);
-    
-    SDL_GL_GetDrawableSize(wnd, &configWindow.w, &configWindow.h);
+#endif
+    gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
     SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+    gfx_metal_attach_to_view_controller(get_sdl_viewcontroller());
+#endif
 
     gfx_sdl_set_vsync(configWindow.vsync);
 
@@ -401,15 +434,15 @@ static void gfx_sdl_handle_events(void) {
                             }
                             break;
                         case SDL_WINDOWEVENT_RESTORED:
-                            SDL_GL_GetDrawableSize(wnd, &configWindow.w, &configWindow.h);
+                            gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
                             SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
                             break;
                         case SDL_WINDOWEVENT_SHOWN:
-                            SDL_GL_GetDrawableSize(wnd, &configWindow.w, &configWindow.h);
+                            gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
                             SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
                             break;
                         case SDL_WINDOWEVENT_RESIZED:
-                            SDL_GL_GetDrawableSize(wnd, &configWindow.w, &configWindow.h);
+                            gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
                             SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
                             //SDL_SetWindowFullscreen(wnd, SDL_WINDOW_FULLSCREEN_DESKTOP);
                             break;

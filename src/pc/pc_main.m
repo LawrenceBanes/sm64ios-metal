@@ -19,6 +19,9 @@
 #include "gfx/gfx_pc.h"
 
 #include "gfx/gfx_opengl.h"
+#if defined(RAPI_METAL)
+#include "gfx/gfx_metal.h"
+#endif
 #include "gfx/gfx_direct3d11.h"
 #include "gfx/gfx_direct3d12.h"
 
@@ -236,6 +239,9 @@ void main_func(void) {
     # else
     #  define RAPI_NAME "OpenGL"
     # endif
+    #elif defined(RAPI_METAL)
+    rendering_api = &gfx_metal_api;
+    # define RAPI_NAME "Metal"
     #else
     #error No rendering API!
     #endif
