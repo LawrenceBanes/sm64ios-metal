@@ -53,6 +53,7 @@ static size_t program_count;
 static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
 static uint32_t frame_count;
+static bool logged_first_completed_frame;
 static struct MetalTexture *bound_textures[2];
 static struct MetalTexture *current_texture;
 static id<MTLSamplerState> metal_samplers[2];
@@ -73,8 +74,15 @@ static bool gfx_metal_z_is_from_0_to_1(void) { return true; }
 void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     if (!view_controller || metal_view) return;
     metal_device = MTLCreateSystemDefaultDevice();
-    if (!metal_device) return;
+    if (!metal_device) {
+        NSLog(@"Metal initialization failed: no system Metal device is available");
+        return;
+    }
     metal_queue = [metal_device newCommandQueue];
+    if (!metal_queue) {
+        NSLog(@"Metal initialization failed: could not create a command queue on %@", metal_device.name);
+        return;
+    }
     metal_view = [[MTKView alloc] initWithFrame:view_controller.view.bounds device:metal_device];
     metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -85,7 +93,9 @@ void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     metal_view.opaque = YES;
     metal_view.contentScaleFactor = UIScreen.mainScreen.scale;
     metal_view.backgroundColor = UIColor.blackColor;
-    [view_controller.view insertSubview:metal_view atIndex:0];
+    // SDL's UIKit view can cover subviews inserted at index zero. Put Metal
+    // above it; UIKit touch controls are added afterward and remain on top.
+    [view_controller.view addSubview:metal_view];
 }
 
 static struct MetalProgram *find_program(uint32_t shader_id) {
@@ -125,7 +135,10 @@ static void gfx_metal_shader_get_info(struct ShaderProgram *program, uint8_t *nu
 }
 
 static uint32_t gfx_metal_new_texture(void) {
-    if (texture_count >= METAL_TEXTURE_CAP) return 0;
+    if (texture_count >= METAL_TEXTURE_CAP) {
+        NSLog(@"Metal texture allocation failed: texture table limit (%d) reached", METAL_TEXTURE_CAP);
+        return 0;
+    }
     return (uint32_t)++texture_count;
 }
 
@@ -146,7 +159,10 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
     desc.usage = MTLTextureUsageShaderRead;
     [t->texture release];
     t->texture = [metal_device newTextureWithDescriptor:desc];
-    if (!t->texture) return;
+    if (!t->texture) {
+        NSLog(@"Metal texture creation failed for id=%lu size=%dx%d", (unsigned long)(t - textures + 1), width, height);
+        return;
+    }
     [t->texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
                     withBytes:rgba bytesPerRow:(NSUInteger)width * 4];
     t->width = width;
@@ -167,6 +183,8 @@ static void gfx_metal_set_sampler_parameters(int sampler, bool linear, uint32_t 
     desc.tAddressMode = t_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
                         (t_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
     metal_samplers[sampler] = [metal_device newSamplerStateWithDescriptor:desc];
+    if (!metal_samplers[sampler])
+        NSLog(@"Metal sampler creation failed for tile=%d linear=%d address=(%u,%u)", sampler, linear, cms, cmt);
 }
 
 static void gfx_metal_set_depth_test(bool enabled) { state_depth_test = enabled; }
@@ -183,14 +201,20 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     char source[8192];
     struct CCFeatures features;
     NSError *error = nil;
-    if (!gfx_metal_build_shader(shader_id, source, sizeof(source), &features)) return NULL;
+    if (!gfx_metal_build_shader(shader_id, source, sizeof(source), &features)) {
+        NSLog(@"Metal shader generation failed for shader=0x%08x", shader_id);
+        return NULL;
+    }
     NSString *msl = [NSString stringWithUTF8String:source];
     id<MTLLibrary> library = [metal_device newLibraryWithSource:msl options:nil error:&error];
-    if (!library) { NSLog(@"Metal shader build failed: %@", error); return NULL; }
+    if (!library) {
+        NSLog(@"Metal shader compilation failed shader=0x%08x: %@", shader_id, error.localizedDescription);
+        return NULL;
+    }
     id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_vertex"];
     id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_fragment"];
     if (!vertex || !fragment) {
-        NSLog(@"Generated Metal shader is missing a stage function");
+        NSLog(@"Generated Metal shader is missing a stage function shader=0x%08x", shader_id);
         [vertex release]; [fragment release]; [library release];
         return NULL;
     }
@@ -244,7 +268,9 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     }
     NSError *error = nil;
     p->pipelines[key] = [metal_device newRenderPipelineStateWithDescriptor:desc error:&error];
-    if (!p->pipelines[key]) NSLog(@"Metal pipeline creation failed: %@", error);
+    if (!p->pipelines[key])
+        NSLog(@"Metal pipeline creation failed shader=0x%08x state=0x%lx: %@",
+              p->shader_id, (unsigned long)key, error.localizedDescription);
     return p->pipelines[key];
 }
 
@@ -319,8 +345,9 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
 
 static void gfx_metal_init(void) {
     if (!metal_device) metal_device = MTLCreateSystemDefaultDevice();
-    if (!metal_device) { NSLog(@"No Metal device available"); return; }
+    if (!metal_device) { NSLog(@"Metal initialization failed: no Metal device available"); return; }
     if (!metal_queue) metal_queue = [metal_device newCommandQueue];
+    if (!metal_queue) { NSLog(@"Metal initialization failed: could not create command queue"); return; }
     if (!metal_view) NSLog(@"Metal view was not attached before renderer initialization");
     texture_count = 0;
     for (int i = 0; i < 2; ++i) {
@@ -339,6 +366,11 @@ static void gfx_metal_start_frame(void) {
     metal_drawable = [metal_view currentDrawable];
     if (!metal_drawable || !pass) return;
     metal_command = [metal_queue commandBuffer];
+    if (!metal_command) {
+        NSLog(@"Metal frame %u could not create a command buffer", frame_count + 1);
+        metal_drawable = nil;
+        return;
+    }
     pass.colorAttachments[0].loadAction = MTLLoadActionClear;
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
     pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,1);
@@ -346,6 +378,12 @@ static void gfx_metal_start_frame(void) {
     pass.depthAttachment.storeAction = MTLStoreActionDontCare;
     pass.depthAttachment.clearDepth = 1.0;
     metal_encoder = [metal_command renderCommandEncoderWithDescriptor:pass];
+    if (!metal_encoder) {
+        NSLog(@"Metal frame %u could not create a render encoder", frame_count + 1);
+        metal_command = nil;
+        metal_drawable = nil;
+        return;
+    }
     ++frame_count;
     has_viewport = has_scissor = false;
 }
@@ -353,6 +391,18 @@ static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
     [metal_command presentDrawable:metal_drawable];
+    uint32_t submitted_frame = frame_count;
+    double drawable_width = metal_view.drawableSize.width;
+    double drawable_height = metal_view.drawableSize.height;
+    [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+        if (completed.status == MTLCommandBufferStatusError) {
+            NSLog(@"Metal GPU command failed frame=%u: %@", submitted_frame, completed.error.localizedDescription);
+        } else if (!logged_first_completed_frame) {
+            logged_first_completed_frame = true;
+            NSLog(@"Metal first command buffer completed frame=%u drawable=%.0fx%.0f; presentation/runtime rendering still requires visual verification",
+                  submitted_frame, drawable_width, drawable_height);
+        }
+    }];
     [metal_command commit];
     metal_command = nil; metal_drawable = nil;
 }
@@ -372,6 +422,7 @@ static void gfx_metal_shutdown(void) {
     memset(programs, 0, sizeof(programs)); memset(textures, 0, sizeof(textures));
     program_count = 0; texture_count = 0; memset(depth_states, 0, sizeof(depth_states));
     frame_count = 0;
+    logged_first_completed_frame = false;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;
     sampler_linear[0] = sampler_linear[1] = false;
