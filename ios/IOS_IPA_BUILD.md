@@ -48,4 +48,4 @@ The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is
 
 ## Current status
 
-GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 build passed in Actions run `41133412108`; the one-day private artifact was downloaded and independently validated at `/tmp/sm64ios-ipa-41133412108/sm64ios-arm64-unsigned.ipa`. The IPA is unsigned and ready for SideStore signing. Signing, installation, first-frame presentation, and device runtime behavior still require the user's iPhone and have not been verified.
+GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 build passed in Actions run `41133412108`, and its IPA was downloaded and validated. That build predates the iOS scene-lifecycle fix and is known to crash before game initialization on iOS 27.0; do not install it for retesting. A replacement IPA is being rebuilt with the scene manifest, scene delegate, and pinned SDL2 `UIWindowScene` patch. The resulting IPA will remain unsigned and require SideStore. Device runtime behavior still requires the user's iPhone.

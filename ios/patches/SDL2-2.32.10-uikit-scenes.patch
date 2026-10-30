@@ -1,0 +1,35 @@
+diff --git a/src/video/uikit/SDL_uikitwindow.m b/src/video/uikit/SDL_uikitwindow.m
+index 0e0ea05..415d9fd 100644
+--- a/src/video/uikit/SDL_uikitwindow.m
++++ b/src/video/uikit/SDL_uikitwindow.m
+@@ -42,6 +42,10 @@
+ 
+ #include <Foundation/Foundation.h>
+ 
++#if !TARGET_OS_TV
++extern UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen);
++#endif
++
+ @implementation SDL_WindowData
+ 
+ @synthesize uiwindow;
+@@ -207,7 +211,18 @@ int UIKit_CreateWindow(_THIS, SDL_Window *window)
+ 
+         /* ignore the size user requested, and make a fullscreen window */
+         /* !!! FIXME: can we have a smaller view? */
+-        uiwindow = [[SDL_uikitwindow alloc] initWithFrame:data.uiscreen.bounds];
++#if !TARGET_OS_TV
++        if (data.uiscreen == [UIScreen mainScreen]) {
++            UIWindowScene *windowScene = gfx_uikit_window_scene_for_screen(data.uiscreen);
++            if (windowScene == nil) {
++                return SDL_SetError("No connected UIKit window scene is available.");
++            }
++            uiwindow = [[SDL_uikitwindow alloc] initWithWindowScene:windowScene];
++        } else
++#endif
++        {
++            uiwindow = [[SDL_uikitwindow alloc] initWithFrame:data.uiscreen.bounds];
++        }
+ 
+         /* put the window on an external display if appropriate. */
+         if (data.uiscreen != [UIScreen mainScreen]) {

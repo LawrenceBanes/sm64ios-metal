@@ -13,6 +13,50 @@ UIViewController *gameViewController;
 UIWindow *mainWindow;
 #if TARGET_OS_IOS
 UIWindow *externalWindow;
+static __weak UIWindowScene *sm64WindowScene;
+
+@interface SM64SceneDelegate : UIResponder <UIWindowSceneDelegate>
+@end
+
+@implementation SM64SceneDelegate
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+    (void)session;
+    (void)connectionOptions;
+    if ([scene isKindOfClass:[UIWindowScene class]]) {
+        sm64WindowScene = (UIWindowScene *)scene;
+        NSLog(@"SM64 connected to UIKit window scene: %@", sm64WindowScene);
+    }
+}
+
+- (void)sceneDidDisconnect:(UIScene *)scene {
+    if (sm64WindowScene == scene) {
+        sm64WindowScene = nil;
+    }
+}
+
+@end
+
+UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen) {
+    if (screen != [UIScreen mainScreen]) {
+        return nil;
+    }
+
+    if (sm64WindowScene && sm64WindowScene.screen == screen) {
+        return sm64WindowScene;
+    }
+
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]] &&
+            [scene.session.role isEqualToString:UIWindowSceneSessionRoleApplication] &&
+            ((UIWindowScene *)scene).screen == screen &&
+            scene.activationState != UISceneActivationStateUnattached) {
+            sm64WindowScene = (UIWindowScene *)scene;
+            return sm64WindowScene;
+        }
+    }
+    return nil;
+}
 #endif
 
 @implementation OverlayView

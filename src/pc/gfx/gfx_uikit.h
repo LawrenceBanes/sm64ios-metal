@@ -32,6 +32,7 @@ TouchControlsViewController *tcvc;
 UIViewController *gameViewController;
 
 void gfx_uikit_init(UIViewController *viewControllerPointer);
+UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen);
 void setup_external_screen();
 void teardown_external_screen();
 void gfx_uikit_set_touchscreen_callbacks(void (*down)(void* event), void (*motion)(void* event), void (*up)(void* event));

@@ -26,11 +26,23 @@ class IpaValidationTests(unittest.TestCase):
                 "UIInterfaceOrientationLandscapeLeft",
                 "UIInterfaceOrientationLandscapeRight",
             ],
+            "UIApplicationSceneManifest": {
+                "UIApplicationSupportsMultipleScenes": False,
+                "UISceneConfigurations": {
+                    "UIWindowSceneSessionRoleApplication": [
+                        {
+                            "UISceneConfigurationName": "Default Configuration",
+                            "UISceneDelegateClassName": "SM64SceneDelegate",
+                        }
+                    ]
+                },
+            },
         }
         # Minimal 64-bit little-endian Mach-O header sufficient to test the
         # architecture parser. This is not executable game code.
         binary = struct.pack("<IIIIIIII", 0xFEEDFACF, cpu_type, 0, 2, 1, 24, 0, 0)
         binary += struct.pack("<IIIIII", 0x32, 24, platform, 0x000D0200, 0x000D0200, 0)
+        binary += b"SM64SceneDelegate\0"
         app = path / "SM64.app"
         app.mkdir()
         (app / "Info.plist").write_bytes(plistlib.dumps(info))
@@ -68,6 +80,19 @@ class IpaValidationTests(unittest.TestCase):
             app = self.make_app(Path(temp), platform=7)
             package_app(app, path)
             with self.assertRaisesRegex(ValueError, "lacks an arm64 iPhoneOS"):
+                validate(str(path), require_system_deps=False)
+
+    def test_rejects_ipa_without_scene_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = self.make_app(root)
+            info_path = app / "Info.plist"
+            info = plistlib.loads(info_path.read_bytes())
+            del info["UIApplicationSceneManifest"]
+            info_path.write_bytes(plistlib.dumps(info))
+            path = root / "missing-scene.ipa"
+            package_app(app, path)
+            with self.assertRaisesRegex(ValueError, "missing its UIKit application scene"):
                 validate(str(path), require_system_deps=False)
 
 

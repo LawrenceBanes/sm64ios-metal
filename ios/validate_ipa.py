@@ -106,6 +106,19 @@ def validate(ipa_path: str, require_system_deps: bool) -> None:
             info = plistlib.loads(ipa.read(info_path))
         except KeyError as exc:
             raise ValueError("app bundle has no Info.plist") from exc
+        scene_manifest = info.get("UIApplicationSceneManifest")
+        if not isinstance(scene_manifest, dict):
+            raise ValueError("app Info.plist is missing its UIKit application scene configuration")
+        scene_configurations = scene_manifest.get("UISceneConfigurations")
+        app_scenes = scene_configurations.get("UIWindowSceneSessionRoleApplication", []) if isinstance(scene_configurations, dict) else []
+        if not app_scenes:
+            raise ValueError("app Info.plist is missing its UIKit application scene configuration")
+        if not any(
+            config.get("UISceneDelegateClassName") == "SM64SceneDelegate"
+            for config in app_scenes
+            if isinstance(config, dict)
+        ):
+            raise ValueError("app scene configuration does not name SM64SceneDelegate")
         executable_name = info.get("CFBundleExecutable")
         if not executable_name or "/" in executable_name:
             raise ValueError("Info.plist has an invalid CFBundleExecutable")
@@ -117,6 +130,8 @@ def validate(ipa_path: str, require_system_deps: bool) -> None:
         slices = macho_slices(executable)
         if slices.get(CPU_TYPE_ARM64) != 2:  # PLATFORM_IOS; 7 is iOS Simulator
             raise ValueError(f"main executable lacks an arm64 iPhoneOS Mach-O slice (slices: {slices})")
+        if b"SM64SceneDelegate" not in executable:
+            raise ValueError("main executable does not contain the configured SM64SceneDelegate class")
         if "iPhoneOS" not in info.get("CFBundleSupportedPlatforms", []):
             raise ValueError("app bundle is not marked for iPhoneOS")
         if not info.get("CFBundleIdentifier"):
