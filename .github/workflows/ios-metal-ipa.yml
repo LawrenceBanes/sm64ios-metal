@@ -59,11 +59,20 @@ jobs:
           fi
           gmake --version | head -n 1
       - name: Install GNU binutils for sound-data extraction
+        shell: bash
         run: |
+          set -euo pipefail
           if ! command -v gobjcopy >/dev/null 2>&1; then
             brew install binutils
           fi
-          gobjcopy --version | head -n 1
+          binutils_prefix=$(brew --prefix binutils)
+          gobjcopy_path="$binutils_prefix/bin/gobjcopy"
+          if [[ ! -x "$gobjcopy_path" ]]; then
+            gobjcopy_path=$(find "$binutils_prefix" -type f -name gobjcopy -perm -u+x -print -quit)
+          fi
+          [[ -x "$gobjcopy_path" ]] || { echo "gobjcopy not found under $binutils_prefix" >&2; exit 1; }
+          "$gobjcopy_path" --version | head -n 1
+          echo "IOS_OBJCOPY=$gobjcopy_path" >> "$GITHUB_ENV"
       - name: Check private asset configuration
         shell: bash
         env:
@@ -144,7 +153,7 @@ jobs:
             CONFIGURATION_BUILD_DIR="$PRODUCT_DIR" \
             SDL2_ROOT="$SDL_STAGE" \
             SDL2_INCLUDE_DIR="$SDL_STAGE/include" \
-          IOS_OBJCOPY="$(command -v gobjcopy)" \
+          IOS_OBJCOPY="$IOS_OBJCOPY" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
