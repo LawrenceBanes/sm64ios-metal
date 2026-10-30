@@ -46,6 +46,6 @@ The produced IPA contains the compiled game assets, so the IPA artifact is avail
 
 The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is only a validator test, not a build or install result. A CI IPA passing these checks still needs SideStore signing and a real iPhone install/launch before runtime success can be claimed.
 
-## Current intervention needed
+## Current status
 
-The DNS failure was isolated to the restricted development shell: a host-level connectivity check resolved GitHub and reached HTTPS. GitHub CLI authentication was revalidated and the two pending commits were pushed to `metal-origin/ios`. The local USA asset bundle contains 1,538 files and is 9.5 MiB compressed. A temporary private-release option was added so the first build does not depend on configuring an external object-store URL or long-lived repository secrets.
+GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 build passed in Actions run `41133412108`; the one-day private artifact was downloaded and independently validated at `/tmp/sm64ios-ipa-41133412108/sm64ios-arm64-unsigned.ipa`. The IPA is unsigned and ready for SideStore signing. Signing, installation, first-frame presentation, and device runtime behavior still require the user's iPhone and have not been verified.
