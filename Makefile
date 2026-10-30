@@ -1000,7 +1000,11 @@ $(SOUND_BIN_DIR)/%.m64: $(SOUND_BIN_DIR)/%.o
 	$(OBJCOPY) -j .rodata $< -O binary $@
 
 $(SOUND_BIN_DIR)/%.o: $(SOUND_BIN_DIR)/%.s
+ifeq ($(TARGET_IOS),1)
+	$(AS) $(ASFLAGS) -x assembler-with-cpp -o $@ $<
+else
 	$(AS) $(ASFLAGS) -o $@ $<
+endif
 
 ifeq ($(EXTERNAL_DATA),1)
 
@@ -1099,7 +1103,11 @@ $(BUILD_DIR)/%.o: %.m
 	$(CC) -c $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/%.o: %.s
+ifeq ($(TARGET_IOS),1)
+	$(AS) $(ASFLAGS) -x assembler-with-cpp -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d -o $@ $<
+else
 	$(AS) $(ASFLAGS) -MD $(BUILD_DIR)/$*.d -o $@ $<
+endif
 
 
 $(EXE): $(O_FILES) $(MIO0_FILES:.mio0=.o) $(SOUND_OBJ_FILES) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(BUILD_DIR)/$(RPC_LIBS)
