@@ -694,7 +694,13 @@ ifeq ($(EXTERNAL_DATA),1)
   SKYCONV_ARGS := --store-names --write-tiles "$(SKYTILE_DIR)"
 endif
 
-ASFLAGS := -I include -I $(BUILD_DIR) $(VERSION_ASFLAGS)
+ifeq ($(TARGET_IOS),1)
+  # Apple clang needs GNU assembler options forwarded through its driver.
+  comma := ,
+  ASFLAGS := -I include -I $(BUILD_DIR) $(foreach sym,$(subst --defsym ,,$(VERSION_ASFLAGS) $(GRUCODE_ASFLAGS)),-Wa$(comma)--defsym$(comma)$(sym))
+else
+  ASFLAGS := -I include -I $(BUILD_DIR) $(VERSION_ASFLAGS)
+endif
 
 ifeq ($(TARGET_WEB),1)
   LDFLAGS := -lm -lGL -lSDL2 -no-pie -s TOTAL_MEMORY=64MB -g4 --source-map-base http://localhost:8080/ -s "EXTRA_EXPORTED_RUNTIME_METHODS=['callMain']"

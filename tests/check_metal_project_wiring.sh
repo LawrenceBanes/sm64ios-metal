@@ -30,6 +30,9 @@ ios_cpp=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=
 test "$ios_cpp" = "clang -E -P -x c"
 ios_as=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^AS := //p' | head -n 1)
 test "$ios_as" = "clang"
+ios_asflags=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^ASFLAGS := //p' | head -n 1)
+printf '%s\n' "$ios_asflags" | grep -Fq -- '-Wa,--defsym,AVOID_UB=1'
+printf '%s\n' "$ios_asflags" | grep -Fq -- '-Wa,--defsym,F3DEX_GBI_2E=1'
 if printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDLmain'; then
     echo "pinned SDL2 iOS archive includes SDL's UIKit entry point; no separate SDLmain library is available" >&2
     exit 1
