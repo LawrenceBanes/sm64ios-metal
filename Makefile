@@ -484,7 +484,11 @@ ENDIAN_BITWIDTH := $(BUILD_DIR)/endian-and-bitwidth
 AS := $(CROSS)as
 
 ifeq ($(OSX_BUILD),1)
-AS := i686-w64-mingw32-as
+  ifeq ($(TARGET_IOS),1)
+    AS := $(CC)
+  else
+    AS := i686-w64-mingw32-as
+  endif
 endif
 
 ifneq ($(TARGET_WEB),1) # As in, not-web PC port
