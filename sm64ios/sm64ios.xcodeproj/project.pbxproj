@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		5918D43E271C1EB80085DDED /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5918D43C271C1EB80085DDED /* libSDL2.a */; };
-		5918D43F271C1EB80085DDED /* libSDLmain.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5918D43D271C1EB80085DDED /* libSDLmain.a */; };
 		591E1CF6274048E9004DA542 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 59B7C215273CBC89002CDC11 /* Assets.xcassets */; };
 		59A67E1D27275B5100FF5D6C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 59AA7BDC2716685000B9AF30 /* Assets.xcassets */; };
 		59B7C220273CBCC2002CDC11 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 59B7C21F273CBCC2002CDC11 /* libSDL2.a */; };
@@ -24,7 +23,6 @@
 		5918D21027192A4C0085DDED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5918D217271956920085DDED /* build.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; name = build.sh; path = ../build.sh; sourceTree = "<group>"; };
 		5918D43C271C1EB80085DDED /* libSDL2.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libSDL2.a; sourceTree = BUILT_PRODUCTS_DIR; };
-		5918D43D271C1EB80085DDED /* libSDLmain.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libSDLmain.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		5918D474271C223E0085DDED /* cliopts.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cliopts.c; sourceTree = "<group>"; };
 		5918D475271C223E0085DDED /* cheats.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = cheats.c; sourceTree = "<group>"; };
 		5918D476271C223E0085DDED /* mixer.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mixer.c; sourceTree = "<group>"; };
@@ -682,7 +680,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				5918D43E271C1EB80085DDED /* libSDL2.a in Frameworks */,
-				5918D43F271C1EB80085DDED /* libSDLmain.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -749,7 +746,6 @@
 				59B7C221273CBCCA002CDC11 /* libSDLmain.a */,
 				59B7C21F273CBCC2002CDC11 /* libSDL2.a */,
 				5918D43C271C1EB80085DDED /* libSDL2.a */,
-				5918D43D271C1EB80085DDED /* libSDLmain.a */,
 				59AA7BCC2716674A00B9AF30 /* CoreBluetooth.framework */,
 				59AA60412716655100B9AF30 /* libSDL2.a */,
 				59AA60432716655100B9AF30 /* libSDLmain.a */,

@@ -551,7 +551,7 @@ else ifeq ($(findstring SDL,$(WINDOW_API)),SDL)
     BACKEND_LDFLAGS += -lGLESv2
   else ifeq ($(TARGET_IOS),1)
 	ifeq ($(TARGET_OS_IOS),1)
-	      BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework CoreAudio -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreMotion -framework CoreHaptics -framework Metal -framework MetalKit -L$(IOSLIBS) -lSDLmain -lSDL2 -lc++ -D.
+	      BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework CoreAudio -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreMotion -framework CoreHaptics -framework Metal -framework MetalKit -L$(IOSLIBS) -lSDL2 -lc++ -D.
 	      ifneq (,$(filter GL GL_LEGACY,$(RENDER_API)))
 	        BACKEND_LDFLAGS += -framework OpenGLES
 	      endif

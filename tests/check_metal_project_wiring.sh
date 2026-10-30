@@ -13,7 +13,7 @@ grep -Fq 'src/pc/gfx' "$makefile"
 grep -Fq -- '-framework Metal' "$makefile"
 grep -Fq -- '-framework MetalKit' "$makefile"
 grep -Fq 'filter GL GL_LEGACY' "$makefile"
-grep -Fq -- '-lSDLmain -lSDL2 -lc++' "$makefile"
+grep -Fq -- '-lSDL2 -lc++' "$makefile"
 if grep -Fq -- '-lstdc++' "$makefile"; then
     echo "legacy libstdc++ link flag must not be used for iOS" >&2
     exit 1
@@ -25,5 +25,11 @@ case "$ios_ldflags" in
         exit 1
         ;;
 esac
-printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDLmain -lSDL2 -lc++'
+printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDL2 -lc++'
+if printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDLmain'; then
+    echo "pinned SDL2 iOS archive includes SDL's UIKit entry point; no separate SDLmain library is available" >&2
+    exit 1
+fi
+grep -Fq -- '-target "Static Library-iOS"' "$repo_dir/ios/build_sdl2_ios.sh"
+grep -Fq 'SDL_uikit_main' "$repo_dir/ios/build_sdl2_ios.sh"
 echo "Metal Xcode references and Makefile source/framework wiring checks passed"

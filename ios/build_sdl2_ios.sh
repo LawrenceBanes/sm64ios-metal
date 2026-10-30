@@ -24,19 +24,17 @@ fi
 
 BUILD_ROOT="$SDL2_STAGE/build"
 mkdir -p "$BUILD_ROOT"
-for target in SDLmain-iOS Static\ Library-iOS; do
-    xcodebuild \
-        -project "$PROJECT" \
-        -target "$target" \
-        -configuration Release \
-        -sdk iphoneos \
-        -arch arm64 \
-        SYMROOT="$BUILD_ROOT/Products" \
-        OBJROOT="$BUILD_ROOT/Intermediates" \
-        ONLY_ACTIVE_ARCH=NO \
-        CODE_SIGNING_ALLOWED=NO \
-        build
-done
+xcodebuild \
+    -project "$PROJECT" \
+    -target "Static Library-iOS" \
+    -configuration Release \
+    -sdk iphoneos \
+    -arch arm64 \
+    SYMROOT="$BUILD_ROOT/Products" \
+    OBJROOT="$BUILD_ROOT/Intermediates" \
+    ONLY_ACTIVE_ARCH=NO \
+    CODE_SIGNING_ALLOWED=NO \
+    build
 
 find_archive() {
     local archive_name=$1
@@ -50,25 +48,14 @@ find_archive() {
 }
 
 SDL2_ARCHIVE=$(find_archive libSDL2.a)
-SDLMAIN_ARCHIVE=$(find "$BUILD_ROOT/Products" -type f \( -name libSDLmain.a -o -name libSDL2main.a \) -print -quit)
-if [[ -z "$SDLMAIN_ARCHIVE" ]]; then
-    echo "SDL2 build did not produce an iOS SDL main archive" >&2
+cp "$SDL2_ARCHIVE" "$BUILT_PRODUCTS/libSDL2.a"
+if ! xcrun ar -t "$BUILT_PRODUCTS/libSDL2.a" | grep 'SDL_uikit_main' >/dev/null; then
+    echo "SDL2 iOS archive is missing its UIKit entry point" >&2
     exit 1
 fi
-
-cp "$SDL2_ARCHIVE" "$BUILT_PRODUCTS/libSDL2.a"
-cp "$SDLMAIN_ARCHIVE" "$BUILT_PRODUCTS/libSDLmain.a"
 mkdir -p "$SDL2_STAGE/include/SDL2"
 cp -R "$SDL2_SOURCE/include/." "$SDL2_STAGE/include/SDL2/"
-SDL_CONFIG=$(find "$BUILD_ROOT/Products" -type f -name SDL_config.h -print -quit)
-if [[ -n "$SDL_CONFIG" ]]; then
-    cp "$SDL_CONFIG" "$SDL2_STAGE/include/SDL2/SDL_config.h"
-fi
-if [[ ! -f "$SDL2_STAGE/include/SDL2/SDL_config.h" ]]; then
-    echo "SDL2 build did not provide the target-specific SDL_config.h" >&2
-    exit 1
-fi
+test -f "$SDL2_STAGE/include/SDL2/SDL_config.h"
 
 xcrun --sdk iphoneos lipo -verify_arch arm64 "$BUILT_PRODUCTS/libSDL2.a"
-xcrun --sdk iphoneos lipo -verify_arch arm64 "$BUILT_PRODUCTS/libSDLmain.a"
 echo "SDL2 $SDL2_PIN built for iPhoneOS arm64"

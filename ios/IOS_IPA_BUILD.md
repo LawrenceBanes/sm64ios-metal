@@ -4,7 +4,7 @@
 
 ## Pinned SDL2 dependency
 
-The workflow fetches SDL2 commit `5d249570393f7a37e037abf22cd6012a4cc56a71` (SDL 2.32.10) and verifies the checkout before building. `ios/build_sdl2_ios.sh` builds its iOS `SDLmain-iOS` and `Static Library-iOS` targets for arm64, checks both archives with `lipo`, stages `libSDL2.a` and `libSDLmain.a` into Xcode's product directory, and copies headers into the required `include/SDL2` layout. The iOS link places `-lSDLmain` before `-lSDL2`, uses Apple's `libc++`, and omits desktop-only `-no-pie`, `-lpthread`, `libstdc++`, and IOKit flags. No SDL binary is committed.
+The workflow fetches SDL2 commit `5d249570393f7a37e037abf22cd6012a4cc56a71` (SDL 2.32.10) and verifies the checkout before building. `ios/build_sdl2_ios.sh` builds its `Static Library-iOS` target for arm64, checks the archive contains SDL's UIKit entry point and has the right architecture, stages `libSDL2.a`, and copies the upstream headers into the required `include/SDL2` layout. SDL 2.32.10 has no separate `SDLmain-iOS` target; its static library includes `SDL_uikit_main.c`. The iOS link uses Apple's `libc++` and omits desktop-only `-no-pie`, `-lpthread`, `libstdc++`, and IOKit flags. No SDL binary is committed.
 
 The pinned source release is available from [SDL's upstream release page](https://github.com/libsdl-org/SDL/releases/tag/release-2.32.10). SDL documents its Xcode-based iOS builds in [README-ios](https://github.com/libsdl-org/SDL/blob/release-2.32.10/docs/README-ios.md).
 
