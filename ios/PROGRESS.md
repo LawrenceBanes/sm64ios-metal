@@ -27,7 +27,7 @@
 - `make -C tools -j2`: passed earlier in this checkout; only existing toolchain deprecation/format warnings were emitted.
 - GitHub Actions run `41108219376` passed shader generation, state translation, scene capture, and CPU BVH checks, then failed linking `tools/tabledesign` against audiofile symbols. The fix is now covered by clean parallel host-tool builds; the macOS job was skipped on that run and will be independent on the next push.
 - Full SM64 build remains blocked on the absent `baserom.us.z64` and ROM-derived assets. `xcodebuild` and Apple SDKs are not installed in this Linux environment.
-- Device and simulator Objective-C backend compilation/linking passed in Actions run `41108917814`. MSL generation/compilation did not run successfully: the host shader generator could not find `stdio.h`, and a workflow `tee` pipeline hid that script failure. The workflow now propagates pipeline failures, and the host generator uses the macOS SDK sysroot explicitly. No full MSL validation, iPhone rendering, or IPA installation is yet validated.
+- Device and simulator Objective-C backend compilation/linking and five representative MSL metallib builds passed in Actions run `41109271236` using Xcode 16.4 / iOS SDK 18.5. That does not validate the requested iOS 27 SDK. The workflow now targets GitHub's Xcode 27 runner so the same checks run against the target generation. No iPhone rendering or IPA installation is yet validated.
 
 ## Outstanding work
 
