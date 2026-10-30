@@ -161,6 +161,24 @@ jobs:
           python3 ios/package_unsigned_ipa.py "$PRODUCT_DIR/sm64ios.app" "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa"
       - name: Validate IPA layout, app metadata, arm64 slices, and linked dependencies
         run: python3 ios/validate_ipa.py "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" --require-system-deps
+      - name: Publish this build as a new private prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="ios-unsigned-ipa-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          checksum_file="$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa.sha256"
+          sha256sum "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" > "$checksum_file"
+          gh release create "$release_tag" \
+            "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" \
+            "$checksum_file" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Unsigned iOS IPA — build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes "Validated unsigned arm64 iOS IPA from commit ${GITHUB_SHA}. Download the IPA and checksum below. Install with SideStore; this release does not establish successful on-device rendering." \
+            --prerelease
+          echo "Published private release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${release_tag}"
+          cat "$checksum_file"
       - name: Upload private IPA and build logs
         if: always()
         uses: actions/upload-artifact@v4

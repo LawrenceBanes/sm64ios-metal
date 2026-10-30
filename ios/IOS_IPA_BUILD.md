@@ -38,7 +38,7 @@ The manual workflow downloads the two files using its repository-scoped token, v
 
 The archive is limited to the USA-mapped regular asset files and checked against `assets.json`, then extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
 
-The produced IPA contains the compiled game assets, so the IPA artifact is available only from this private repository and retained for one day. Workflow logs contain compiler output but not archive contents or the download URL. Do not mirror the IPA or asset bundle to a public release or artifact store.
+The produced IPA contains the compiled game assets, so keep this repository private. After IPA validation succeeds, every workflow run publishes a **new private prerelease** tagged `ios-unsigned-ipa-<run number>-<attempt>` with the IPA and a `.sha256` checksum file. Reruns get a distinct attempt number and do not replace earlier releases. The Actions artifact remains available for one day for build logs; the release is the durable phone-download link. The release notes identify the source commit and clarify that compilation does not prove on-device rendering. Do not mirror the IPA or asset bundle to a public release or artifact store.
 
 ## IPA packaging and checks
 
@@ -48,4 +48,4 @@ The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is
 
 ## Current status
 
-GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 scene-aware build passed in Actions run `41137642774`, and its IPA passed the updated lifecycle-aware validator. The existing [private prerelease](https://github.com/LawrenceBanes/sm64ios-metal/releases/tag/ios-unsigned-ipa-20261030) now contains this replacement build; the earlier IPA that crashed on iOS 27.0 was removed. The new IPA remains unsigned and requires SideStore. Device runtime behavior still requires testing on the iPhone.
+The full Xcode 27.1 scene-aware build passed in Actions run `41137642774`, and its IPA passed the updated lifecycle-aware validator. New successful workflow runs now each publish a distinct private prerelease with the unsigned IPA and checksum. The IPA requires SideStore. Device runtime behavior still requires testing on the iPhone.
