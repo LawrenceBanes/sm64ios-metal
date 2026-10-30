@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 if [[ ${SM64_SKIP_CODESIGN:-0} != 1 ]]; then
     codesign --remove-signature "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
 fi
@@ -8,8 +11,8 @@ case ${PLATFORM_NAME} in
         IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
         IOS_CC=$(xcrun --sdk iphoneos --find clang)
         IOS_CXX=$(xcrun --sdk iphoneos --find clang++)
-        export CC="$IOS_CC -arch arm64 -mios-version-min=13.2 -fobjc-weak -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
-        export CXX="$IOS_CXX -arch arm64 -mios-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CC="$IOS_CC -arch arm64 -mios-version-min=15.0 -fobjc-weak -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CXX="$IOS_CXX -arch arm64 -mios-version-min=15.0 -fobjc-weak -std=c++11 -isysroot $IOS_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
         export TARGET_OS_IOS=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
@@ -18,8 +21,8 @@ case ${PLATFORM_NAME} in
         IOS_SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
         IOS_SIM_CC=$(xcrun --sdk iphonesimulator --find clang)
         IOS_SIM_CXX=$(xcrun --sdk iphonesimulator --find clang++)
-        export CC="$IOS_SIM_CC -arch $(uname -m) -mios-simulator-version-min=13.2 -fobjc-weak -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
-        export CXX="$IOS_SIM_CXX -arch $(uname -m) -mios-simulator-version-min=13.2 -fobjc-weak -std=c++11 -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CC="$IOS_SIM_CC -arch $(uname -m) -mios-simulator-version-min=15.0 -fobjc-weak -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
+        export CXX="$IOS_SIM_CXX -arch $(uname -m) -mios-simulator-version-min=15.0 -fobjc-weak -std=c++11 -isysroot $IOS_SIM_SDK -DAAPI_SDL2 -DWAPI_SDL2 -DTARGET_OS_IOS"
         export TARGET_OS_IOS=1
         rsync -aP --exclude="Info.plist" "sm64ios/sm64ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
         ;;
@@ -48,15 +51,22 @@ esac
 export IOSINCLUDE="${SDL2_INCLUDE_DIR}/"
 export IOSLIBS="${BUILT_PRODUCTS_DIR}/"
 
-gmake -j4 TARGET_IOS=1 RENDER_API=${RENDER_API:-GL}
+MAKE_BIN=$(command -v gmake || command -v make || true)
+if [[ -z "$MAKE_BIN" ]]; then
+    echo "GNU Make is required to build the game" >&2
+    exit 1
+fi
+"$MAKE_BIN" -j4 TARGET_IOS=1 RENDER_API="${RENDER_API:-GL}"
 
 GAMEDIR_CP_SRC="build/us_pc/sm64ios"
-if [[ $EXTERNAL_DATA -eq 1 ]]; then
+if [[ ${EXTERNAL_DATA:-0} -eq 1 ]]; then
     GAMEDIR_CP_SRC="build/us_pc/."
 fi
-cp -R $GAMEDIR_CP_SRC "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
+cp -R "$GAMEDIR_CP_SRC" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
 cp -R "build/us_pc/Base.lproj" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
-[[ -e "build/us_pc/dynos" ]] && cp -R "build/us_pc/dynos" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
+if [[ -e "build/us_pc/dynos" ]]; then
+    cp -R "build/us_pc/dynos" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
+fi
 rsync -aP --exclude="README.md" "ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
 
 if [[ ${SM64_SKIP_CODESIGN:-0} != 1 ]]; then
