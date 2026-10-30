@@ -666,6 +666,8 @@
 		A64000000000000000000007 /* gfx_scene_capture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = gfx_scene_capture.h; sourceTree = "<group>"; };
 		A64000000000000000000008 /* gfx_metal_state.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = gfx_metal_state.c; sourceTree = "<group>"; };
 		A64000000000000000000009 /* gfx_metal_state.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = gfx_metal_state.h; sourceTree = "<group>"; };
+		A6400000000000000000000A /* gfx_scene_bvh.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = gfx_scene_bvh.c; sourceTree = "<group>"; };
+		A6400000000000000000000B /* gfx_scene_bvh.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = gfx_scene_bvh.h; sourceTree = "<group>"; };
 		F3A497B22555F11600E92A8B /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		FA8B4B96196703B400F8EB7C /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
 		FAE0E9641BAF967F0098DFA4 /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
@@ -915,6 +917,8 @@
 				A64000000000000000000007 /* gfx_scene_capture.h */,
 				A64000000000000000000008 /* gfx_metal_state.c */,
 				A64000000000000000000009 /* gfx_metal_state.h */,
+				A6400000000000000000000A /* gfx_scene_bvh.c */,
+				A6400000000000000000000B /* gfx_scene_bvh.h */,
 			);
 			path = gfx;
 			sourceTree = "<group>";
