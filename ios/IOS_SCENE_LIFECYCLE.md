@@ -21,4 +21,4 @@ Apple's [scene migration guide](https://developer.apple.com/documentation/uikit/
 
 ## Remaining validation
 
-The macOS workflow must rebuild SDL2 and the complete arm64 IPA with this patch. The resulting unsigned IPA must pass the stricter scene-aware validator. A successful build will establish compile/link and packaging correctness only. Install and launch on the iPhone 14 Pro Max running iOS 27.0 to confirm the crash is resolved, the SDL scene-backed window appears, and the Metal view reaches its first presented frame. Also verify touch controls and landscape orientation.
+The full macOS build and stricter scene-aware IPA validation passed in run `41137642774`; this establishes compile/link and packaging correctness only. Install and launch the replacement IPA on the iPhone 14 Pro Max running iOS 27.0 to confirm the crash is resolved, the SDL scene-backed window appears, and the Metal view reaches its first presented frame. Also verify touch controls and landscape orientation.

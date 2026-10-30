@@ -48,4 +48,4 @@ The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is
 
 ## Current status
 
-GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 build passed in Actions run `41133412108`, and its IPA was downloaded and validated. That build predates the iOS scene-lifecycle fix and is known to crash before game initialization on iOS 27.0; do not install it for retesting. A replacement IPA is being rebuilt with the scene manifest, scene delegate, and pinned SDL2 `UIWindowScene` patch. The resulting IPA will remain unsigned and require SideStore. Device runtime behavior still requires the user's iPhone.
+GitHub DNS connectivity and CLI authentication are working. The full Xcode 27.1 scene-aware build passed in Actions run `41137642774`, and its IPA passed the updated lifecycle-aware validator. The existing [private prerelease](https://github.com/LawrenceBanes/sm64ios-metal/releases/tag/ios-unsigned-ipa-20261030) now contains this replacement build; the earlier IPA that crashed on iOS 27.0 was removed. The new IPA remains unsigned and requires SideStore. Device runtime behavior still requires testing on the iPhone.
