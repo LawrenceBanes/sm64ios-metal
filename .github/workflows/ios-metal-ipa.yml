@@ -19,6 +19,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libsdl2-dev
       - name: Run Linux checks
         run: |
           tests/run_linux_checks.sh
@@ -50,6 +54,8 @@ jobs:
           [[ "$sdk_version" == 27.* ]]
       - name: Check private asset configuration
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ -n "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
@@ -162,7 +168,7 @@ jobs:
           if [[ "$ASSET_BUNDLE_RELEASE_TAG" =~ ^sm64-assets-[A-Za-z0-9._-]+$ ]]; then
             if release_metadata=$(gh release view "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body 2>/dev/null); then
               if python3 -c 'import json,sys; d=json.loads(sys.argv[1]); raise SystemExit(not (d["isDraft"] and d["body"] == "Temporary private asset bundle for sm64ios-metal IPA build."))' "$release_metadata"; then
-                gh release delete "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              gh release delete "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
               else
                 echo "Refusing to delete a release that does not match the expected temporary asset bundle marker." >&2
                 exit 1

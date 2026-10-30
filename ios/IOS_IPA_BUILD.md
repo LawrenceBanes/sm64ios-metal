@@ -34,7 +34,7 @@ gh workflow run ios-metal-ipa.yml \
   -f "asset_bundle_release_tag=$tag"
 ```
 
-The manual workflow downloads the two files using its repository-scoped token, validates the SHA-256 and archive contents, and removes the draft release/tag at job cleanup. This places the asset bundle briefly in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
+The manual workflow downloads the two files using its repository-scoped token, validates the SHA-256 and archive contents, and removes the draft release at job cleanup. Draft releases do not create a Git tag ref. This places the asset bundle briefly in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
 
 The archive is limited to the USA-mapped regular asset files and checked against `assets.json`, then extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
 
