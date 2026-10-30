@@ -27,6 +27,7 @@
 - Run `41129263515` built SDL2 and entered the app target, but the Xcode shell phase hid `build.sh` failures: the script called missing `gmake`, continued after copy errors, and packaged an app without its game executable. The IPA validator correctly rejected it. The script now fails on errors, uses `gmake` or the runner's `make`, and validates/copies resources only after the game build succeeds. Updated the direct iOS build helper to use the same compiler floor and make fallback.
 - Run `41129599383` passed SDL2 and Linux checks, then the fail-fast app build stopped at `cpp-12: No such file or directory`. The Makefile hard-coded a versioned GCC preprocessor for every `OSX_BUILD`, including the iOS cross-build. It now uses the host `cpp` for iOS preprocessing and retains `cpp-12` for the previous desktop macOS build path.
 - Run `41129872418` reached the first generated level rule and showed that the macOS `cpp` wrapper treated the preprocessing args as an invalid `cc` invocation. Switched the iOS-only command to `clang -E -P -x c`; the equivalent preprocess of `levels/level_rules.mk`, shell syntax, Makefile checks, and Linux suite pass locally. The desktop macOS preprocessor remains unchanged.
+- Run `41130127563` confirmed Clang preprocessing works, then failed because runner `/usr/bin/make` is GNU Make 3.81 and does not execute the Makefile's `!=` shell assignments that create build directories. The workflow now installs GNU Make 4+ on macOS, while both iOS build scripts reject older or non-GNU Make versions explicitly.
 
 ## Validation
 
@@ -51,7 +52,7 @@
 ## Outstanding work
 
 - Review Metal API runtime semantics: validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime on simulator/device.
-- Complete local checks, push the explicit clang preprocessor fix, recreate the private asset release, and rerun the iOS build. Continue from game compile/link/package errors.
+- Complete local checks, push the GNU Make 4 setup/check, recreate the private asset release, and rerun the iOS build. Continue from game compile/link/package errors.
 - SDL2 headers/static libraries are built by the new pinned helper but remain unvalidated until macOS CI runs. The current Linux host has no `xcodebuild`.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
@@ -61,7 +62,7 @@
 
 ## Next steps
 
-1. Push the explicit clang preprocessor fix, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
+1. Push the GNU Make 4 setup/check, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
 2. Resolve any SDL2, game linker, app bundle, or IPA validator failures from CI.
 3. Obtain the unsigned IPA artifact, sign with SideStore, and install/launch it on the iPhone before claiming runtime success.
 4. After the first IPA milestone, return to scene capture and future ray-tracing work.

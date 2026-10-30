@@ -14,4 +14,14 @@ if [[ -z "$MAKE_BIN" ]]; then
     echo "GNU Make is required to build the game" >&2
     exit 1
 fi
+MAKE_VERSION=$("$MAKE_BIN" --version | sed -nE '1s/.*Make ([0-9]+)\.([0-9]+).*/\1 \2/p')
+if [[ -z "$MAKE_VERSION" ]]; then
+    echo "Unable to determine GNU Make version from $MAKE_BIN" >&2
+    exit 1
+fi
+MAKE_MAJOR=${MAKE_VERSION%% *}
+if (( MAKE_MAJOR < 4 )); then
+    echo "GNU Make 4 or newer is required (found $MAKE_VERSION)" >&2
+    exit 1
+fi
 "$MAKE_BIN" ios -j4 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL

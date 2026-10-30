@@ -52,6 +52,12 @@ jobs:
           sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
           echo "iPhoneOS SDK: $sdk_version"
           [[ "$sdk_version" == 27.* ]]
+      - name: Install GNU Make 4 for game build
+        run: |
+          if ! command -v gmake >/dev/null 2>&1 || ! gmake --version | head -n 1 | grep -Eq 'GNU Make ([4-9]|[1-9][0-9])\.'; then
+            brew install make
+          fi
+          gmake --version | head -n 1
       - name: Check private asset configuration
         shell: bash
         env:
