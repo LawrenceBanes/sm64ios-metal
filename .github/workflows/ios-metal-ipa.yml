@@ -1,0 +1,127 @@
+name: Native iOS Metal IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Linux checks
+        run: |
+          tests/run_linux_checks.sh
+          tests/check_metal_project_wiring.sh
+      - name: Validate Python tools and shell scripts
+        run: |
+          python3 -m py_compile ios/asset_bundle.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py
+          bash -n ios/build_sdl2_ios.sh
+          (cd ios && python3 -m unittest -v test_ipa_validation.py)
+
+  ios-arm64-ipa:
+    if: github.repository == 'LawrenceBanes/sm64ios-metal' && github.event.repository.private == true
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
+      ASSET_BUNDLE_URL: ${{ secrets.SM64_ASSET_BUNDLE_URL }}
+      ASSET_BUNDLE_SHA256: ${{ secrets.SM64_ASSET_BUNDLE_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Xcode and iOS 27 SDK
+        run: |
+          xcodebuild -version
+          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "iPhoneOS SDK: $sdk_version"
+          [[ "$sdk_version" == 27.* ]]
+      - name: Check private asset configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$ASSET_BUNDLE_URL" || -z "$ASSET_BUNDLE_SHA256" ]]; then
+            echo "Configure SM64_ASSET_BUNDLE_URL and SM64_ASSET_BUNDLE_SHA256 repository secrets." >&2
+            echo "The URL must serve a private tar.gz created by ios/asset_bundle.py; do not put ROM/assets in Git." >&2
+            exit 1
+          fi
+          [[ "$ASSET_BUNDLE_URL" == https://* ]] || { echo "Asset URL must use HTTPS." >&2; exit 1; }
+          [[ "$ASSET_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Asset SHA-256 secret must contain 64 hex characters." >&2; exit 1; }
+      - name: Download private extracted assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 "$ASSET_BUNDLE_URL" -o "$RUNNER_TEMP/sm64-assets.tar.gz"
+          python3 - "$RUNNER_TEMP/sm64-assets.tar.gz" "$ASSET_BUNDLE_SHA256" <<'PY'
+          import hashlib, pathlib, sys
+          digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest()
+          if digest.lower() != sys.argv[2].lower():
+              raise SystemExit("private asset bundle SHA-256 mismatch")
+          print("private asset bundle checksum verified")
+          PY
+          python3 ios/asset_bundle.py extract "$RUNNER_TEMP/sm64-assets.tar.gz" --root "$GITHUB_WORKSPACE"
+      - name: Fetch pinned SDL2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/SDL2"
+          git -C "$RUNNER_TEMP/SDL2" remote add origin https://github.com/libsdl-org/SDL.git
+          git -C "$RUNNER_TEMP/SDL2" fetch --depth 1 origin "$SDL2_REVISION"
+          git -C "$RUNNER_TEMP/SDL2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/SDL2" rev-parse HEAD)" = "$SDL2_REVISION"
+      - name: Build SDL2 arm64 iOS static libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ios-products/Release-iphoneos"
+          ios/build_sdl2_ios.sh \
+            "$RUNNER_TEMP/SDL2" \
+            "$RUNNER_TEMP/ios-products/Release-iphoneos" \
+            "$RUNNER_TEMP/sdl2-stage" 2>&1 | tee "$RUNNER_TEMP/sdl2-build.log"
+      - name: Build native iOS Metal app and create unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRODUCT_DIR="$RUNNER_TEMP/ios-products/Release-iphoneos"
+          SDL_STAGE="$RUNNER_TEMP/sdl2-stage"
+          SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=0 xcodebuild \
+            -project sm64ios/sm64ios.xcodeproj \
+            -scheme sm64ios \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            SYMROOT="$RUNNER_TEMP/ios-products" \
+            CONFIGURATION_BUILD_DIR="$PRODUCT_DIR" \
+            SDL2_ROOT="$SDL_STAGE" \
+            SDL2_INCLUDE_DIR="$SDL_STAGE/include" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+          python3 ios/package_unsigned_ipa.py "$PRODUCT_DIR/sm64ios.app" "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa"
+      - name: Validate IPA layout, app metadata, arm64 slices, and linked dependencies
+        run: python3 ios/validate_ipa.py "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" --require-system-deps
+      - name: Upload private IPA and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sm64ios-arm64-unsigned-ipa
+          path: |
+            ${{ runner.temp }}/sm64ios-arm64-unsigned.ipa
+            ${{ runner.temp }}/sdl2-build.log
+            ${{ runner.temp }}/ios-build.log
+          if-no-files-found: ignore
+          retention-days: 1
+      - name: Remove local ROM-derived assets and temporary dependency files
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python3 ios/asset_bundle.py clean --root "$GITHUB_WORKSPACE"
+          rm -f "$RUNNER_TEMP/sm64-assets.tar.gz"
+          rm -rf "$RUNNER_TEMP/SDL2" "$RUNNER_TEMP/sdl2-stage" "$RUNNER_TEMP/DerivedData" "$RUNNER_TEMP/ios-products"
+          rm -rf "$GITHUB_WORKSPACE/build/us_pc"

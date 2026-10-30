@@ -551,13 +551,13 @@ else ifeq ($(findstring SDL,$(WINDOW_API)),SDL)
     BACKEND_LDFLAGS += -lGLESv2
   else ifeq ($(TARGET_IOS),1)
 	ifeq ($(TARGET_OS_IOS),1)
-	      BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework CoreAudio -framework IOKit -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreMotion -framework CoreHaptics -framework Metal -framework MetalKit -L. -lSDL2 -lc++ -lstdc++ -D.
+	      BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework CoreAudio -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreMotion -framework CoreHaptics -framework Metal -framework MetalKit -L$(IOSLIBS) -lSDLmain -lSDL2 -lc++ -D.
 	      ifneq (,$(filter GL GL_LEGACY,$(RENDER_API)))
 	        BACKEND_LDFLAGS += -framework OpenGLES
 	      endif
       BACKEND_CFLAGS += -DTARGET_OS_IOS
     else
-	  BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework CoreAudio -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreHaptics -framework Metal -framework MetalKit -L. -lSDL2 -lc++ -lstdc++ -D.
+	  BACKEND_LDFLAGS += -framework AVFoundation -framework AudioToolbox -framework CoreFoundation -framework CoreGraphics -framework CoreBluetooth -framework GameController -framework Foundation -framework UIKit -framework QuartzCore -framework CoreHaptics -framework Metal -framework MetalKit -L$(IOSLIBS) -lSDLmain -lSDL2 -lc++ -D.
 	  ifneq (,$(filter GL GL_LEGACY,$(RENDER_API)))
 	    BACKEND_LDFLAGS += -framework OpenGLES
 	  endif
@@ -702,6 +702,10 @@ else ifeq ($(WINDOWS_BUILD),1)
 
 else ifeq ($(TARGET_RPI),1)
   LDFLAGS := $(OPT_FLAGS) -lm $(BACKEND_LDFLAGS) -no-pie
+
+else ifeq ($(TARGET_IOS),1)
+  # iOS executables must remain position-independent; pthread APIs are in libSystem.
+  LDFLAGS := -lm $(BACKEND_LDFLAGS)
 
 else ifeq ($(OSX_BUILD),1)
   LDFLAGS := -lm $(BACKEND_LDFLAGS) -no-pie -lpthread
