@@ -35,8 +35,9 @@ xcrun --sdk iphonesimulator clang "${common[@]}" -isysroot "$simulator_sdk" -arc
     -o "$simulator_dir/MetalBackendValidation"
 
 echo "Generating representative shader variants."
-host_cc=$(xcrun --sdk macosx --find clang)
-"$host_cc" -std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 \
+host_sdk=$(xcrun --sdk macosx --show-sdk-path)
+xcrun --sdk macosx clang -isysroot "$host_sdk" -std=gnu11 \
+    -D_LANGUAGE_C -DF3DEX_GBI_2E=1 \
     -I"$repo_dir/include" -I"$repo_dir/src" -I"$repo_dir" \
     "$repo_dir/tests/metal_shader_emit.c" \
     "$repo_dir/src/pc/gfx/gfx_metal_shader.c" "$repo_dir/src/pc/gfx/gfx_cc.c" \

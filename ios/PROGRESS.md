@@ -13,6 +13,7 @@
 - Audited RENDER96's `gfx/actors`, `gfx/levels`, and `gfx/textures` layout against the existing `EXTERNAL_DATA` path. Findings and the optional override design are in [`RENDER96_TEXTURE_COMPATIBILITY.md`](RENDER96_TEXTURE_COMPATIBILITY.md); no pack assets were cloned or added.
 - Prepared a ROM-independent Apple validation harness and GitHub Actions workflow. The harness compiles and links the Metal backend for device and simulator SDKs, emits representative MSL and compiles iOS AIR/metallib outputs, and checks the actual source/framework wiring. The workflow also runs the Linux suite and uploads logs/artifacts.
 - Fixed the first CI run's Linux `tabledesign` linker failure by making the bundled audiofile archive an explicit prerequisite and linking that exact archive path. The macOS Apple SDK job now runs independently of Linux so host tool regressions do not suppress Apple compiler diagnostics.
+- Corrected validation-script error propagation and host macOS SDK selection after run `41108917814` showed successful device/simulator backend links but exposed that `tee` masked a later shader-generator failure. Do not count that run as MSL validation; representative shader generation and Apple's MSL compiler still need a passing run.
 
 ## Validation
 
@@ -26,12 +27,12 @@
 - `make -C tools -j2`: passed earlier in this checkout; only existing toolchain deprecation/format warnings were emitted.
 - GitHub Actions run `41108219376` passed shader generation, state translation, scene capture, and CPU BVH checks, then failed linking `tools/tabledesign` against audiofile symbols. The fix is now covered by clean parallel host-tool builds; the macOS job was skipped on that run and will be independent on the next push.
 - Full SM64 build remains blocked on the absent `baserom.us.z64` and ROM-derived assets. `xcodebuild` and Apple SDKs are not installed in this Linux environment.
-- Apple SDK validation is prepared and awaits a successful macOS Actions run. The first run skipped macOS because Linux failed; the next workflow run will execute both jobs independently. No iPhone rendering or IPA installation has been validated.
+- Device and simulator Objective-C backend compilation/linking passed in Actions run `41108917814`. MSL generation/compilation did not run successfully: the host shader generator could not find `stdio.h`, and a workflow `tee` pipeline hid that script failure. The workflow now propagates pipeline failures, and the host generator uses the macOS SDK sysroot explicitly. No full MSL validation, iPhone rendering, or IPA installation is yet validated.
 
 ## Outstanding work
 
 - Review Metal API semantics on Apple SDKs: compile generated MSL, validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime.
-- Continue reading GitHub Actions logs and artifacts; diagnose any Apple compiler/linker/MSL failures from its saved artifact logs.
+- Continue reading GitHub Actions logs and artifacts; complete MSL generation/compilation and resolve any Apple compiler errors.
 - Finish ARM64 build dependencies; the existing SDL2 headers/static library and `ioslib` paths are missing from this Linux checkout.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.

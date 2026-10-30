@@ -37,6 +37,7 @@ jobs:
         env:
           METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/metal-apple-validation
         run: |
+          set -o pipefail
           mkdir -p "$METAL_VALIDATION_OUTPUT_DIR"
           ios/validate-metal-apple.sh 2>&1 | tee "$METAL_VALIDATION_OUTPUT_DIR/validation.log"
       - name: Save Apple SDK logs and binaries
