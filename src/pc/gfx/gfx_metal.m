@@ -36,6 +36,12 @@ struct MetalTexture {
     int height;
 };
 
+struct MetalFragmentParams {
+    uint32_t filter0;
+    uint32_t filter1;
+    float frame_count;
+};
+
 static id<MTLDevice> metal_device;
 static id<MTLCommandQueue> metal_queue;
 static MTKView *metal_view;
@@ -46,6 +52,7 @@ static struct MetalProgram programs[METAL_SHADER_CAP];
 static size_t program_count;
 static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
+static uint32_t frame_count;
 static struct MetalTexture *bound_textures[2];
 static struct MetalTexture *current_texture;
 static id<MTLSamplerState> metal_samplers[2];
@@ -259,12 +266,14 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         [metal_encoder setFragmentTexture:bound_textures[1]->texture atIndex:1];
         [metal_encoder setFragmentSamplerState:metal_samplers[1] atIndex:1];
     }
-    if (active_program->features.used_textures[0] || active_program->features.used_textures[1]) {
-        uint32_t filter_params[2] = {
+    if (active_program->features.used_textures[0] || active_program->features.used_textures[1] ||
+        active_program->features.opt_noise) {
+        struct MetalFragmentParams fragment_params = {
             configFiltering == 2 && sampler_linear[0] ? 1u : 0u,
-            configFiltering == 2 && sampler_linear[1] ? 1u : 0u
+            configFiltering == 2 && sampler_linear[1] ? 1u : 0u,
+            (float)frame_count
         };
-        id<MTLBuffer> params = [metal_device newBufferWithBytes:filter_params length:sizeof(filter_params)
+        id<MTLBuffer> params = [metal_device newBufferWithBytes:&fragment_params length:sizeof(fragment_params)
                                                         options:MTLResourceStorageModeShared];
         if (!params) { [buffer release]; return; }
         [metal_encoder setFragmentBuffer:params offset:0 atIndex:1];
@@ -337,6 +346,7 @@ static void gfx_metal_start_frame(void) {
     pass.depthAttachment.storeAction = MTLStoreActionDontCare;
     pass.depthAttachment.clearDepth = 1.0;
     metal_encoder = [metal_command renderCommandEncoderWithDescriptor:pass];
+    ++frame_count;
     has_viewport = has_scissor = false;
 }
 static void gfx_metal_end_frame(void) {
@@ -361,6 +371,7 @@ static void gfx_metal_shutdown(void) {
     metal_view = nil; metal_queue = nil; metal_device = nil;
     memset(programs, 0, sizeof(programs)); memset(textures, 0, sizeof(textures));
     program_count = 0; texture_count = 0; memset(depth_states, 0, sizeof(depth_states));
+    frame_count = 0;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;
     sampler_linear[0] = sampler_linear[1] = false;

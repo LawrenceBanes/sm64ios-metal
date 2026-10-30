@@ -99,8 +99,11 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     out[0] = '\0';
 
     write_text(&w, "#include <metal_stdlib>\nusing namespace metal;\n");
+    if (features->used_textures[0] || features->used_textures[1] || features->opt_noise) {
+        write_text(&w, "struct FragmentParams { uint filter0; uint filter1; float frameCount; };\n");
+    }
     if (features->used_textures[0] || features->used_textures[1]) {
-        write_text(&w, "struct SamplerParams { uint filter0; uint filter1; };\n"
+        write_text(&w,
                        "float4 sampleTex(texture2d<float> tex, sampler samp, float2 uv, bool dofilter) {\n"
                        "if (!dofilter) return tex.sample(samp, uv);\n"
                        "float2 size=float2(tex.get_width(),tex.get_height());\n"
@@ -110,6 +113,11 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                        "float4 c1=tex.sample(samp,uv-float2(offset.x-sign(offset.x),offset.y)/size);\n"
                        "float4 c2=tex.sample(samp,uv-float2(offset.x,offset.y-sign(offset.y))/size);\n"
                        "return c0+abs(offset.x)*(c1-c0)+abs(offset.y)*(c2-c0); }\n");
+    }
+    if (features->opt_alpha && features->opt_noise) {
+        write_text(&w, "float randomValue(float3 value) {\n"
+                       "float random=dot(sin(value),float3(12.9898,78.233,37.719));\n"
+                       "return fract(sin(random)*143758.5453); }\n");
     }
     write_text(&w,
                    "struct VIn { float4 pos [[attribute(0)]];\n");
@@ -136,10 +144,12 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     if (features->used_textures[0]) write_text(&w, ", texture2d<float> tex0 [[texture(0)]], sampler samp0 [[sampler(0)]]");
     if (features->used_textures[1]) write_text(&w, ", texture2d<float> tex1 [[texture(1)]], sampler samp1 [[sampler(1)]]");
     if (features->used_textures[0] || features->used_textures[1])
-        write_text(&w, ", constant SamplerParams &filterParams [[buffer(1)]]");
+        write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
+    else if (features->opt_noise)
+        write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
     write_text(&w, ") {\n");
-    if (features->used_textures[0]) write_text(&w, "float4 texel0=sampleTex(tex0,samp0,in.uv,filterParams.filter0!=0);\n");
-    if (features->used_textures[1]) write_text(&w, "float4 texel1=sampleTex(tex1,samp1,in.uv,filterParams.filter1!=0);\n");
+    if (features->used_textures[0]) write_text(&w, "float4 texel0=sampleTex(tex0,samp0,in.uv,params.filter0!=0);\n");
+    if (features->used_textures[1]) write_text(&w, "float4 texel1=sampleTex(tex1,samp1,in.uv,params.filter1!=0);\n");
     if (features->opt_alpha && !features->color_alpha_same) {
         write_text(&w, "float4 color=float4(");
         write_formula(&w, features, 0, false, false);
@@ -161,6 +171,8 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         if (features->opt_alpha) write_text(&w, "color=float4(mix(color.rgb,in.fog.rgb,in.fog.a),color.a);\n");
         else write_text(&w, "color.rgb=mix(color.rgb,in.fog.rgb,in.fog.a);\n");
     }
+    if (features->opt_alpha && features->opt_noise)
+        write_text(&w, "color.a*=floor(randomValue(floor(float3(in.pos.xy,params.frameCount)))+0.5);\n");
     write_text(&w, "return color; }\n");
     return w.ok;
 }

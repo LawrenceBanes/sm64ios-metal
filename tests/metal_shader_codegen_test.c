@@ -33,11 +33,21 @@ int main(void) {
     assert(features.opt_alpha && features.opt_fog && features.opt_texture_edge);
     assert(strstr(source, "texture2d<float> tex0 [[texture(0)]]") != NULL);
     assert(strstr(source, "sampler samp0 [[sampler(0)]]") != NULL);
-    assert(strstr(source, "SamplerParams &filterParams [[buffer(1)]]") != NULL);
-    assert(strstr(source, "sampleTex(tex0,samp0,in.uv,filterParams.filter0!=0)") != NULL);
+    assert(strstr(source, "FragmentParams &params [[buffer(1)]]") != NULL);
+    assert(strstr(source, "sampleTex(tex0,samp0,in.uv,params.filter0!=0)") != NULL);
     assert(strstr(source, "offset-=step(1.0,offset.x+offset.y)") != NULL);
     assert(strstr(source, "discard_fragment()") != NULL);
     assert(strstr(source, "mix(color.rgb,in.fog.rgb,in.fog.a)") != NULL);
+
+    uint8_t noise_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
+    uint8_t noise_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };
+    id = shader(noise_rgb, noise_alpha, SHADER_OPT_ALPHA | SHADER_OPT_NOISE);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(features.opt_noise && features.opt_alpha);
+    assert(strstr(source, "randomValue(float3 value)") != NULL);
+    assert(strstr(source, "constant FragmentParams &params [[buffer(1)]]") != NULL);
+    assert(strstr(source, "in.pos.xy,params.frameCount") != NULL);
+    assert(strstr(source, "color.a*=floor(randomValue(") != NULL);
 
     assert(!gfx_metal_build_shader(id, source, 8, &features));
     assert(!gfx_metal_build_shader(id, NULL, sizeof(source), &features));
