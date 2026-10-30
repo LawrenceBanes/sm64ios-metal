@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import shutil
 
 
 def read_asset_map():
@@ -152,12 +153,31 @@ def main():
             )
             sys.exit(1)
     
-    # Get version of GCC we've installed through brew
-    osx_gcc_ver = subprocess.run("find `brew --prefix`/bin/gcc* | grep -oE '[[:digit:]]+' | sort -n | uniq | tail -1", stdout=subprocess.PIPE, shell=True).stdout.decode("utf-8").strip()
+    # Asset tools run on the build host, even when the game itself is being
+    # cross-compiled for iOS. Use dedicated overrides rather than CC/CXX, which
+    # may point at the iOS SDK toolchain. Older macOS setups used Homebrew GCC.
+    cc = os.environ.get("ASSET_CC") or os.environ.get("HOST_CC")
+    cxx = os.environ.get("ASSET_CXX") or os.environ.get("HOST_CXX")
+    brew = shutil.which("brew")
+    if not cc and not cxx and sys.platform == "darwin" and brew:
+        brew_prefix = subprocess.check_output([brew, "--prefix"], text=True).strip()
+        gcc_bins = []
+        try:
+            gcc_bins = [name for name in os.listdir(os.path.join(brew_prefix, "bin")) if name.startswith("gcc-") and name[4:].isdigit()]
+        except FileNotFoundError:
+            pass
+        if gcc_bins:
+            version = max((int(name[4:]), name[4:]) for name in gcc_bins)[1]
+            cc, cxx = "gcc-" + version, "g++-" + version
+    cc = cc or "cc"
+    cxx = cxx or "c++"
+    make = shutil.which("gmake") or shutil.which("make")
+    if not make:
+        raise RuntimeError("GNU make or make is required to build asset tools")
 
-    # Make sure tools exist
+    # Make sure tools exist.
     subprocess.check_call(
-        ["gmake", "-s", "-C", "tools/", "CC=gcc-" + osx_gcc_ver, "CXX=g++-" + osx_gcc_ver, "n64graphics", "skyconv", "mio0", "aifc_decode"]
+        [make, "-s", "-C", "tools/", "CC=" + cc, "CXX=" + cxx, "n64graphics", "skyconv", "mio0", "aifc_decode"]
     )
 
     # Go through the assets in roughly alphabetical order (but assets in the same
