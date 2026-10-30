@@ -16,12 +16,27 @@ The ROM stays in the developer checkout. Create an archive from the 1,538 USA-ma
 python3 ios/asset_bundle.py create /tmp/sm64-assets.tar.gz
 ```
 
-Upload that archive to an owner-controlled private object store. Configure two repository Actions secrets in the private `LawrenceBanes/sm64ios-metal` repository:
+For the simplest one-time transfer, use a temporary **draft release in the private project repository**. It requires no extra hosting account or URL secret and is deleted, along with its temporary tag, by the IPA workflow even when a later build step fails:
 
-- `SM64_ASSET_BUNDLE_URL`: an HTTPS download URL with enough lifetime for the manually dispatched build.
-- `SM64_ASSET_BUNDLE_SHA256`: SHA-256 of the archive.
+```sh
+bundle=/tmp/sm64-assets.tar.gz
+python3 ios/asset_bundle.py create "$bundle"
+sha256sum "$bundle" | awk '{print $1}' > /tmp/sm64-assets.sha256
+tag="sm64-assets-$(date -u +%Y%m%dT%H%M%SZ)-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+gh release create "$tag" "$bundle" /tmp/sm64-assets.sha256 \
+  --repo LawrenceBanes/sm64ios-metal \
+  --draft \
+  --title 'Temporary private asset bundle' \
+  --notes 'Temporary private asset bundle for sm64ios-metal IPA build.'
+gh workflow run ios-metal-ipa.yml \
+  --repo LawrenceBanes/sm64ios-metal \
+  --ref ios \
+  -f "asset_bundle_release_tag=$tag"
+```
 
-The archive is checked against `assets.json`, limited to the USA-mapped regular asset files, and extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
+The manual workflow downloads the two files using its repository-scoped token, validates the SHA-256 and archive contents, and removes the draft release/tag at job cleanup. This places the asset bundle briefly in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
+
+The archive is limited to the USA-mapped regular asset files and checked against `assets.json`, then extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
 
 The produced IPA contains the compiled game assets, so the IPA artifact is available only from this private repository and retained for one day. Workflow logs contain compiler output but not archive contents or the download URL. Do not mirror the IPA or asset bundle to a public release or artifact store.
 
@@ -33,4 +48,4 @@ The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is
 
 ## Current intervention needed
 
-GitHub DNS is failing in the development shell, and `gh auth status` reports the stored credential invalid. No credential reset or login was attempted. After DNS returns, recheck authentication and push the local commits. Before dispatching this workflow, configure the two private asset secrets above. The workflow refuses to build without them.
+The DNS failure was isolated to the restricted development shell: a host-level connectivity check resolved GitHub and reached HTTPS. GitHub CLI authentication was revalidated and the two pending commits were pushed to `metal-origin/ios`. The local USA asset bundle contains 1,538 files and is 9.5 MiB compressed. A temporary private-release option was added so the first build does not depend on configuring an external object-store URL or long-lived repository secrets.
