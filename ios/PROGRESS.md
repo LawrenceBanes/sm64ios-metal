@@ -5,6 +5,7 @@
 - Selected the direct `sm64ex-ios` base and retained the existing `GfxRenderingAPI`, Fast3D interpreter, UIKit touch overlay, SDL2 controller/audio paths, and save path.
 - Added `gfx_metal_shader.c`, a portable shader-ID-to-MSL generator that derives input and texture features through the existing combiner feature decoder. It generates color/alpha combiners, texture reads, texture-edge discard, fog, and optional three-point filtering. Added Linux checks for untextured/textured, alpha, fog, texture-edge, filtering, and buffer-capacity cases.
 - Added an initial `RAPI_METAL` implementation using MetalKit/MTKView, dynamic MSL compilation, pipeline state, texture upload, per-tile samplers, blending, depth, viewport, scissor, and manual command-buffer presentation. The SDL/UIKit window integration now has a non-OpenGL mode for iOS Metal.
+- Extracted sampler wrap and pipeline-key translation into portable C helpers and added Linux tests for repeat/mirror/clamp and all four pipeline-state bits. The Objective-C backend now uses those helpers; its Apple frameworks and MSL remain uncompiled here.
 - Updated iOS build scripts to resolve SDK/compiler paths with `xcrun`, select `RENDER_API=METAL` for iOS, and retain GL for the separate tvOS target. Added Metal source and MetalKit references to the Xcode project.
 - Added an opt-in scene capture buffer before projection output. It records local vertex positions, normals, UVs, shade colors, model-view/projection matrices, combiner and texture IDs, plus stable-in-process source keys for geometry and matrix paths. It is disabled by default and drops excess triangles at a fixed bound.
 - Audited the isolated MIT RT64 legacy checkout. Its reusable conceptual model and ray-pass findings are in [`RT64_COMPATIBILITY.md`](RT64_COMPATIBILITY.md); no RT64 source was copied.
@@ -13,7 +14,7 @@
 
 - `tests/run_metal_shader_codegen_test.sh`: passing on Linux (portable C code only; this does not compile MSL or the Objective-C Metal backend).
 - `tests/run_scene_capture_test.sh`: passing on Linux (disabled/enabled storage, copied vertex/matrix values, and stable-key checks).
-- `tests/run_linux_checks.sh`: passing; runs both portable test programs, Clang syntax checks for `gfx_pc.c`, scene capture, and MSL code generation under both `RAPI_GL` and `RAPI_METAL`, then builds host tools.
+- `tests/run_linux_checks.sh`: passing; runs shader generation, sampler/pipeline state translation, and scene-capture tests; Clang syntax-checks `gfx_pc.c`, scene capture, and shader generation under both `RAPI_GL` and `RAPI_METAL`; checks that the Metal Objective-C file excludes cleanly on non-Apple hosts; and builds host tools.
 - `bash -n build.sh build_ios.sh tests/run_linux_checks.sh tests/run_scene_capture_test.sh` and `git diff --check`: passing.
 - `make -C tools -j2`: passed earlier in this checkout; only existing toolchain deprecation/format warnings were emitted.
 - Full SM64 build remains blocked on the absent `baserom.us.z64` and ROM-derived assets. `xcodebuild` and Apple SDKs are not installed in this Linux environment.
