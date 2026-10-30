@@ -26,7 +26,7 @@ aiff_extract_codebook_SOURCES := aiff_extract_codebook.c
 
 tabledesign_SOURCES := sdk-tools/tabledesign/codebook.c sdk-tools/tabledesign/estimate.c sdk-tools/tabledesign/print.c sdk-tools/tabledesign/tabledesign.c
 tabledesign_CFLAGS := -Iaudiofile -Wno-uninitialized
-tabledesign_LDFLAGS := -Laudiofile -laudiofile -lstdc++ -lm
+tabledesign_LDFLAGS := audiofile/libaudiofile.a -lstdc++ -lm
 
 vadpcm_enc_SOURCES := sdk-tools/adpcm/vadpcm_enc.c sdk-tools/adpcm/vpredictor.c sdk-tools/adpcm/quant.c sdk-tools/adpcm/util.c sdk-tools/adpcm/vencode.c
 vadpcm_enc_CFLAGS := -Wno-unused-result -Wno-uninitialized -Wno-sign-compare -Wno-absolute-value
@@ -52,5 +52,11 @@ $(1): $($1_SOURCES)
 endef
 
 $(foreach p,$(PROGRAMS),$(eval $(call COMPILE,$(p))))
+
+# tabledesign links against the repository's bundled audiofile implementation.
+# Keep the archive as an explicit prerequisite so parallel builds cannot start
+# the link before it is available, and pass its exact path to avoid selecting a
+# system libaudiofile with a different exported API.
+tabledesign: | $(LIBAUDIOFILE)
 
 .PHONY: all clean default

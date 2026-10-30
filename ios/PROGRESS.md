@@ -12,6 +12,7 @@
 - Audited the isolated MIT RT64 legacy checkout. Its reusable conceptual model and ray-pass findings are in [`RT64_COMPATIBILITY.md`](RT64_COMPATIBILITY.md); no RT64 source was copied.
 - Audited RENDER96's `gfx/actors`, `gfx/levels`, and `gfx/textures` layout against the existing `EXTERNAL_DATA` path. Findings and the optional override design are in [`RENDER96_TEXTURE_COMPATIBILITY.md`](RENDER96_TEXTURE_COMPATIBILITY.md); no pack assets were cloned or added.
 - Prepared a ROM-independent Apple validation harness and GitHub Actions workflow. The harness compiles and links the Metal backend for device and simulator SDKs, emits representative MSL and compiles iOS AIR/metallib outputs, and checks the actual source/framework wiring. The workflow also runs the Linux suite and uploads logs/artifacts.
+- Fixed the first CI run's Linux `tabledesign` linker failure by making the bundled audiofile archive an explicit prerequisite and linking that exact archive path. The macOS Apple SDK job now runs independently of Linux so host tool regressions do not suppress Apple compiler diagnostics.
 
 ## Validation
 
@@ -23,13 +24,14 @@
 - `make -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL` confirms the Makefile selects `sm64ios`, defines `RAPI_METAL`, and includes the new Metal sources. A full target dry run cannot reach compilation because the ROM image required for asset extraction is absent.
 - `bash -n build.sh build_ios.sh tests/run_linux_checks.sh tests/run_scene_capture_test.sh tests/run_metal_state_test.sh tests/run_scene_bvh_test.sh` and `git diff --check`: passing.
 - `make -C tools -j2`: passed earlier in this checkout; only existing toolchain deprecation/format warnings were emitted.
+- GitHub Actions run `41108219376` passed shader generation, state translation, scene capture, and CPU BVH checks, then failed linking `tools/tabledesign` against audiofile symbols. The fix is now covered by clean parallel host-tool builds; the macOS job was skipped on that run and will be independent on the next push.
 - Full SM64 build remains blocked on the absent `baserom.us.z64` and ROM-derived assets. `xcodebuild` and Apple SDKs are not installed in this Linux environment.
-- Apple SDK validation is prepared but has not run yet. The current `origin` is read-only, exposes no Actions workflow/runs, and the local `gh` login is unavailable. The connected account has no existing SM64 project repository. See [`GITHUB_SETUP.md`](GITHUB_SETUP.md) for the exact personal-repository setup; no remote changes have been made.
+- Apple SDK validation is prepared and awaits a successful macOS Actions run. The first run skipped macOS because Linux failed; the next workflow run will execute both jobs independently. No iPhone rendering or IPA installation has been validated.
 
 ## Outstanding work
 
 - Review Metal API semantics on Apple SDKs: compile generated MSL, validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime.
-- Push this local branch to a new repository under the GitHub account to run the prepared macOS Actions validation; diagnose any Apple compiler/linker/MSL failures from its saved artifact logs.
+- Continue reading GitHub Actions logs and artifacts; diagnose any Apple compiler/linker/MSL failures from its saved artifact logs.
 - Finish ARM64 build dependencies; the existing SDL2 headers/static library and `ioslib` paths are missing from this Linux checkout.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
