@@ -58,6 +58,12 @@ jobs:
             brew install make
           fi
           gmake --version | head -n 1
+      - name: Install GNU binutils for sound-data extraction
+        run: |
+          if ! command -v gobjcopy >/dev/null 2>&1; then
+            brew install binutils
+          fi
+          gobjcopy --version | head -n 1
       - name: Check private asset configuration
         shell: bash
         env:

@@ -29,7 +29,9 @@ printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDL2 -lc++'
 ios_cpp=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products | sed -n 's/^CPP := //p' | head -n 1)
 test "$ios_cpp" = "clang -E -P -x c"
 ios_as=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^AS := //p' | head -n 1)
-test "$ios_as" = "clang"
+test "$ios_as" = "clang -target x86_64-unknown-linux-gnu"
+ios_objcopy=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^OBJCOPY := //p' | head -n 1)
+test "$ios_objcopy" = "gobjcopy"
 ios_asflags=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^ASFLAGS := //p' | head -n 1)
 printf '%s\n' "$ios_asflags" | grep -Fq -- '-Wa,--defsym,AVOID_UB=1'
 printf '%s\n' "$ios_asflags" | grep -Fq -- '-Wa,--defsym,F3DEX_GBI_2E=1'

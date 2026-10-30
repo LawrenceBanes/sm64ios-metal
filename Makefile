@@ -485,7 +485,8 @@ AS := $(CROSS)as
 
 ifeq ($(OSX_BUILD),1)
   ifeq ($(TARGET_IOS),1)
-    AS := $(CC)
+    # Sequence assembly is data-only and uses GNU GAS syntax; emit host ELF for objcopy.
+    AS := clang -target x86_64-unknown-linux-gnu
   else
     AS := i686-w64-mingw32-as
   endif
@@ -524,7 +525,11 @@ else ifeq ($(OSX_BUILD),1)
     CPP := cpp-12 -P
   endif
   OBJDUMP := i686-w64-mingw32-objdump
-  OBJCOPY := i686-w64-mingw32-objcopy
+  ifeq ($(TARGET_IOS),1)
+    OBJCOPY := gobjcopy
+  else
+    OBJCOPY := i686-w64-mingw32-objcopy
+  endif
 else # Linux & other builds
   CPP := $(CROSS)cpp -P
   OBJCOPY := $(CROSS)objcopy
