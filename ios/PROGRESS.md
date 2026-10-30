@@ -23,6 +23,7 @@
 - First full IPA workflow attempt `41128197111` stopped before compilation: Linux lacked the SDL2 development package and the macOS preflight did not pass `GH_TOKEN` to `gh`. Both are fixed. The draft release was deleted by cleanup; `--cleanup-tag` additionally failed because draft releases do not create a Git ref, so cleanup now deletes only the release. No Apple app build was reached in that run.
 - Retry `41128364463` passed asset validation/download, pinned SDL2 fetch, and Linux checks. SDL2's `xcodebuild -target` invocation rejected `-derivedDataPath` because that option requires a scheme. Removed the incompatible option; its explicit `SYMROOT` and `OBJROOT` still isolate the build products. The app target was not reached.
 - Retry `41128570048` verified the pinned SDL2 project has no `SDLmain-iOS` target. SDL 2.32.10's iOS static library includes `SDL_uikit_main.c`, so the builder and iPhone target now build/link only `libSDL2.a`; a Linux wiring test checks the target and expected entry point. This attempt also ended before building the app.
+- Run `41129008514` reached Xcode's iPhoneOS compile setup, then failed because the old SDL project defaults to iOS 9.0 while Xcode 27.1/iOS SDK 27.1 accepts 15.0 through 27.1. Set SDL and app deployment targets to 15.0 to match the current SDK floor and iPhone 14 Pro Max target.
 
 ## Validation
 
@@ -47,7 +48,7 @@
 ## Outstanding work
 
 - Review Metal API runtime semantics: validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime on simulator/device.
-- Complete local checks, push the SDL2 target correction, recreate the temporary private asset release, and rerun the iOS build. Continue from compiler/linker/package errors.
+- Complete local checks, push the iOS 15 deployment target correction, recreate the temporary private asset release, and rerun the iOS build. Continue from compiler/linker/package errors.
 - SDL2 headers/static libraries are built by the new pinned helper but remain unvalidated until macOS CI runs. The current Linux host has no `xcodebuild`.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
@@ -57,7 +58,7 @@
 
 ## Next steps
 
-1. Push the SDL2 target correction, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
+1. Push the iOS 15 deployment target correction, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
 2. Resolve any SDL2, game linker, app bundle, or IPA validator failures from CI.
 3. Obtain the unsigned IPA artifact, sign with SideStore, and install/launch it on the iPhone before claiming runtime success.
 4. After the first IPA milestone, return to scene capture and future ray-tracing work.

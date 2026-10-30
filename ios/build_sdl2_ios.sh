@@ -30,6 +30,7 @@ xcodebuild \
     -configuration Release \
     -sdk iphoneos \
     -arch arm64 \
+    IPHONEOS_DEPLOYMENT_TARGET=15.0 \
     SYMROOT="$BUILD_ROOT/Products" \
     OBJROOT="$BUILD_ROOT/Intermediates" \
     ONLY_ACTIVE_ARCH=NO \
