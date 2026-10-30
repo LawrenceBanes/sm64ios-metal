@@ -22,6 +22,7 @@
 #include "gfx_cc.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
+#include "gfx_scene_capture.h"
 #include "gfx_screen_config.h"
 
 #include "../platform.h"
@@ -74,6 +75,11 @@ struct LoadedVertex {
     float u, v;
     struct RGBA color;
     uint8_t clip_rej;
+    float local_position[3];
+    float normal[3];
+    float modelview[4][4];
+    uint64_t geometry_id;
+    uint64_t instance_id;
 };
 
 struct TextureHashmapNode {
@@ -103,6 +109,7 @@ static uint8_t color_combiner_pool_size;
 
 static struct RSP {
     float modelview_matrix_stack[11][4][4];
+    uint64_t modelview_identity_stack[11];
     uint8_t modelview_matrix_stack_size;
     
     float MP_matrix[4][4];
@@ -725,11 +732,20 @@ static void gfx_sp_matrix(uint8_t parameters, const int32_t *addr) {
         if ((parameters & G_MTX_PUSH) && rsp.modelview_matrix_stack_size < 11) {
             ++rsp.modelview_matrix_stack_size;
             memcpy(rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 2], sizeof(matrix));
+            rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 1] = rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 2];
         }
         if (parameters & G_MTX_LOAD) {
             memcpy(rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], matrix, sizeof(matrix));
+            if (gfx_scene_capture_is_enabled()) {
+                rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 1] =
+                    gfx_scene_capture_hash_combine(0, (uintptr_t)addr);
+            }
         } else {
             gfx_matrix_mul(rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], matrix, rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1]);
+            if (gfx_scene_capture_is_enabled()) {
+                rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 1] =
+                    gfx_scene_capture_hash_combine(rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 1], (uintptr_t)addr);
+            }
         }
         rsp.lights_changed = 1;
     }
@@ -756,6 +772,19 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         const Vtx_t *v = &vertices[i].v;
         const Vtx_tn *vn = &vertices[i].n;
         struct LoadedVertex *d = &rsp.loaded_vertices[dest_index];
+
+        if (gfx_scene_capture_is_enabled()) {
+            d->local_position[0] = v->ob[0];
+            d->local_position[1] = v->ob[1];
+            d->local_position[2] = v->ob[2];
+            for (int row = 0; row < 4; ++row)
+                memcpy(d->modelview[row], rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1][row], sizeof(d->modelview[row]));
+            d->geometry_id = gfx_scene_capture_hash_combine(0, (uintptr_t)vertices);
+            d->instance_id = rsp.modelview_identity_stack[rsp.modelview_matrix_stack_size - 1];
+            d->normal[0] = vn->n[0] / 127.0f;
+            d->normal[1] = vn->n[1] / 127.0f;
+            d->normal[2] = vn->n[2] / 127.0f;
+        }
         
         float x = v->ob[0] * rsp.MP_matrix[0][0] + v->ob[1] * rsp.MP_matrix[1][0] + v->ob[2] * rsp.MP_matrix[2][0] + rsp.MP_matrix[3][0];
         float y = v->ob[0] * rsp.MP_matrix[0][1] + v->ob[1] * rsp.MP_matrix[1][1] + v->ob[2] * rsp.MP_matrix[2][1] + rsp.MP_matrix[3][1];
@@ -949,7 +978,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     if (!use_alpha) {
         cc_id &= ~0xfff000;
     }
-    
+
     struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(cc_id);
     struct ShaderProgram *prg = comb->prg;
     if (prg != rendering_state.shader_program) {
@@ -988,6 +1017,53 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     bool use_texture = used_textures[0] || used_textures[1];
     uint32_t tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
     uint32_t tex_height = (rdp.texture_tile.lrt - rdp.texture_tile.ult + 4) / 4;
+
+    if (gfx_scene_capture_is_enabled()) {
+        struct GfxSceneCaptureTriangle capture;
+        memset(&capture, 0, sizeof(capture));
+        struct LoadedVertex *capture_vertices[3] = {v1, v2, v3};
+        for (int i = 0; i < 3; ++i) {
+            struct LoadedVertex *v = capture_vertices[i];
+            memcpy(capture.vertices[i].position, v->local_position, sizeof(v->local_position));
+            memcpy(capture.vertices[i].normal, v->normal, sizeof(v->normal));
+            if (use_texture && tex_width > 0 && tex_height > 0) {
+                float u = (v->u - rdp.texture_tile.uls * 8) / 32.0f;
+                float tex_v = (v->v - rdp.texture_tile.ult * 8) / 32.0f;
+                if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
+                    u += 0.5f;
+                    tex_v += 0.5f;
+                }
+                capture.vertices[i].uv[0] = u / tex_width;
+                capture.vertices[i].uv[1] = tex_v / tex_height;
+            } else {
+                capture.vertices[i].uv[0] = v->u;
+                capture.vertices[i].uv[1] = v->v;
+            }
+            capture.vertices[i].color[0] = v->color.r / 255.0f;
+            capture.vertices[i].color[1] = v->color.g / 255.0f;
+            capture.vertices[i].color[2] = v->color.b / 255.0f;
+            capture.vertices[i].color[3] = v->color.a / 255.0f;
+        }
+        memcpy(capture.modelview, v1->modelview, sizeof(capture.modelview));
+        memcpy(capture.projection, rsp.P_matrix, sizeof(capture.projection));
+        capture.geometry_id = v1->geometry_id;
+        capture.instance_id = v1->instance_id;
+        capture.combiner_id = cc_id;
+        for (int i = 0; i < 2; ++i) {
+            if (used_textures[i] && rendering_state.textures[i]) {
+                capture.texture_id[i] = gfx_scene_capture_hash_combine(
+                    0, (uintptr_t)rendering_state.textures[i]->texture_addr);
+                bool linear_filter = configFiltering &&
+                    ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT);
+                capture.sampler_state[i] = (uint32_t)rdp.texture_tile.cms |
+                    ((uint32_t)rdp.texture_tile.cmt << 8) | ((uint32_t)linear_filter << 16);
+                capture.material_flags |= (1u << i);
+            }
+        }
+        if (use_fog) capture.material_flags |= (1u << 2);
+        if (use_alpha) capture.material_flags |= (1u << 3);
+        gfx_scene_capture_submit(&capture);
+    }
     
     bool z_is_from_0_to_1 = gfx_rapi->z_is_from_0_to_1();
     
@@ -1711,6 +1787,8 @@ static void gfx_run_dl(Gfx* cmd) {
 
 static void gfx_sp_reset() {
     rsp.modelview_matrix_stack_size = 1;
+    if (gfx_scene_capture_is_enabled())
+        rsp.modelview_identity_stack[0] = gfx_scene_capture_hash_combine(0, 1);
     rsp.current_num_lights = 2;
     rsp.lights_changed = true;
 }
@@ -1781,6 +1859,7 @@ void gfx_start_frame(void) {
 
 void gfx_run(Gfx *commands) {
     gfx_sp_reset();
+    gfx_scene_capture_begin_frame();
     
     //puts("New frame");
     

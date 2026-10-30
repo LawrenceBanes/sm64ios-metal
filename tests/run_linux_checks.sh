@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cc=${CC:-clang}
+SDL2_CFLAGS=$(pkg-config --cflags sdl2)
+
+CC="$cc" "$repo_dir/tests/run_metal_shader_codegen_test.sh"
+CC="$cc" "$repo_dir/tests/run_scene_capture_test.sh"
+
+common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
+# shellcheck disable=SC2086
+$cc $common_flags -DRAPI_GL=1 $SDL2_CFLAGS \
+    "$repo_dir/src/pc/gfx/gfx_scene_capture.c" "$repo_dir/src/pc/gfx/gfx_pc.c"
+# shellcheck disable=SC2086
+$cc $common_flags -DRAPI_METAL=1 -DTARGET_OS_IOS=1 $SDL2_CFLAGS \
+    "$repo_dir/src/pc/gfx/gfx_scene_capture.c" "$repo_dir/src/pc/gfx/gfx_pc.c" \
+    "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
+
+make -C "$repo_dir/tools" -j2
