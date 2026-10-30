@@ -526,7 +526,7 @@ else ifeq ($(OSX_BUILD),1)
   endif
   OBJDUMP := i686-w64-mingw32-objdump
   ifeq ($(TARGET_IOS),1)
-    OBJCOPY := gobjcopy
+    OBJCOPY := $(if $(IOS_OBJCOPY),$(IOS_OBJCOPY),gobjcopy)
   else
     OBJCOPY := i686-w64-mingw32-objcopy
   endif

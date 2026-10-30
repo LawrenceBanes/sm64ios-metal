@@ -144,6 +144,7 @@ jobs:
             CONFIGURATION_BUILD_DIR="$PRODUCT_DIR" \
             SDL2_ROOT="$SDL_STAGE" \
             SDL2_INCLUDE_DIR="$SDL_STAGE/include" \
+          IOS_OBJCOPY="$(command -v gobjcopy)" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
