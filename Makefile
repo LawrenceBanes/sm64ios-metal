@@ -1001,7 +1001,7 @@ $(SOUND_BIN_DIR)/%.m64: $(SOUND_BIN_DIR)/%.o
 
 $(SOUND_BIN_DIR)/%.o: $(SOUND_BIN_DIR)/%.s
 ifeq ($(TARGET_IOS),1)
-	$(AS) $(ASFLAGS) -x assembler-with-cpp -o $@ $<
+	$(AS) $(ASFLAGS) -x assembler -o $@ $<
 else
 	$(AS) $(ASFLAGS) -o $@ $<
 endif
@@ -1104,7 +1104,7 @@ $(BUILD_DIR)/%.o: %.m
 
 $(BUILD_DIR)/%.o: %.s
 ifeq ($(TARGET_IOS),1)
-	$(AS) $(ASFLAGS) -x assembler-with-cpp -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d -o $@ $<
+	$(AS) $(ASFLAGS) -x assembler -o $@ $<
 else
 	$(AS) $(ASFLAGS) -MD $(BUILD_DIR)/$*.d -o $@ $<
 endif

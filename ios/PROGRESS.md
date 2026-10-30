@@ -31,6 +31,7 @@
 - Run `41130473898` confirmed GNU Make 4 ran generated rules and compiled iOS C/Objective-C sources, then failed because the `OSX_BUILD` Makefile branch selected the Windows MinGW assembler (`i686-w64-mingw32-as`) for a sound sequence. The iOS override now routes assembly through the same Apple clang target used for C sources; Linux wiring checks cover this selection.
 - Run `41130745552` compiled the game C/Objective-C files and attempted sound sequence assembly, then showed Apple clang requires GNU `--defsym` flags to be forwarded as `-Wa,--defsym,<name>=<value>`. The iOS `ASFLAGS` now translates these flags while leaving Linux/Windows assembler arguments unchanged; local Makefile checks assert the generated flags.
 - Run `41131076590` got past those assembler options but showed Clang treats `-MD` as a dependency-generation switch without a positional output path; the following `.d` path was mistaken for an input file. iOS assembly rules now use `-x assembler-with-cpp -MMD -MP -MF` and explicitly name the object target. A local sample sound sequence assembles and produces its dependency file with that command.
+- Run `41131410186` then exposed that `assembler-with-cpp` runs C preprocessing over the GAS `\parameter` macro syntax, so sound macro arguments were erased before assembly. The sequence source uses assembler directives rather than C preprocessor directives; iOS now invokes clang as plain `assembler`, retaining `.ifdef`, `.include`, and GAS parameter expansion. A sample sequence assembles locally with the resulting command. The source `.d` dependency file is not emitted for iOS assembly objects; this only affects incremental rebuild tracking, not clean CI builds.
 
 ## Validation
 
@@ -55,7 +56,7 @@
 ## Outstanding work
 
 - Review Metal API runtime semantics: validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime on simulator/device.
-- Complete local checks, push the Apple assembly dependency-generation fix, recreate the private asset release, and rerun the iOS build. Continue from game link/package errors.
+- Complete local checks, push the iOS assembler mode correction, recreate the private asset release, and rerun the iOS build. Continue from game link/package errors.
 - SDL2 headers/static libraries are built by the new pinned helper but remain unvalidated until macOS CI runs. The current Linux host has no `xcodebuild`.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
@@ -65,7 +66,7 @@
 
 ## Next steps
 
-1. Push the Apple assembly dependency-generation fix, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
+1. Push the iOS assembler mode correction, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
 2. Resolve any SDL2, game linker, app bundle, or IPA validator failures from CI.
 3. Obtain the unsigned IPA artifact, sign with SideStore, and install/launch it on the iPhone before claiming runtime success.
 4. After the first IPA milestone, return to scene capture and future ray-tracing work.
