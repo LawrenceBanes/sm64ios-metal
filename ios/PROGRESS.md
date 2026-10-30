@@ -21,6 +21,7 @@
 - Corrected iOS linker flags for a complete app link: link SDLmain before SDL2, use `libc++`, and omit desktop-only `-no-pie`, `-lpthread`, and IOKit flags. The project-wiring test now resolves the actual `TARGET_IOS=1` Makefile flags and rejects these invalid options.
 - Added a manual full-app iOS workflow, pinned SDL2 iOS static-library builder, private extracted-asset bundle tool, unsigned IPA packager, and arm64/metadata/dependency validator. The workflow targets the Xcode 27 arm64 runner for the iOS 27 SDK and stores only the IPA/build logs as a one-day private-repository artifact. The two commits are now pushed; host networking and GitHub CLI authentication were confirmed. The environment's sandbox cannot access the system resolver, but the host shell can reach GitHub. The local asset archive is 9.5 MiB and excludes the ROM. The workflow now supports a temporary private draft-release upload as well as the existing private HTTPS URL/checksum secrets.
 - First full IPA workflow attempt `41128197111` stopped before compilation: Linux lacked the SDL2 development package and the macOS preflight did not pass `GH_TOKEN` to `gh`. Both are fixed. The draft release was deleted by cleanup; `--cleanup-tag` additionally failed because draft releases do not create a Git ref, so cleanup now deletes only the release. No Apple app build was reached in that run.
+- Retry `41128364463` passed asset validation/download, pinned SDL2 fetch, and Linux checks. SDL2's `xcodebuild -target` invocation rejected `-derivedDataPath` because that option requires a scheme. Removed the incompatible option; its explicit `SYMROOT` and `OBJROOT` still isolate the build products. The app target was not reached.
 
 ## Validation
 
@@ -45,7 +46,7 @@
 ## Outstanding work
 
 - Review Metal API runtime semantics: validate sampler wrap encoding, viewport/scissor orientation, depth/decal state, and pipeline/resource lifetime on simulator/device.
-- Complete local workflow checks, push the first-run fixes, recreate the temporary private asset release, and dispatch the full iOS build. Fix Xcode/SDL2/app/archive failures from its logs.
+- Complete local checks, push the SDL2 invocation fix, recreate the temporary private asset release, and rerun the iOS build. Continue from any compiler/linker/package errors.
 - SDL2 headers/static libraries are built by the new pinned helper but remain unvalidated until macOS CI runs. The current Linux host has no `xcodebuild`.
 - Refine scene identity and separate the camera view from object transforms. Current keys hash source addresses and matrix-source paths, and the capture records model-view plus projection; this is not yet a world-space scene or previous-frame motion capture.
 - Add capture of relevant light state and a deterministic frame dump. Add previous-transform history keyed by a validated stable instance ID.
@@ -55,7 +56,7 @@
 
 ## Next steps
 
-1. Push the first-run fixes, recreate the ephemeral private asset release, and dispatch the Xcode 27 iOS 27 arm64 IPA build with the locally generated bundle.
+1. Push the SDL2 invocation fix, recreate the ephemeral private asset release, and rerun the Xcode 27 iOS 27 arm64 IPA build with the local bundle.
 2. Resolve any SDL2, game linker, app bundle, or IPA validator failures from CI.
 3. Obtain the unsigned IPA artifact, sign with SideStore, and install/launch it on the iPhone before claiming runtime success.
 4. After the first IPA milestone, return to scene capture and future ray-tracing work.

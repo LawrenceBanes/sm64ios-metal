@@ -31,7 +31,6 @@ for target in SDLmain-iOS Static\ Library-iOS; do
         -configuration Release \
         -sdk iphoneos \
         -arch arm64 \
-        -derivedDataPath "$BUILD_ROOT/DerivedData" \
         SYMROOT="$BUILD_ROOT/Products" \
         OBJROOT="$BUILD_ROOT/Intermediates" \
         ONLY_ACTIVE_ARCH=NO \
