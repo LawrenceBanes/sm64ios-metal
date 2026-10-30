@@ -724,7 +724,8 @@ else ifeq ($(TARGET_RPI),1)
 
 else ifeq ($(TARGET_IOS),1)
   # iOS executables must remain position-independent; pthread APIs are in libSystem.
-  LDFLAGS := -lm $(BACKEND_LDFLAGS)
+  # SDL2's static archive retains UIKit GLES renderer objects even with SM64 on Metal.
+  LDFLAGS := -lm $(BACKEND_LDFLAGS) -framework OpenGLES
 
 else ifeq ($(OSX_BUILD),1)
   LDFLAGS := -lm $(BACKEND_LDFLAGS) -no-pie -lpthread

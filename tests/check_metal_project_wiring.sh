@@ -26,6 +26,7 @@ case "$ios_ldflags" in
         ;;
 esac
 printf '%s\n' "$ios_ldflags" | grep -Fq -- '-lSDL2 -lc++'
+printf '%s\n' "$ios_ldflags" | grep -Fq -- '-framework OpenGLES'
 ios_cpp=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products | sed -n 's/^CPP := //p' | head -n 1)
 test "$ios_cpp" = "clang -E -P -x c"
 ios_as=$(make -s -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOSLIBS=/tmp/ios-products CC=clang | sed -n 's/^AS := //p' | head -n 1)
