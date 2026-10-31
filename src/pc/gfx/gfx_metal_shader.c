@@ -121,14 +121,22 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     }
     write_text(&w,
                    "struct VIn { float4 pos [[attribute(0)]];\n");
-    if (features->used_textures[0] || features->used_textures[1])
-        write_text(&w, "float2 uv [[attribute(1)]];\n");
-    if (features->opt_fog)
-        write_text(&w, "float4 fog [[attribute(2)]];\n");
-    for (i = 0; i < features->num_inputs; ++i) {
-        int attr = 2 + (features->used_textures[0] || features->used_textures[1]) + features->opt_fog + i;
-        write_format(&w, features->opt_alpha ? "float4 input%d [[attribute(%d)]];\n" :
-                     "float3 input%d [[attribute(%d)]];\n", i + 1, attr);
+    /* Keep MSL's explicit attribute indices in the same packed order as the
+     * MTLVertexDescriptor: position, optional UV, optional fog, then inputs.
+     * Starting inputs at 2 unconditionally left holes for absent UV/fog
+     * attributes, which Metal rejects during pipeline creation. */
+    {
+        int attr = 1;
+        if (features->used_textures[0] || features->used_textures[1]) {
+            write_format(&w, "float2 uv [[attribute(%d)]];\n", attr++, 0);
+        }
+        if (features->opt_fog) {
+            write_format(&w, "float4 fog [[attribute(%d)]];\n", attr++, 0);
+        }
+        for (i = 0; i < features->num_inputs; ++i) {
+            write_format(&w, features->opt_alpha ? "float4 input%d [[attribute(%d)]];\n" :
+                         "float3 input%d [[attribute(%d)]];\n", i + 1, attr++);
+        }
     }
     write_text(&w, "};\nstruct VOut { float4 pos [[position]];\n");
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "float2 uv;\n");

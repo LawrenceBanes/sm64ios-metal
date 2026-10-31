@@ -30,6 +30,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h>
 #include <unistd.h>
 
 #include <Foundation/Foundation.h>
@@ -230,6 +231,21 @@ static inline void gfx_sdl_set_vsync(const bool enabled) {
 
 static void gfx_sdl_get_drawable_size(SDL_Window *window, int *width, int *height) {
 #if defined(RAPI_METAL) && TARGET_OS_IOS
+    SDL_SysWMinfo windowInfo;
+    SDL_VERSION(&windowInfo.version);
+    if (SDL_GetWindowWMInfo(window, &windowInfo)) {
+        UIWindowScene *scene = windowInfo.info.uikit.window.windowScene;
+        if (scene) {
+            CGSize sceneSize = scene.coordinateSpace.bounds.size;
+            int sceneWidth = (int)lrint(sceneSize.width);
+            int sceneHeight = (int)lrint(sceneSize.height);
+            if (sceneWidth > 0 && sceneHeight > 0) {
+                if (width) *width = sceneWidth;
+                if (height) *height = sceneHeight;
+                return;
+            }
+        }
+    }
     SDL_GetWindowSize(window, width, height);
 #else
     SDL_GL_GetDrawableSize(window, width, height);
@@ -330,6 +346,40 @@ static void gfx_sdl_init(const char *window_title) {
 #endif
         return;
     }
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+    /* SDL's UIKit driver can seed the root view from the portrait UIScreen
+     * bounds even though a scene-backed UIWindow is already landscape. Use
+     * the active scene's coordinate space as the authoritative logical size
+     * before creating the MTKView or attaching touch controls. */
+    {
+        SDL_SysWMinfo geometryInfo;
+        SDL_VERSION(&geometryInfo.version);
+        if (SDL_GetWindowWMInfo(wnd, &geometryInfo)) {
+            UIWindow *sceneWindow = geometryInfo.info.uikit.window;
+            UIWindowScene *windowScene = sceneWindow.windowScene;
+            if (sceneWindow && windowScene && sceneWindow.screen == UIScreen.mainScreen) {
+                CGRect sceneBounds = windowScene.coordinateSpace.bounds;
+                int sceneWidth = (int)lrint(sceneBounds.size.width);
+                int sceneHeight = (int)lrint(sceneBounds.size.height);
+                if (sceneWidth > 0 && sceneHeight > 0) {
+                    configWindow.w = sceneWidth;
+                    configWindow.h = sceneHeight;
+                    SDL_SetWindowSize(wnd, sceneWidth, sceneHeight);
+                    UIViewController *root = sceneWindow.rootViewController;
+                    root.view.frame = sceneWindow.bounds;
+                    root.view.bounds = CGRectMake(0, 0, sceneWidth, sceneHeight);
+                    [root.view setNeedsLayout];
+                    [root.view layoutIfNeeded];
+                    gfx_ios_diag_log("SDL Metal landscape geometry reconciled sceneBounds=%.0fx%.0f UIWindow=%.0fx%.0f rootFrame=%.0fx%.0f rootBounds=%.0fx%.0f", sceneBounds.size.width, sceneBounds.size.height, sceneWindow.bounds.size.width, sceneWindow.bounds.size.height, root.view.frame.size.width, root.view.frame.size.height, root.view.bounds.size.width, root.view.bounds.size.height);
+                } else {
+                    gfx_ios_diag_log("SDL Metal scene geometry rejected invalid bounds=%.0fx%.0f", sceneBounds.size.width, sceneBounds.size.height);
+                }
+            }
+        } else {
+            gfx_ios_diag_log("SDL Metal scene geometry lookup failed: %s", SDL_GetError());
+        }
+    }
+#endif
 #if !defined(RAPI_METAL) || !TARGET_OS_IOS
     ctx = SDL_GL_CreateContext(wnd);
 #endif

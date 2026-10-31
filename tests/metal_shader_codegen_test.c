@@ -13,6 +13,19 @@ static uint32_t shader(uint8_t rgb[4], uint8_t alpha[4], uint32_t options) {
     return id;
 }
 
+static void assert_dense_vertex_attributes(const char *source, int expected_count) {
+    const char *p = source;
+    int expected = 0;
+    while ((p = strstr(p, "[[attribute(")) != NULL) {
+        int actual = -1;
+        assert(sscanf(p, "[[attribute(%d)", &actual) == 1);
+        assert(actual == expected);
+        ++expected;
+        ++p;
+    }
+    assert(expected == expected_count);
+}
+
 int main(void) {
     char source[8192];
     struct CCFeatures features;
@@ -22,9 +35,40 @@ int main(void) {
     assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
     assert(features.num_inputs == 1);
     assert(strstr(source, "vertex VOut sm64_vertex") != NULL);
-    assert(strstr(source, "float3 input1 [[attribute(2)]]") != NULL);
+    assert(strstr(source, "float3 input1 [[attribute(1)]]") != NULL);
     assert(strstr(source, "float3(in.input1.rgb)") == NULL);
     assert(strstr(source, "float4 color=float4(in.input1.rgb,1.0)") != NULL);
+    assert_dense_vertex_attributes(source, 2);
+
+    /* The MSL input slots must be a dense match for pipeline_for()'s packed
+     * descriptor: position, optional UV, optional fog, and then shade inputs. */
+    uint8_t input2_rgb[4] = { 0, 0, 0, SHADER_INPUT_2 };
+    id = shader(input2_rgb, flat_alpha, 0);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(features.num_inputs == 2);
+    assert(strstr(source, "float3 input1 [[attribute(1)]]") != NULL);
+    assert(strstr(source, "float3 input2 [[attribute(2)]]") != NULL);
+    assert_dense_vertex_attributes(source, 3);
+
+    id = shader(input2_rgb, flat_alpha, SHADER_OPT_ALPHA);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(strstr(source, "float4 input1 [[attribute(1)]]") != NULL);
+    assert(strstr(source, "float4 input2 [[attribute(2)]]") != NULL);
+    assert_dense_vertex_attributes(source, 3);
+
+    id = shader(input2_rgb, flat_alpha, SHADER_OPT_FOG);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(strstr(source, "float4 fog [[attribute(1)]]") != NULL);
+    assert(strstr(source, "float3 input1 [[attribute(2)]]") != NULL);
+    assert(strstr(source, "float3 input2 [[attribute(3)]]") != NULL);
+    assert_dense_vertex_attributes(source, 4);
+
+    id = shader(input2_rgb, flat_alpha, SHADER_OPT_ALPHA | SHADER_OPT_FOG);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(strstr(source, "float4 fog [[attribute(1)]]") != NULL);
+    assert(strstr(source, "float4 input1 [[attribute(2)]]") != NULL);
+    assert(strstr(source, "float4 input2 [[attribute(3)]]") != NULL);
+    assert_dense_vertex_attributes(source, 4);
 
     uint8_t texture_rgb[4] = { SHADER_TEXEL0, 0, 0, 0 };
     id = shader(texture_rgb, flat_alpha, SHADER_OPT_ALPHA | SHADER_OPT_FOG | SHADER_OPT_TEXTURE_EDGE);
@@ -32,12 +76,50 @@ int main(void) {
     assert(features.used_textures[0]);
     assert(features.opt_alpha && features.opt_fog && features.opt_texture_edge);
     assert(strstr(source, "texture2d<float> tex0 [[texture(0)]]") != NULL);
+    assert(strstr(source, "float2 uv [[attribute(1)]]") != NULL);
+    assert(strstr(source, "float4 fog [[attribute(2)]]") != NULL);
+    assert(strstr(source, "float4 input1 [[attribute(3)]]") != NULL);
+    assert_dense_vertex_attributes(source, 4);
     assert(strstr(source, "sampler samp0 [[sampler(0)]]") != NULL);
     assert(strstr(source, "FragmentParams &params [[buffer(1)]]") != NULL);
     assert(strstr(source, "sampleTex(tex0,samp0,in.uv,params.filter0!=0)") != NULL);
     assert(strstr(source, "offset-=step(1.0,offset.x+offset.y)") != NULL);
     assert(strstr(source, "discard_fragment()") != NULL);
     assert(strstr(source, "mix(color.rgb,in.fog.rgb,in.fog.a)") != NULL);
+
+    /* Reproduce the four shader IDs that failed on the device and check their
+     * complete MSL attribute lists against the packed descriptor cardinality. */
+    {
+        const uint32_t device_failures[] = { 0x01200200u, 0x00000045u,
+                                             0x00000200u, 0x01200a00u };
+        for (size_t i = 0; i < sizeof(device_failures) / sizeof(device_failures[0]); ++i) {
+            assert(gfx_metal_build_shader(device_failures[i], source, sizeof(source), &features));
+            assert_dense_vertex_attributes(source, 1 + features.num_inputs +
+                (features.used_textures[0] || features.used_textures[1]) + features.opt_fog);
+        }
+    }
+
+    /* Cover zero through four shade inputs across optional texture and fog
+     * fields, with both RGB-only and alpha-carrying vertex formats. */
+    for (int input_count = 0; input_count <= 4; ++input_count) {
+        uint8_t rgb[4] = { 0, 0, 0, input_count ? (uint8_t)(SHADER_INPUT_1 + input_count - 1) : 0 };
+        uint8_t alpha[4] = { 0, 0, 0, 0 };
+        for (int texture = 0; texture < 2; ++texture) {
+            for (int fog = 0; fog < 2; ++fog) {
+                for (int alpha_format = 0; alpha_format < 2; ++alpha_format) {
+                    uint8_t variant_rgb[4];
+                    memcpy(variant_rgb, rgb, sizeof(rgb));
+                    if (texture) variant_rgb[0] = SHADER_TEXEL0;
+                    uint32_t options = (fog ? SHADER_OPT_FOG : 0) |
+                                       (alpha_format ? SHADER_OPT_ALPHA : 0);
+                    id = shader(variant_rgb, alpha, options);
+                    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+                    assert_dense_vertex_attributes(source, 1 + features.num_inputs +
+                        (features.used_textures[0] || features.used_textures[1]) + features.opt_fog);
+                }
+            }
+        }
+    }
 
     uint8_t noise_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint8_t noise_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };

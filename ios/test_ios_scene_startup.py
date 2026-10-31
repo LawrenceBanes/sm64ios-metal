@@ -58,6 +58,13 @@ def main() -> None:
     require('if (!wnd)', SDL_HOST, "SDL_CreateWindow failure return")
     require("sdl_window_width <= 0 || sdl_window_height <= 0", SDL_HOST, "nonzero SDL dimensions")
     require("gfx_metal_attach_to_view_controller(sdlViewController)", SDL_HOST, "game MTKView attaches to SDL controller")
+    scene_geometry = SDL_HOST.index("windowScene.coordinateSpace.bounds")
+    geometry_resize = SDL_HOST.index("SDL_SetWindowSize(wnd, sceneWidth, sceneHeight)", scene_geometry)
+    geometry_attach = SDL_HOST.index("gfx_metal_attach_to_view_controller(sdlViewController)")
+    if not (scene_geometry < geometry_resize < geometry_attach):
+        raise SystemExit("landscape scene dimensions must update SDL and UIKit before Metal view attachment")
+    require("root.view.frame = sceneWindow.bounds", SDL_HOST, "SDL UIKit root view matches scene window frame")
+    require("root.view.bounds = CGRectMake(0, 0, sceneWidth, sceneHeight)", SDL_HOST, "SDL UIKit root view bounds match landscape logical size")
     require("scene_matches && visible && renderer_ready", SDL_HOST, "SDL/Metal scene and visibility validation")
     resize_event = SDL_HOST.index("case SDL_WINDOWEVENT:")
     ios_desktop_guard = SDL_HOST.find("#if !TARGET_OS_IOS", resize_event)
