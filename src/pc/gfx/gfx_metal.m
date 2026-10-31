@@ -601,11 +601,11 @@ static void gfx_metal_end_frame(void) {
             presentation_index = ++presented_drawable_count;
         }
         if (presentation_index <= 3 || presentation_index % 120 == 0) {
-            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u drawableID=%lu presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, (unsigned long)presented_drawable.drawableID, presented_drawable.presentedTime, drawable_width, drawable_height);
+            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, presented_drawable.presentedTime, drawable_width, drawable_height);
         }
         if (!logged_first_presented_frame) {
             logged_first_presented_frame = true;
-            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation drawableID=%lu presentedTime=%.6f size=%.0fx%.0f", (unsigned long)presented_drawable.drawableID, presented_drawable.presentedTime, drawable_width, drawable_height);
+            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
         }
     }];
 #endif
@@ -615,7 +615,7 @@ static void gfx_metal_end_frame(void) {
             scheduled_index = ++scheduled_command_count;
         }
         if (scheduled_index <= 3 || scheduled_index % 120 == 0) {
-            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawableID=%lu status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (unsigned long)submitted_drawable.drawableID, (long)scheduled.status, metal_view.presentsWithTransaction);
+            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (long)scheduled.status, metal_view.presentsWithTransaction);
         }
     }];
     // Register presentation observation before scheduling the drawable. This
