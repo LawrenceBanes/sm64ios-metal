@@ -19,10 +19,11 @@ sources=("$repo_dir/src/pc/gfx/gfx_metal.m"
          "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
          "$repo_dir/src/pc/gfx/gfx_metal_state.c"
          "$repo_dir/src/pc/gfx/gfx_cc.c"
+         "$repo_dir/tests/metal_backend_diagnostics_stub.m"
          "$repo_dir/tests/metal_backend_config_stub.c"
          "$repo_dir/tests/metal_backend_link_main.m")
 frameworks=(-framework Foundation -framework UIKit -framework Metal
-            -framework MetalKit -framework QuartzCore)
+            -framework MetalKit -framework QuartzCore -framework CoreGraphics)
 
 echo "Compiling and linking the Metal backend against the iOS device SDK (unsigned validation executable)."
 xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \

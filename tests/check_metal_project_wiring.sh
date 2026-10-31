@@ -9,6 +9,8 @@ for source in gfx_metal.m gfx_metal_shader.c gfx_metal_state.c gfx_scene_capture
 done
 grep -Fq 'MetalKit.framework' "$pbxproj"
 grep -Fq 'Metal.framework' "$pbxproj"
+grep -Fq 'CoreGraphics' "$repo_dir/ios/validate-metal-apple.sh"
+grep -Fq 'metal_backend_diagnostics_stub.m' "$repo_dir/ios/validate-metal-apple.sh"
 grep -Fq 'src/pc/gfx' "$makefile"
 grep -Fq -- '-framework Metal' "$makefile"
 grep -Fq -- '-framework MetalKit' "$makefile"
