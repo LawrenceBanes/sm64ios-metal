@@ -1,4 +1,5 @@
 #include "gfx_metal_shader.h"
+#include "gfx_metal_vertex_layout.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -91,11 +92,13 @@ static void write_formula(struct ShaderWriter *w, const struct CCFeatures *f,
 bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                             struct CCFeatures *features) {
     struct CCFeatures local;
+    struct GfxMetalVertexLayout vertex_layout;
     struct ShaderWriter w = { out, out_size, 0, out != NULL && out_size > 1 };
     int i;
     if (!features) features = &local;
     if (!w.ok) return false;
     gfx_cc_get_features(shader_id, features);
+    if (!gfx_metal_get_vertex_layout(features, &vertex_layout)) return false;
     out[0] = '\0';
 
     write_text(&w, "#include <metal_stdlib>\nusing namespace metal;\n");
@@ -126,16 +129,15 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
      * Starting inputs at 2 unconditionally left holes for absent UV/fog
      * attributes, which Metal rejects during pipeline creation. */
     {
-        int attr = 1;
-        if (features->used_textures[0] || features->used_textures[1]) {
-            write_format(&w, "float2 uv [[attribute(%d)]];\n", attr++, 0);
+        if (vertex_layout.has_uv) {
+            write_format(&w, "float2 uv [[attribute(%d)]];\n", vertex_layout.uv_attribute, 0);
         }
-        if (features->opt_fog) {
-            write_format(&w, "float4 fog [[attribute(%d)]];\n", attr++, 0);
+        if (vertex_layout.has_fog) {
+            write_format(&w, "float4 fog [[attribute(%d)]];\n", vertex_layout.fog_attribute, 0);
         }
         for (i = 0; i < features->num_inputs; ++i) {
             write_format(&w, features->opt_alpha ? "float4 input%d [[attribute(%d)]];\n" :
-                         "float3 input%d [[attribute(%d)]];\n", i + 1, attr++);
+                         "float3 input%d [[attribute(%d)]];\n", i + 1, vertex_layout.input_attribute[i]);
         }
     }
     write_text(&w, "};\nstruct VOut { float4 pos [[position]];\n");

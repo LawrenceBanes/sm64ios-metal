@@ -1,4 +1,5 @@
 #include "../src/pc/gfx/gfx_metal_shader.h"
+#include "../src/pc/gfx/gfx_metal_vertex_layout.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -13,17 +14,34 @@ static uint32_t shader(uint8_t rgb[4], uint8_t alpha[4], uint32_t options) {
     return id;
 }
 
-static void assert_dense_vertex_attributes(const char *source, int expected_count) {
+static void assert_dense_vertex_attributes(const char *source, const struct CCFeatures *features) {
     const char *p = source;
     int expected = 0;
+    struct GfxMetalVertexLayout layout;
+    assert(gfx_metal_get_vertex_layout(features, &layout));
+    assert(layout.attribute_count == 1 + layout.has_uv + layout.has_fog + features->num_inputs);
+    assert(layout.stride == 16 + (layout.has_uv ? 8 : 0) + (layout.has_fog ? 16 : 0) +
+           features->num_inputs * (features->opt_alpha ? 16 : 12));
+    uint16_t expected_offset = 0;
+    for (int i = 0; i < layout.attribute_count; ++i) {
+        assert(layout.offset[i] == expected_offset);
+        switch (layout.format[i]) {
+            case GFX_METAL_VERTEX_FLOAT2: expected_offset += 8; break;
+            case GFX_METAL_VERTEX_FLOAT3: expected_offset += 12; break;
+            case GFX_METAL_VERTEX_FLOAT4: expected_offset += 16; break;
+            default: assert(0 && "invalid vertex format");
+        }
+    }
+    assert(expected_offset == layout.stride);
     while ((p = strstr(p, "[[attribute(")) != NULL) {
         int actual = -1;
         assert(sscanf(p, "[[attribute(%d)", &actual) == 1);
+        assert(expected < layout.attribute_count);
         assert(actual == expected);
         ++expected;
         ++p;
     }
-    assert(expected == expected_count);
+    assert(expected == layout.attribute_count);
 }
 
 int main(void) {
@@ -38,7 +56,7 @@ int main(void) {
     assert(strstr(source, "float3 input1 [[attribute(1)]]") != NULL);
     assert(strstr(source, "float3(in.input1.rgb)") == NULL);
     assert(strstr(source, "float4 color=float4(in.input1.rgb,1.0)") != NULL);
-    assert_dense_vertex_attributes(source, 2);
+    assert_dense_vertex_attributes(source, &features);
 
     /* The MSL input slots must be a dense match for pipeline_for()'s packed
      * descriptor: position, optional UV, optional fog, and then shade inputs. */
@@ -48,27 +66,27 @@ int main(void) {
     assert(features.num_inputs == 2);
     assert(strstr(source, "float3 input1 [[attribute(1)]]") != NULL);
     assert(strstr(source, "float3 input2 [[attribute(2)]]") != NULL);
-    assert_dense_vertex_attributes(source, 3);
+    assert_dense_vertex_attributes(source, &features);
 
     id = shader(input2_rgb, flat_alpha, SHADER_OPT_ALPHA);
     assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
     assert(strstr(source, "float4 input1 [[attribute(1)]]") != NULL);
     assert(strstr(source, "float4 input2 [[attribute(2)]]") != NULL);
-    assert_dense_vertex_attributes(source, 3);
+    assert_dense_vertex_attributes(source, &features);
 
     id = shader(input2_rgb, flat_alpha, SHADER_OPT_FOG);
     assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
     assert(strstr(source, "float4 fog [[attribute(1)]]") != NULL);
     assert(strstr(source, "float3 input1 [[attribute(2)]]") != NULL);
     assert(strstr(source, "float3 input2 [[attribute(3)]]") != NULL);
-    assert_dense_vertex_attributes(source, 4);
+    assert_dense_vertex_attributes(source, &features);
 
     id = shader(input2_rgb, flat_alpha, SHADER_OPT_ALPHA | SHADER_OPT_FOG);
     assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
     assert(strstr(source, "float4 fog [[attribute(1)]]") != NULL);
     assert(strstr(source, "float4 input1 [[attribute(2)]]") != NULL);
     assert(strstr(source, "float4 input2 [[attribute(3)]]") != NULL);
-    assert_dense_vertex_attributes(source, 4);
+    assert_dense_vertex_attributes(source, &features);
 
     uint8_t texture_rgb[4] = { SHADER_TEXEL0, 0, 0, 0 };
     id = shader(texture_rgb, flat_alpha, SHADER_OPT_ALPHA | SHADER_OPT_FOG | SHADER_OPT_TEXTURE_EDGE);
@@ -79,7 +97,7 @@ int main(void) {
     assert(strstr(source, "float2 uv [[attribute(1)]]") != NULL);
     assert(strstr(source, "float4 fog [[attribute(2)]]") != NULL);
     assert(strstr(source, "float4 input1 [[attribute(3)]]") != NULL);
-    assert_dense_vertex_attributes(source, 4);
+    assert_dense_vertex_attributes(source, &features);
     assert(strstr(source, "sampler samp0 [[sampler(0)]]") != NULL);
     assert(strstr(source, "FragmentParams &params [[buffer(1)]]") != NULL);
     assert(strstr(source, "sampleTex(tex0,samp0,in.uv,params.filter0!=0)") != NULL);
@@ -94,8 +112,7 @@ int main(void) {
                                              0x00000200u, 0x01200a00u };
         for (size_t i = 0; i < sizeof(device_failures) / sizeof(device_failures[0]); ++i) {
             assert(gfx_metal_build_shader(device_failures[i], source, sizeof(source), &features));
-            assert_dense_vertex_attributes(source, 1 + features.num_inputs +
-                (features.used_textures[0] || features.used_textures[1]) + features.opt_fog);
+            assert_dense_vertex_attributes(source, &features);
         }
     }
 
@@ -114,8 +131,7 @@ int main(void) {
                                        (alpha_format ? SHADER_OPT_ALPHA : 0);
                     id = shader(variant_rgb, alpha, options);
                     assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
-                    assert_dense_vertex_attributes(source, 1 + features.num_inputs +
-                        (features.used_textures[0] || features.used_textures[1]) + features.opt_fog);
+                    assert_dense_vertex_attributes(source, &features);
                 }
             }
         }

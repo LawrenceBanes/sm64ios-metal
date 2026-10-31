@@ -16,6 +16,7 @@
 #include "gfx_metal.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
+#include "gfx_metal_vertex_layout.h"
 #include "gfx_cc.h"
 #include "gfx_uikit.h"
 #include "../configfile.h"
@@ -291,24 +292,25 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     NSUInteger key = gfx_metal_pipeline_state_key(state_depth_test, state_depth_write,
                                                    state_blend, state_decal);
     if (p->pipelines[key]) return p->pipelines[key];
+    struct GfxMetalVertexLayout vertex_layout;
+    if (!gfx_metal_get_vertex_layout(&p->features, &vertex_layout)) {
+        gfx_ios_diag_log("Metal vertex layout rejected shader=0x%08x inputs=%d", p->shader_id, p->features.num_inputs);
+        return nil;
+    }
     MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
-    NSUInteger offset = 0, attr = 0;
-    vd.attributes[attr].format = MTLVertexFormatFloat4;
-    vd.attributes[attr].offset = offset; vd.attributes[attr++].bufferIndex = 0; offset += 16;
-    if (p->features.used_textures[0] || p->features.used_textures[1]) {
-        vd.attributes[attr].format = MTLVertexFormatFloat2;
-        vd.attributes[attr].offset = offset; vd.attributes[attr++].bufferIndex = 0; offset += 8;
+    for (NSUInteger attr = 0; attr < vertex_layout.attribute_count; ++attr) {
+        switch (vertex_layout.format[attr]) {
+            case GFX_METAL_VERTEX_FLOAT2: vd.attributes[attr].format = MTLVertexFormatFloat2; break;
+            case GFX_METAL_VERTEX_FLOAT3: vd.attributes[attr].format = MTLVertexFormatFloat3; break;
+            case GFX_METAL_VERTEX_FLOAT4: vd.attributes[attr].format = MTLVertexFormatFloat4; break;
+            default:
+                gfx_ios_diag_log("Metal vertex layout has invalid format shader=0x%08x attribute=%lu format=%u", p->shader_id, (unsigned long)attr, vertex_layout.format[attr]);
+                return nil;
+        }
+        vd.attributes[attr].offset = vertex_layout.offset[attr];
+        vd.attributes[attr].bufferIndex = 0;
     }
-    if (p->features.opt_fog) {
-        vd.attributes[attr].format = MTLVertexFormatFloat4;
-        vd.attributes[attr].offset = offset; vd.attributes[attr++].bufferIndex = 0; offset += 16;
-    }
-    for (int i = 0; i < p->features.num_inputs; ++i) {
-        vd.attributes[attr].format = p->features.opt_alpha ? MTLVertexFormatFloat4 : MTLVertexFormatFloat3;
-        vd.attributes[attr].offset = offset; vd.attributes[attr++].bufferIndex = 0;
-        offset += p->features.opt_alpha ? 16 : 12;
-    }
-    vd.layouts[0].stride = offset;
+    vd.layouts[0].stride = vertex_layout.stride;
     vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
     MTLRenderPipelineDescriptor *desc = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
     desc.vertexFunction = p->vertex; desc.fragmentFunction = p->fragment;
