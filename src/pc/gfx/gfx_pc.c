@@ -24,6 +24,15 @@
 #include "gfx_rendering_api.h"
 #include "gfx_scene_capture.h"
 #include "gfx_screen_config.h"
+#include "gfx_texture_cache_util.h"
+#if defined(TARGET_OS_IOS)
+#include "gfx_ios_diagnostics.h"
+#define GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() gfx_ios_texture_cache_diagnostics_enabled()
+#define GFX_TEXTURE_CACHE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() 0
+#define GFX_TEXTURE_CACHE_DIAG_LOG(...) ((void)0)
+#endif
 
 #include "../platform.h"
 #include "../configfile.h"
@@ -97,6 +106,8 @@ static struct {
     struct TextureHashmapNode pool[MAX_CACHED_TEXTURES];
     uint32_t pool_pos;
 } gfx_texture_cache;
+static uint32_t gfx_texture_cache_rollover_count;
+static uint32_t gfx_texture_cache_failed_binding_count;
 
 struct ColorCombiner {
     uint32_t cc_id;
@@ -315,10 +326,23 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
         node = &(*node)->next;
     }
     if (gfx_texture_cache.pool_pos == sizeof(gfx_texture_cache.pool) / sizeof(struct TextureHashmapNode)) {
-        // Pool is full. We just invalidate everything and start over.
-        gfx_texture_cache.pool_pos = 0;
+        // Reuse the stable renderer texture IDs, but sever all old hash chains
+        // before their arena nodes are overwritten in the next generation.
+        gfx_texture_cache_rollover_count++;
+        if (GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() &&
+            (gfx_texture_cache_rollover_count <= 4 || gfx_texture_cache_rollover_count % 16 == 0)) {
+            GFX_TEXTURE_CACHE_DIAG_LOG("gfx texture cache generation reset count=%u capacity=%u; reloading active tiles before draw",
+                                       gfx_texture_cache_rollover_count,
+                                       (unsigned)(sizeof(gfx_texture_cache.pool) / sizeof(struct TextureHashmapNode)));
+        }
+        if (!gfx_texture_cache_reset_generation(gfx_texture_cache.hashmap, HASHMAP_LEN,
+                                                &gfx_texture_cache.pool_pos,
+                                                rendering_state.textures, 2)) {
+            return false;
+        }
+        // Both shader-used textures are restored before the next triangle, so
+        // no draw can sample a slot after its renderer texture ID is reused.
         node = &gfx_texture_cache.hashmap[hash];
-        // puts("Clearing texture cache");
     }
     *node = &gfx_texture_cache.pool[gfx_texture_cache.pool_pos++];
     if ((*node)->texture_addr == NULL) {
@@ -1007,13 +1031,16 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     bool used_textures[2];
     gfx_rapi->shader_get_info(prg, &num_inputs, used_textures);
     
-    for (int i = 0; i < 2; i++) {
-        if (used_textures[i]) {
-            if (rdp.textures_changed[i]) {
+    bool textures_ready = false;
+    for (int repair_pass = 0; repair_pass < 2 && !textures_ready; repair_pass++) {
+        for (int i = 0; i < 2; i++) {
+            if (!used_textures[i]) continue;
+            if (rdp.textures_changed[i] || rendering_state.textures[i] == NULL) {
                 gfx_flush();
                 import_texture(i);
                 rdp.textures_changed[i] = false;
             }
+            if (!rendering_state.textures[i]) continue;
             bool linear_filter = configFiltering && ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT);
             if (linear_filter != rendering_state.textures[i]->linear_filter || rdp.texture_tile.cms != rendering_state.textures[i]->cms || rdp.texture_tile.cmt != rendering_state.textures[i]->cmt) {
                 gfx_flush();
@@ -1023,6 +1050,18 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
                 rendering_state.textures[i]->cmt = rdp.texture_tile.cmt;
             }
         }
+        textures_ready = true;
+        for (int i = 0; i < 2; i++) {
+            if (used_textures[i] && !rendering_state.textures[i]) textures_ready = false;
+        }
+    }
+    if (!textures_ready) {
+        gfx_texture_cache_failed_binding_count++;
+        if (GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() &&
+            (gfx_texture_cache_failed_binding_count <= 4 || gfx_texture_cache_failed_binding_count % 120 == 0)) {
+            GFX_TEXTURE_CACHE_DIAG_LOG("gfx texture cache failed to restore active tile binding; triangle skipped");
+        }
+        return;
     }
     
     bool use_texture = used_textures[0] || used_textures[1];

@@ -17,6 +17,9 @@ class IpaValidationTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ios-metal-ipa.yml").read_text()
         self.assertIn("asset_bundle_release_tag", workflow)
         self.assertNotIn("gh release delete", workflow)
+        self.assertIn("branches: [ios]", workflow)
+        self.assertIn("contains(github.event.head_commit.message, '[build-ipa]')", workflow)
+        self.assertIn("ASSET_BUNDLE_RELEASE_TAG=sm64-assets-20261031-04", workflow)
 
     def make_app(self, path: Path, cpu_type: int = 0x0100000C, platform: int = 2) -> Path:
         info = {
