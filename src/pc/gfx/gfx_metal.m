@@ -106,7 +106,9 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
         NSLog(@"Metal initialization failed: no system Metal device is available");
         return false;
     }
-    gfx_ios_diag_log("Metal device initialized: %s lowPower=%d", metal_device.name.UTF8String ?: "unknown", metal_device.isLowPower);
+    // A macOS-only GPU power-class property caused an unrecognized selector
+    // on AGXG15Device. That diagnostic did not affect GPU selection.
+    gfx_ios_diag_log("Metal device initialized: %s", metal_device.name.UTF8String ?: "unknown");
     metal_queue = [metal_device newCommandQueue];
     if (!metal_queue) {
         gfx_ios_diag_log("Metal command queue initialization failed for device=%s", metal_device.name.UTF8String ?: "unknown");

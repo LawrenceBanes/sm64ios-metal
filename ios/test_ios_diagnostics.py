@@ -3,6 +3,7 @@
 
 import plistlib
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,9 @@ def main() -> None:
     require('MTLCommandBufferStatusError', METAL, "GPU command completion errors")
     require('gfx_ios_diag_log("Selected graphics backend=RAPI_METAL', HOST, "selected rendering API")
     require('gfx_ios_diag_mark_first_game_frame', HOST + METAL, "first game frame marker")
+    for macos_only_selector in ("isLowPower", "registryID", "location"):
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(macos_only_selector)}(?![A-Za-z0-9_])", METAL):
+            raise SystemExit(f"iOS Metal backend must not query macOS-only MTLDevice selector {macos_only_selector}")
     if PLIST.get("UIFileSharingEnabled") is not True:
         raise SystemExit("Info.plist must expose Documents through the Files app")
     if PLIST.get("LSSupportsOpeningDocumentsInPlace") is not True:
