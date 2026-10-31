@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <stdbool.h>
 
 /* The standalone Apple SDK validation target links gfx_metal.m without the
  * full UIKit host. Keep these app-owned diagnostic callbacks linkable while
@@ -8,4 +9,13 @@ void gfx_ios_diag_log(const char *format, ...) {
 }
 
 void gfx_ios_diag_mark_first_game_frame(void) {
+}
+
+/* The standalone SDK harness has no interactive native diagnostics panel. */
+bool gfx_ios_texture_cache_diagnostics_enabled(void) {
+    return false;
+}
+
+int gfx_ios_render_diagnostic_mode(void) {
+    return 0;
 }

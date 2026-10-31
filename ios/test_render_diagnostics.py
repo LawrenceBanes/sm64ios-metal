@@ -17,6 +17,7 @@ def main() -> None:
     shader = (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text()
     metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
     pc = (ROOT / "src/pc/gfx/gfx_pc.c").read_text()
+    stub = (ROOT / "tests/metal_backend_diagnostics_stub.m").read_text()
 
     for name, value in {
         "GFX_IOS_RENDER_NORMAL": 0,
@@ -55,6 +56,9 @@ def main() -> None:
                 f"Metal fragment parameter is missing {field}")
     require("setFragmentBytes:&fragment_params length:sizeof(fragment_params) atIndex:1" in metal,
             "every shader variant must receive diagnostic parameters")
+    require("gfx_ios_render_diagnostic_mode(void)" in stub and
+            "gfx_ios_texture_cache_diagnostics_enabled(void)" in stub,
+            "ROM-independent Apple link harness must stub the native UI diagnostic getters")
     for token in (
         "Metal render snapshot frame=",
         "Metal render texture frame=",
