@@ -59,6 +59,13 @@ def main() -> None:
     require("sdl_window_width <= 0 || sdl_window_height <= 0", SDL_HOST, "nonzero SDL dimensions")
     require("gfx_metal_attach_to_view_controller(sdlViewController)", SDL_HOST, "game MTKView attaches to SDL controller")
     require("scene_matches && visible && renderer_ready", SDL_HOST, "SDL/Metal scene and visibility validation")
+    resize_event = SDL_HOST.index("case SDL_WINDOWEVENT:")
+    ios_desktop_guard = SDL_HOST.find("#if !TARGET_OS_IOS", resize_event)
+    desktop_fullscreen_test = SDL_HOST.find("if (!IS_FULLSCREEN())", resize_event)
+    desktop_resize_end = SDL_HOST.find("#endif", desktop_fullscreen_test)
+    if not (resize_event < ios_desktop_guard < desktop_fullscreen_test < desktop_resize_end):
+        raise SystemExit("SDL desktop window-size restoration must be excluded from iOS resize events")
+    require("gfx_metal_api.on_resize) gfx_metal_api.on_resize();", SDL_HOST, "Metal resize callback remains active on iOS")
     require("if (!gfx_sdl_is_window_ready())", MAIN, "game startup stops on renderer/window failure")
     require("First SM64 game drawable presented by CoreAnimation", METAL, "actual drawable presentation callback")
     require("drawable.width > 0.0 && drawable.height > 0.0", METAL, "game MTKView has nonzero drawable")

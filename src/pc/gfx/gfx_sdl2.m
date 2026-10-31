@@ -532,6 +532,10 @@ static void gfx_sdl_handle_events(void) {
                     if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();
                 }
 #endif
+#if !TARGET_OS_IOS
+                // The desktop fullscreen predicate does not match iOS's
+                // SDL_WINDOW_FULLSCREEN flag. UIKit owns iOS window geometry;
+                // reapplying cached SDL dimensions here can undo its resize.
                 if (!IS_FULLSCREEN()) {
                     switch (event.window.event) {
                         case SDL_WINDOWEVENT_MOVED:
@@ -555,6 +559,7 @@ static void gfx_sdl_handle_events(void) {
                             break;
                     }
                 }
+#endif
                 break;
 #if TARGET_OS_IOS
             case SDL_DISPLAYEVENT:
