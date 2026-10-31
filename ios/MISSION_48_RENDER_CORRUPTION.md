@@ -1,5 +1,19 @@
 # Mission 48 — Render corruption findings
 
+## Build 52.1 device images and `SM64Diagnostics(6).log`
+
+The screenshots include a textured indoor Normal view, indoor UV/Tex ID/Flat/Triangles views, and outdoor Tex ID/Triangles views. Flat and Triangles keep Mario and the sampled level geometry broadly coherent; Tex ID shows distinct logical texture regions but cannot verify their pixel contents. UV shows continuous, repeated gradients, which is consistent with tiled coordinates and is not by itself evidence of bad normalization. The two 05:01:59 Flat images are byte-identical. There is no outdoor Normal screenshot in the supplied Downloads set, so the outdoor appearance cannot be compared visually against its diagnostic views.
+
+The log does provide a matched outdoor texture draw. At `16:25:23.151`, source snapshot triangle `1078528` reports logical texture 182, a 32×64 RGBA16-origin tile, source UVs `(-0.76172, 0.98975)`, `(0.98145, 0.98975)`, `(0.98145, -0.33984)`, and sampler `(cms=2,cmt=2,linear=1)`. One millisecond later, Metal frame 4680 / draw batch 361728 reports the same logical texture, dimensions, shader, and UVs (within printed precision), but its actual sampler is `linear=0`, address `(2,2)`. Both sides therefore agree on the source-to-normalized UV conversion and clamp address modes for this draw; they disagree on filtering. The MSL receives those packed UVs directly. Its three-point filter matches the OpenGL reference formula, but it is enabled only when the backend's per-slot `sampler_linear` flag is true. The stale nearest state therefore also disables the three-point path when that filtering mode is selected.
+
+This identifies a concrete state translation defect: `gfx_pc.c` stores sampler settings on each `TextureHashmapNode` and calls `set_sampler_parameters` only when that texture's cached settings change. OpenGL changes sampler parameters on the selected texture object. Metal instead owns one sampler object per tile slot. When texture A (linear) is selected, texture B changes that slot to nearest, and A is selected again, the shared graphics layer can correctly skip its setter because A's cached request is still linear. Before this correction, `gfx_metal_select_texture` rebound A's image but left B's nearest sampler active. The failure is intermittent because the result depends on which texture last changed the slot and whether the shared per-texture cache requests another update.
+
+The Metal backend now stores the requested sampler state with each `MetalTexture`, restores it on texture selection when it differs from the current tile slot, and updates the slot only after a replacement `MTLSamplerState` is successfully created. Comparison uses effective repeat/mirror/clamp modes, matching the backend translation. Shutdown invalidates sampler-slot state. A host regression reproduces the logged linear-clamp → nearest-clamp → linear-clamp texture-switch sequence.
+
+This fix is evidence-backed for the observed filtering mismatch; it does not explain malformed geometry or prove every texture artifact is resolved. The log does not contain an upload sample for texture 182 (upload sampling began at logical texture 204), so its complete decoded RGBA contents remain unverified. The smallest next device capture is an outdoor Normal screenshot paired with UV/Tex ID for the same camera and a targeted upload checksum/pixel sample for logical texture 182, after this sampler fix is installed. Device visual confirmation is still required.
+
+Validation of this local patch: Linux shader generation, Metal state, scene capture/BVH, texture-cache generation reset, and rendering-diagnostic source checks pass. The Objective-C Metal implementation still requires the Xcode workflow; no Apple SDK compile or device rendering result is claimed here.
+
 ## Build 47.1 device log
 
 `SM64Diagnostics(4).log` confirms the simulation and Metal presentation path remain active during the reported visual corruption:
@@ -9,6 +23,18 @@
 - No Metal pipeline creation, MSL compilation, texture allocation, or GPU command failure appears in the capture.
 - The existing drawable diagnostic labels repeated `CAMetalDrawable` object pointers as immediate reuse, but the log shows the underlying texture pointer alternating while the wrapper pointer repeats. Objective-C wrapper address reuse was being mistaken for drawable backing-resource reuse. Acquisition diagnostics now compare both identities and count only repeated backing texture pointers.
 - The capture has no per-triangle combiner, source UV, packed vertex, or bound-resource snapshots, so it cannot establish where the first incorrect value appears.
+
+## Build 52.1 diagnostic capture
+
+`SM64Diagnostics(5) (2).log` spans 14:06:41–14:09:40 on iOS 27.0. It confirms the new diagnostic path is active:
+
+- The log records 20 mode changes, including repeated cycles through Flat, UV, Tex ID, and Triangles. Sampled Metal draw snapshots carry each expected mode value (254 Normal, 139 Flat, 60 UV, 56 Tex ID, 79 Triangles). This proves the selected mode reached draw encoding; the log cannot record how the resulting image looked to the user.
+- Game ticks remain at about 30 FPS. There are 96 sampled Core Animation checkpoints through frame 5,100; the cumulative displayed count is 5,097. The sampled checkpoint for frame 1 has `presentedTime=0`; the other 95 sampled checkpoints have positive presentation times. Drawable and backing-texture identities match at every sampled checkpoint.
+- Cache occupancy reaches 300/512 and there are no generation resets. The capture reports no missing Metal texture/sampler, skipped triangle, shader/pipeline failure, texture creation failure, or GPU command error.
+- Upload samples have `sourceRowPitch = width * 4` for the sampled RGBA8 textures. They prove the logged bytes and row pitch passed to Metal, but the first four pixels alone cannot verify a whole texture against its source.
+- Logged UVs include negative and greater-than-one values. Those are valid with repeat/mirror addressing and can also be intentional tile coordinates; without the corresponding visual UV-mode result and exact surface/tile state, their range alone does not prove an error.
+
+This capture narrows the problem away from a stalled game loop, persistent presentation failure, cache rollover, and reported Metal resource/pipeline errors. It still does not distinguish a texture-coordinate/binding issue from bad geometry because there is no screenshot or description of what the same Goomba/terrain patch looked like in each mode. No production renderer fix is justified by the log alone.
 
 ## Backend comparison
 
@@ -35,6 +61,6 @@ Snapshots are opt-in: select a non-Normal mode or enable **Tex log**. CPU and Me
 
 ## Validation and next experiment
 
-Linux shader-generation, renderer syntax, cache-reset, scene, state, and CPU-BVH tests pass. Source checks cover mode selection, bounded snapshots, and the unchanged `CAMetalLayer.nextDrawable` path. Apple MSL compilation and an iPhone run are still required; Linux cannot compile MSL or UIKit/Metal Objective-C code.
+Linux shader-generation, renderer syntax, cache-reset, scene, state, CPU-BVH, diagnostics-mode, and presentation-source tests pass. Xcode 27.1 / iOS SDK 27.1 device and simulator builds, generated MSL compilation, the full arm64 unsigned IPA build, and package validation passed in [Apple validation run 41231848990](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41231848990) and [IPA run 41231849003](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41231849003). The private diagnostic package is [build 52.1](https://github.com/LawrenceBanes/sm64ios-metal/releases/tag/ios-unsigned-ipa-52-1), SHA-256 `ca2505eded431c9da90144324834f24d5622f1c89ac8d46ffc8306abfc2a02a8`.
 
-On device, use one stable scene and inspect the same Goomba/terrain region in this order: **Flat**, **UV**, **Tex ID**, then **Triangles**. Share the diagnostics log after enabling **Tex log**. If Flat and Triangles have correct shapes but UV/Tex ID or Normal is wrong, focus next on texture/tile mapping and binding. If Flat remains malformed, compare packed positions and combiner inputs before changing the texture path. Compilation or IPA packaging alone will not establish visual correctness.
+The new screenshots provide visual results for Flat, UV, Tex ID, Triangles, and indoor Normal, while the log provides the matched outdoor sampler state described above. The outdoor Normal view is absent, and texture 182's upload bytes were not sampled. Thus a concrete filtering mismatch is fixed in source, but visual correctness and any separate geometry/content defects remain unverified until a replacement build is tested on-device.

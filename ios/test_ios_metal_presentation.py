@@ -27,6 +27,7 @@ def main() -> None:
     require("identityMatches=%d", "Core Animation callback can be matched to its submitted wrapper")
     require("textureIdentityMatches=%d", "Core Animation callback can be matched to the submitted backing texture")
     require("repeatedTextureImmediately=%d", "consecutive backing texture reuse is distinguished from wrapper reuse")
+    require("callback_drawable = (id<CAMetalDrawable>)presented_drawable", "presentation callback restores the CAMetalDrawable texture interface explicitly")
     require("@synchronized ([NSObject class])", "callback and acquisition counters are synchronized")
     require("++presentation_callback_count", "every presented-handler invocation increments a callback counter")
     require("++displayed_drawable_count", "nonzero presentedTime is counted separately from callbacks")

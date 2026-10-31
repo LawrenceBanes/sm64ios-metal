@@ -9,6 +9,7 @@ CC="$cc" "$repo_dir/tests/run_metal_state_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_capture_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_bvh_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_cache_reset_test.sh"
+python3 "$repo_dir/ios/test_render_diagnostics.py"
 
 common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
 # shellcheck disable=SC2086

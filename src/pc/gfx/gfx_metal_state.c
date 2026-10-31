@@ -7,6 +7,14 @@ enum GfxSamplerAddressMode gfx_metal_sampler_address_mode(uint32_t n64_mode) {
     return GFX_SAMPLER_REPEAT;
 }
 
+bool gfx_metal_sampler_state_matches(bool current_valid,
+                                     struct GfxMetalSamplerState current,
+                                     struct GfxMetalSamplerState desired) {
+    if (!current_valid || current.linear != desired.linear) return false;
+    return gfx_metal_sampler_address_mode(current.cms) == gfx_metal_sampler_address_mode(desired.cms) &&
+           gfx_metal_sampler_address_mode(current.cmt) == gfx_metal_sampler_address_mode(desired.cmt);
+}
+
 uint32_t gfx_metal_pipeline_state_key(bool depth_test, bool depth_write,
                                      bool blend, bool decal) {
     return (depth_test ? 1u : 0u) | (depth_write ? 2u : 0u) |
