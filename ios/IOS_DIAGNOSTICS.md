@@ -19,7 +19,8 @@ Tap **Metal color test** to temporarily cover the game with a bright magenta col
 - Backend is not `RAPI_METAL`: the build selected a different graphics renderer. The current iOS configuration should report `RAPI_METAL` and SDL2/UIKit as the window host.
 - Metal device, queue, MTKView, shader library, or render-pipeline errors: renderer initialization or SM64 shader setup failed at that stage.
 - Repeated `Metal frame drawable unavailable`: the game MTKView has no current drawable/pass. Check the recorded view size, scene, and visibility fields.
-- No `Metal presentation submitted` entry: the game frame did not reach Metal's present call. Earlier game-frame checkpoints show how far scheduling, game logic, and rendering got.
+- No `Metal presentDrawable submitted` entry: the game frame did not reach Metal's present call. Earlier game-frame checkpoints show how far scheduling, game logic, and rendering got.
+- `Metal first game command buffer completed` without `First SM64 game drawable presented by CoreAnimation`: GPU work completed, but the system has not confirmed display presentation for the game drawable.
 - Game command buffers complete but the screen stays black: GPU completion confirms command execution, not visible pixels. Compare against the independent magenta test. If magenta appears, UIKit and a basic Metal present work; investigate SM64 geometry, shader/pipeline state, textures, viewport/scissor, or composition next. If the magenta test also fails, its own drawable and GPU errors narrow the issue to the native Metal view/presentation path.
 
 These checkpoints identify where the pipeline stops; they do not claim that any GPU submission produced visible pixels. A real iPhone check remains necessary.
