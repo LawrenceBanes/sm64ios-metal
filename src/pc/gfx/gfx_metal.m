@@ -710,7 +710,7 @@ static void gfx_metal_start_frame(void) {
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
-    id<MTLDrawable> submitted_drawable = (id<MTLDrawable>)metal_drawable;
+    id<CAMetalDrawable> submitted_drawable = metal_drawable;
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
@@ -718,6 +718,7 @@ static void gfx_metal_end_frame(void) {
     uintptr_t submitted_texture_identity = (uintptr_t)(void *)submitted_drawable.texture;
 #if !TARGET_OS_SIMULATOR
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
+        id<CAMetalDrawable> callback_drawable = (id<CAMetalDrawable>)presented_drawable;
         double presented_time = presented_drawable.presentedTime;
         uint64_t callback_index;
         uint64_t displayed_index = 0;
@@ -727,7 +728,7 @@ static void gfx_metal_end_frame(void) {
                 displayed_index = ++displayed_drawable_count;
         }
         if (callback_index <= 10 || callback_index % 60 == 0 || (presented_time > 0.0 && displayed_index <= 10)) {
-            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u submittedDrawable=%p callbackDrawable=%p identityMatches=%d submittedTexture=%p callbackTexture=%p textureIdentityMatches=%d presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (void *)submitted_drawable_identity, (void *)presented_drawable, (uintptr_t)(void *)presented_drawable == submitted_drawable_identity, (void *)submitted_texture_identity, (void *)presented_drawable.texture, (uintptr_t)(void *)presented_drawable.texture == submitted_texture_identity, presented_time, presented_time > 0.0, drawable_width, drawable_height);
+            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u submittedDrawable=%p callbackDrawable=%p identityMatches=%d submittedTexture=%p callbackTexture=%p textureIdentityMatches=%d presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (void *)submitted_drawable_identity, (void *)presented_drawable, (uintptr_t)(void *)presented_drawable == submitted_drawable_identity, (void *)submitted_texture_identity, (void *)callback_drawable.texture, (uintptr_t)(void *)callback_drawable.texture == submitted_texture_identity, presented_time, presented_time > 0.0, drawable_width, drawable_height);
         }
         if (presented_time > 0.0 && !logged_first_presented_frame) {
             logged_first_presented_frame = true;
