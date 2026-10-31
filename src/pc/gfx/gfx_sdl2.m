@@ -500,12 +500,17 @@ static void gfx_sdl_handle_events(void) {
                 frameController.gfxDisplayLink.paused = true;
                 break;
             case SDL_APP_DIDENTERFOREGROUND:
-                gfx_ios_diag_log("SDL application lifecycle: entering foreground; resume render display link");
-                paused_by_menu = false;
-                frameController.gfxDisplayLink.paused = false;
+                gfx_ios_diag_log("SDL application lifecycle: entering foreground; reconcile game view before resuming frames");
+                {
+                    int width = 0, height = 0;
+                    if (wnd) SDL_GetWindowSize(wnd, &width, &height);
+                    gfx_ios_diag_log("SDL foreground window logical size=%dx%d", width, height);
+                }
 #if defined(RAPI_METAL) && TARGET_OS_IOS
                 if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();
 #endif
+                paused_by_menu = false;
+                frameController.gfxDisplayLink.paused = false;
                 break;
 #if TARGET_OS_IOS
             case SDL_FINGERDOWN:

@@ -34,6 +34,13 @@ def main() -> None:
     require('Metal presentDrawable submitted', METAL, "game drawable presentation checkpoint")
     require('First SM64 game drawable presented by CoreAnimation', METAL, "actual presentation callback")
     require('MTLCommandBufferStatusError', METAL, "GPU command completion errors")
+    require('metal_view.frame = host_view.bounds', METAL, "MTKView frame reconciliation after resume")
+    require('metal_view.drawableSize = expected_drawable', METAL, "MTKView drawable reconciliation after resume")
+    require('SDL foreground window logical size=', SDL, "SDL foreground dimension diagnostic")
+    resize_call = SDL.find('if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();', SDL.find('case SDL_APP_DIDENTERFOREGROUND:'))
+    unpause = SDL.find('paused_by_menu = false;', SDL.find('case SDL_APP_DIDENTERFOREGROUND:'))
+    if resize_call < 0 or unpause < 0 or resize_call > unpause:
+        raise SystemExit("Metal view must be resized before foreground frame processing resumes")
     require('gfx_ios_diag_log("Selected graphics backend=RAPI_METAL', HOST, "selected rendering API")
     require('gfx_ios_diag_mark_first_game_frame', HOST + METAL, "first game frame marker")
     for macos_only_selector in ("isLowPower", "registryID", "location"):

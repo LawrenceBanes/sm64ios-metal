@@ -447,11 +447,34 @@ static void gfx_metal_init(void) {
 }
 static void gfx_metal_on_resize(void) {
     if (!metal_view) return;
-    [metal_view.superview setNeedsLayout];
-    [metal_view.superview layoutIfNeeded];
+    UIView *host_view = metal_view.superview;
+    if (host_view) {
+        [host_view setNeedsLayout];
+        [host_view layoutIfNeeded];
+        // UIKit can restore the SDL window and its child view at different
+        // points in the foreground transition. Reconcile the game surface to
+        // the live host bounds before the first resumed draw.
+        if (!CGRectEqualToRect(metal_view.frame, host_view.bounds))
+            metal_view.frame = host_view.bounds;
+        CGFloat scale = metal_view.window.windowScene.screen.scale;
+        if (scale <= 0.0) scale = UIScreen.mainScreen.scale;
+        if (scale > 0.0 && metal_view.contentScaleFactor != scale)
+            metal_view.contentScaleFactor = scale;
+    }
     [metal_view setNeedsLayout];
     [metal_view layoutIfNeeded];
-    gfx_ios_diag_log("Game MTKView resize/layout frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f window=%@ scene=%@", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier);
+    CGSize bounds = metal_view.bounds.size;
+    CGFloat scale = metal_view.contentScaleFactor;
+    CGSize expected_drawable = CGSizeMake((NSUInteger)(bounds.width * scale + 0.5),
+                                          (NSUInteger)(bounds.height * scale + 0.5));
+    CGSize actual_drawable = metal_view.drawableSize;
+    if (expected_drawable.width > 0.0 && expected_drawable.height > 0.0 &&
+        (actual_drawable.width != expected_drawable.width || actual_drawable.height != expected_drawable.height)) {
+        gfx_ios_diag_log("Metal drawable resize reconciliation old=%.0fx%.0f expected=%.0fx%.0f bounds=%.0fx%.0f scale=%.2f", actual_drawable.width, actual_drawable.height, expected_drawable.width, expected_drawable.height, bounds.width, bounds.height, scale);
+        metal_view.drawableSize = expected_drawable;
+        actual_drawable = metal_view.drawableSize;
+    }
+    gfx_ios_diag_log("Game MTKView resize/layout hostBounds=%.0fx%.0f frame=(%.0f,%.0f %.0fx%.0f) bounds=%.0fx%.0f drawable=%.0fx%.0f expected=%.0fx%.0f scale=%.2f windowBounds=%.0fx%.0f scene=%@", host_view.bounds.size.width, host_view.bounds.size.height, metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, bounds.width, bounds.height, actual_drawable.width, actual_drawable.height, expected_drawable.width, expected_drawable.height, scale, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, metal_view.window.windowScene.session.persistentIdentifier);
 }
 static void gfx_metal_start_frame(void) {
     if (!metal_view || !metal_queue) {
