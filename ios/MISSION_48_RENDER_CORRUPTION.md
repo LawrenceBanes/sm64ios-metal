@@ -31,7 +31,7 @@ Open the native diagnostics panel and tap **Mode** to cycle through `Normal → 
 - **Tex ID** assigns a stable color to each logical Metal texture ID, blending colors for dual-texture shaders. Unexpected color regions isolate binding/selection changes from pixel content.
 - **Triangles** uses per-triangle barycentrics and fragment derivatives for software triangle edges; it does not rely on unsupported iOS wireframe mode.
 
-Snapshots are opt-in: select a non-Normal mode or enable **Tex log**. CPU and Metal snapshots are capped to the first 16 samples and then one sample every 256 draws. They include combiner/shader IDs, source and Metal texture identities, texture size/format/generation, sampler modes, cache occupancy/high-water/rollovers, representative positions/UVs/colors, vertex layout, and render state. **Tex log** writes an explicit enabled/disabled line.
+Snapshots are opt-in: select a non-Normal mode or enable **Tex log**. CPU and Metal draw snapshots are capped to the first 16 samples and then one sample every 256 draws. They include combiner/shader IDs, source and Metal texture identities, texture size/format/generation, sampler modes, cache occupancy/high-water/rollovers, representative positions/UVs/colors, vertex layout, and render state. During enabled diagnostics, Metal also records the first four RGBA pixels and row pitch for the first 16 texture uploads, then every 128th upload. **Tex log** writes an explicit enabled/disabled line. These bytes show exactly what reaches Metal's texture upload call and can be checked against the source N64 decode.
 
 ## Validation and next experiment
 

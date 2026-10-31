@@ -63,12 +63,16 @@ def main() -> None:
         "Metal render snapshot frame=",
         "Metal render texture frame=",
         "Metal render attribute frame=",
+        "Metal texture upload sample sequence=",
+        "samplePixels=%lu",
+        "rgba0=(%u,%u,%u,%u)",
         "vertexBuffer=%p",
         "sampler=%p",
         "addressMode=(0x%x,0x%x)",
         "textureIdentityMatches=%d",
         "repeatedTextureImmediately=%d",
         "batch_id <= 12 || batch_id % 256 == 0",
+        "snapshot_id <= 16 || snapshot_id % 128 == 0",
     ):
         require(token in metal, f"missing bounded Metal snapshot field: {token}")
     require("CAMetalLayer *metal_layer" in metal and "[metal_layer nextDrawable]" in metal,

@@ -98,6 +98,7 @@ static bool has_viewport;
 static bool has_scissor;
 static id<MTLDepthStencilState> depth_states[2][2];
 static uint64_t metal_draw_batch_count;
+static uint64_t texture_upload_snapshot_count;
 
 static bool gfx_metal_diagnostics_enabled(void) {
     return gfx_ios_texture_cache_diagnostics_enabled() ||
@@ -304,6 +305,26 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
     t->width = width;
     t->height = height;
     ++t->generation;
+    if (gfx_metal_diagnostics_enabled()) {
+        uint64_t snapshot_id = ++texture_upload_snapshot_count;
+        if (snapshot_id <= 16 || snapshot_id % 128 == 0) {
+            size_t pixel_count = (size_t)width * (size_t)height;
+            size_t sample_count = MIN(pixel_count, (size_t)4);
+            uint8_t pixels[4][4] = {{0}};
+            for (size_t i = 0; i < sample_count; ++i)
+                memcpy(pixels[i], rgba + i * 4, 4);
+            gfx_ios_diag_log("Metal texture upload sample sequence=%llu logicalId=%lu texture=%p generation=%u size=%dx%d pixelFormat=RGBA8Unorm sourceRowPitch=%lu samplePixels=%lu rgba0=(%u,%u,%u,%u) rgba1=(%u,%u,%u,%u) rgba2=(%u,%u,%u,%u) rgba3=(%u,%u,%u,%u)",
+                             (unsigned long long)snapshot_id,
+                             (unsigned long)(t - textures + 1), t->texture,
+                             t->generation, width, height,
+                             (unsigned long)((size_t)width * 4),
+                             (unsigned long)sample_count,
+                             pixels[0][0],pixels[0][1],pixels[0][2],pixels[0][3],
+                             pixels[1][0],pixels[1][1],pixels[1][2],pixels[1][3],
+                             pixels[2][0],pixels[2][1],pixels[2][2],pixels[2][3],
+                             pixels[3][0],pixels[3][1],pixels[3][2],pixels[3][3]);
+        }
+    }
     if (texture_count <= 3 || texture_count % 128 == 0)
         gfx_ios_diag_log("Metal texture uploaded id=%lu size=%dx%d pixelFormat=RGBA8Unorm totalTextures=%lu", (unsigned long)(t - textures + 1), width, height, (unsigned long)texture_count);
 }
