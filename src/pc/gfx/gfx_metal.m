@@ -540,12 +540,14 @@ static void gfx_metal_end_frame(void) {
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     [metal_command presentDrawable:submitted_drawable];
+#if !TARGET_OS_SIMULATOR
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
         if (!logged_first_presented_frame) {
             logged_first_presented_frame = true;
             gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
         }
     }];
+#endif
     uint32_t submitted_frame = frame_count;
     [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
         if (completed.status == MTLCommandBufferStatusError) {
