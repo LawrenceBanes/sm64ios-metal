@@ -102,9 +102,13 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     out[0] = '\0';
 
     write_text(&w, "#include <metal_stdlib>\nusing namespace metal;\n");
-    if (features->used_textures[0] || features->used_textures[1] || features->opt_noise) {
-        write_text(&w, "struct FragmentParams { uint filter0; uint filter1; float frameCount; };\n");
-    }
+    write_text(&w,
+        "struct FragmentParams { uint filter0; uint filter1; uint diagnosticMode; "
+        "uint textureId0; uint textureId1; float frameCount; };\n"
+        "float3 diagnosticTextureColor(uint textureId) {\n"
+        "float hue=fract(float(textureId)*0.61803398875);\n"
+        "float3 color=clamp(abs(fract(hue+float3(0.0,0.6666667,0.3333333))*6.0-3.0)-1.0,0.0,1.0);\n"
+        "return mix(float3(0.18),float3(0.95),color); }\n");
     if (features->used_textures[0] || features->used_textures[1]) {
         write_text(&w,
                        "float4 sampleTex(texture2d<float> tex, sampler samp, float2 uv, bool dofilter) {\n"
@@ -140,12 +144,15 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                          "float3 input%d [[attribute(%d)]];\n", i + 1, vertex_layout.input_attribute[i]);
         }
     }
-    write_text(&w, "};\nstruct VOut { float4 pos [[position]];\n");
+    write_text(&w, "};\nstruct VOut { float4 pos [[position]]; float3 barycentric;\n");
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "float2 uv;\n");
     if (features->opt_fog) write_text(&w, "float4 fog;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, features->opt_alpha ? "float4 input%d;\n" : "float3 input%d;\n", i + 1, 0);
-    write_text(&w, "};\nvertex VOut sm64_vertex(VIn in [[stage_in]]) { VOut o; o.pos=in.pos;\n");
+    write_text(&w,
+        "};\nvertex VOut sm64_vertex(VIn in [[stage_in]], uint vertex_id [[vertex_id]]) { "
+        "VOut o; o.pos=in.pos; uint corner=vertex_id%3u; "
+        "o.barycentric=corner==0u?float3(1.0,0.0,0.0):(corner==1u?float3(0.0,1.0,0.0):float3(0.0,0.0,1.0));\n");
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "o.uv=in.uv;\n");
     if (features->opt_fog) write_text(&w, "o.fog=in.fog;\n");
     for (i = 0; i < features->num_inputs; ++i)
@@ -153,13 +160,33 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     write_text(&w, "return o; }\nfragment float4 sm64_fragment(VOut in [[stage_in]]");
     if (features->used_textures[0]) write_text(&w, ", texture2d<float> tex0 [[texture(0)]], sampler samp0 [[sampler(0)]]");
     if (features->used_textures[1]) write_text(&w, ", texture2d<float> tex1 [[texture(1)]], sampler samp1 [[sampler(1)]]");
+    write_text(&w, ", constant FragmentParams &params [[buffer(1)]]) {\n");
+    /* Diagnostic mode 1 substitutes opaque white at the combiner input. This
+     * avoids touching texture memory while retaining the original geometry,
+     * vertex colors, combiner, fog, depth, and blend state. */
+    if (features->used_textures[0])
+        write_text(&w, "float4 texel0=params.diagnosticMode==1u?float4(1.0):sampleTex(tex0,samp0,in.uv,params.filter0!=0);\n");
+    if (features->used_textures[1])
+        write_text(&w, "float4 texel1=params.diagnosticMode==1u?float4(1.0):sampleTex(tex1,samp1,in.uv,params.filter1!=0);\n");
+    write_text(&w, "if(params.diagnosticMode==2u) { ");
     if (features->used_textures[0] || features->used_textures[1])
-        write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
-    else if (features->opt_noise)
-        write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
-    write_text(&w, ") {\n");
-    if (features->used_textures[0]) write_text(&w, "float4 texel0=sampleTex(tex0,samp0,in.uv,params.filter0!=0);\n");
-    if (features->used_textures[1]) write_text(&w, "float4 texel1=sampleTex(tex1,samp1,in.uv,params.filter1!=0);\n");
+        write_text(&w, "return float4(fract(in.uv),0.0,1.0); ");
+    else
+        write_text(&w, "return float4(1.0,0.0,1.0,1.0); ");
+    write_text(&w, "}\nif(params.diagnosticMode==3u) { float3 idColor=float3(0.18); ");
+    if (features->used_textures[0])
+        write_text(&w, "idColor=diagnosticTextureColor(params.textureId0); ");
+    if (features->used_textures[1]) {
+        if (features->used_textures[0])
+            write_text(&w, "idColor=mix(idColor,diagnosticTextureColor(params.textureId1),0.5); ");
+        else
+            write_text(&w, "idColor=diagnosticTextureColor(params.textureId1); ");
+    }
+    write_text(&w, "return float4(idColor,1.0); }\n");
+    write_text(&w, "if(params.diagnosticMode==4u) { float3 fw=max(fwidth(in.barycentric),float3(0.00001)); "
+                   "float3 line=smoothstep(float3(0.0),fw*1.25,in.barycentric); "
+                   "float edge=1.0-min(min(line.x,line.y),line.z); "
+                   "return float4(mix(float3(0.78),float3(0.04),edge),1.0); }\n");
     if (features->opt_alpha && !features->color_alpha_same) {
         write_text(&w, "float4 color=float4(");
         write_formula(&w, features, 0, false, false);

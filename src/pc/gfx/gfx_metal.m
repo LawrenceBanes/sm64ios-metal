@@ -38,11 +38,15 @@ struct MetalTexture {
     id<MTLTexture> texture;
     int width;
     int height;
+    uint32_t generation;
 };
 
 struct MetalFragmentParams {
     uint32_t filter0;
     uint32_t filter1;
+    uint32_t diagnostic_mode;
+    uint32_t texture_id0;
+    uint32_t texture_id1;
     float frame_count;
 };
 
@@ -69,8 +73,8 @@ static uint64_t displayed_drawable_count;
 static uint64_t completed_drawable_count;
 static uint64_t scheduled_command_count;
 static uint64_t acquired_drawable_count;
-static uintptr_t last_acquired_drawable_identity;
-static uint64_t repeated_drawable_identity_count;
+static uintptr_t last_acquired_drawable_texture_identity;
+static uint64_t repeated_drawable_texture_count;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
 static uint32_t inactive_scene_frame_count;
@@ -81,6 +85,8 @@ static struct MetalTexture *bound_textures[2];
 static struct MetalTexture *current_texture;
 static id<MTLSamplerState> metal_samplers[2];
 static bool sampler_linear[2];
+static uint32_t sampler_cms[2];
+static uint32_t sampler_cmt[2];
 static struct MetalProgram *active_program;
 static bool state_depth_test = true;
 static bool state_depth_write = true;
@@ -91,6 +97,12 @@ static int scissor[4];
 static bool has_viewport;
 static bool has_scissor;
 static id<MTLDepthStencilState> depth_states[2][2];
+static uint64_t metal_draw_batch_count;
+
+static bool gfx_metal_diagnostics_enabled(void) {
+    return gfx_ios_texture_cache_diagnostics_enabled() ||
+           gfx_ios_render_diagnostic_mode() != GFX_IOS_RENDER_NORMAL;
+}
 
 static id<MTLTexture> gfx_metal_depth_for_drawable(id<CAMetalDrawable> drawable) {
     id<MTLTexture> color_texture = drawable.texture;
@@ -291,6 +303,7 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
                     withBytes:rgba bytesPerRow:(NSUInteger)width * 4];
     t->width = width;
     t->height = height;
+    ++t->generation;
     if (texture_count <= 3 || texture_count % 128 == 0)
         gfx_ios_diag_log("Metal texture uploaded id=%lu size=%dx%d pixelFormat=RGBA8Unorm totalTextures=%lu", (unsigned long)(t - textures + 1), width, height, (unsigned long)texture_count);
 }
@@ -304,6 +317,8 @@ static void gfx_metal_set_sampler_parameters(int sampler, bool linear, uint32_t 
     desc.magFilter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     enum GfxSamplerAddressMode s_mode = gfx_metal_sampler_address_mode(cms);
     enum GfxSamplerAddressMode t_mode = gfx_metal_sampler_address_mode(cmt);
+    sampler_cms[sampler] = cms;
+    sampler_cmt[sampler] = cmt;
     desc.sAddressMode = s_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
                         (s_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
     desc.tAddressMode = t_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
@@ -454,21 +469,59 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         [metal_encoder setFragmentTexture:bound_textures[1]->texture atIndex:1];
         [metal_encoder setFragmentSamplerState:metal_samplers[1] atIndex:1];
     }
-    if (active_program->features.used_textures[0] || active_program->features.used_textures[1] ||
-        active_program->features.opt_noise) {
-        struct MetalFragmentParams fragment_params = {
-            configFiltering == 2 && sampler_linear[0] ? 1u : 0u,
-            configFiltering == 2 && sampler_linear[1] ? 1u : 0u,
-            (float)frame_count
-        };
-        id<MTLBuffer> params = [metal_device newBufferWithBytes:&fragment_params length:sizeof(fragment_params)
-                                                        options:MTLResourceStorageModeShared];
-        if (!params) {
-            if (logged_draw_warnings++ < 12) gfx_ios_diag_log("Metal fragment parameter buffer allocation failed shader=0x%08x", active_program->shader_id);
-            [buffer release]; return;
+    struct MetalFragmentParams fragment_params = {
+        configFiltering == 2 && sampler_linear[0] ? 1u : 0u,
+        configFiltering == 2 && sampler_linear[1] ? 1u : 0u,
+        (uint32_t)gfx_ios_render_diagnostic_mode(),
+        bound_textures[0] ? (uint32_t)(bound_textures[0] - textures + 1) : 0u,
+        bound_textures[1] ? (uint32_t)(bound_textures[1] - textures + 1) : 0u,
+        (float)frame_count
+    };
+    [metal_encoder setFragmentBytes:&fragment_params length:sizeof(fragment_params) atIndex:1];
+
+    uint64_t batch_id = ++metal_draw_batch_count;
+    if (gfx_metal_diagnostics_enabled() && (batch_id <= 12 || batch_id % 256 == 0)) {
+        const float *v0 = data;
+        const float *v1 = (const float *)((const uint8_t *)data + vertex_layout.stride);
+        const float *v2 = (const float *)((const uint8_t *)data + 2u * vertex_layout.stride);
+        float uv0[2] = {0.0f, 0.0f}, uv1[2] = {0.0f, 0.0f}, uv2[2] = {0.0f, 0.0f};
+        if (vertex_layout.has_uv) {
+            const float *uv_offset = (const float *)((const uint8_t *)data + vertex_layout.offset[vertex_layout.uv_attribute]);
+            uv0[0] = uv_offset[0]; uv0[1] = uv_offset[1];
+            uv_offset = (const float *)((const uint8_t *)data + vertex_layout.stride + vertex_layout.offset[vertex_layout.uv_attribute]);
+            uv1[0] = uv_offset[0]; uv1[1] = uv_offset[1];
+            uv_offset = (const float *)((const uint8_t *)data + 2u * vertex_layout.stride + vertex_layout.offset[vertex_layout.uv_attribute]);
+            uv2[0] = uv_offset[0]; uv2[1] = uv_offset[1];
         }
-        [metal_encoder setFragmentBuffer:params offset:0 atIndex:1];
-        [params release];
+        gfx_ios_diag_log("Metal render snapshot frame=%u drawBatch=%llu shader=0x%08x pipeline=%p mode=%u triangles=%lu vertexBuffer=%p offset=0 bytes=%lu capacity=%lu stride=%u attributes=%u inputs=%d hasUV=%d uvAttr=%u hasFog=%d fogAttr=%u vertex0=(%.4f,%.4f,%.4f,%.4f) vertex1=(%.4f,%.4f,%.4f,%.4f) vertex2=(%.4f,%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) uv1=(%.4f,%.4f) uv2=(%.4f,%.4f) depthTest=%d depthWrite=%d blend=%d decal=%d",
+                         frame_count, (unsigned long long)batch_id, active_program->shader_id, pipeline,
+                         fragment_params.diagnostic_mode, (unsigned long)triangle_count, buffer,
+                         (unsigned long)(float_count * sizeof(float)), (unsigned long)buffer.length,
+                         vertex_layout.stride, vertex_layout.attribute_count,
+                         active_program->features.num_inputs, vertex_layout.has_uv,
+                         vertex_layout.uv_attribute, vertex_layout.has_fog,
+                         vertex_layout.fog_attribute,
+                         v0[0],v0[1],v0[2],v0[3],v1[0],v1[1],v1[2],v1[3],v2[0],v2[1],v2[2],v2[3],
+                         uv0[0],uv0[1],uv1[0],uv1[1],uv2[0],uv2[1],
+                         state_depth_test, state_depth_write, state_blend, state_decal);
+        for (NSUInteger attribute = 0; attribute < vertex_layout.attribute_count; ++attribute) {
+            gfx_ios_diag_log("Metal render attribute frame=%u drawBatch=%llu index=%lu format=%u offset=%u stride=%u bufferIndex=0",
+                             frame_count, (unsigned long long)batch_id,
+                             (unsigned long)attribute, vertex_layout.format[attribute],
+                             vertex_layout.offset[attribute], vertex_layout.stride);
+        }
+        for (int tile = 0; tile < 2; ++tile) {
+            struct MetalTexture *t = bound_textures[tile];
+            if (active_program->features.used_textures[tile]) {
+                gfx_ios_diag_log("Metal render texture frame=%u drawBatch=%llu tile=%d logicalId=%lu texture=%p size=%dx%d format=%lu generation=%u sampler=%p linear=%d addressMode=(0x%x,0x%x)",
+                                 frame_count, (unsigned long long)batch_id, tile,
+                                 t ? (unsigned long)(t - textures + 1) : 0ul,
+                                 t ? t->texture : nil, t ? t->width : 0, t ? t->height : 0,
+                                 t && t->texture ? (unsigned long)t->texture.pixelFormat : 0ul,
+                                 t ? t->generation : 0, metal_samplers[tile], sampler_linear[tile],
+                                 sampler_cms[tile], sampler_cmt[tile]);
+            }
+        }
     }
     NSUInteger width = (NSUInteger)MAX(0, metal_view.drawableSize.width);
     NSUInteger height = (NSUInteger)MAX(0, metal_view.drawableSize.height);
@@ -616,17 +669,22 @@ static void gfx_metal_start_frame(void) {
         return;
     }
     uintptr_t drawable_identity = (uintptr_t)(void *)metal_drawable;
+    uintptr_t drawable_texture_identity = (uintptr_t)(void *)metal_drawable.texture;
     uint64_t acquisition_index;
     bool repeated_immediately;
     @synchronized ([NSObject class]) {
         acquisition_index = ++acquired_drawable_count;
-        repeated_immediately = acquisition_index > 1 && drawable_identity == last_acquired_drawable_identity;
+        /* CAMetalDrawable wrapper objects may reuse the same Objective-C
+         * address after release. Texture identity distinguishes the actual
+         * drawable backing resource from wrapper allocator reuse. */
+        repeated_immediately = acquisition_index > 1 &&
+                               drawable_texture_identity == last_acquired_drawable_texture_identity;
         if (repeated_immediately)
-            ++repeated_drawable_identity_count;
-        last_acquired_drawable_identity = drawable_identity;
+            ++repeated_drawable_texture_count;
+        last_acquired_drawable_texture_identity = drawable_texture_identity;
     }
     if (acquisition_index <= 5 || acquisition_index % 120 == 0 || repeated_immediately) {
-        gfx_ios_diag_log("Metal CAMetalLayer drawable acquired count=%llu frame=%u drawableIdentity=%p texture=%p size=%lux%lu repeatedImmediately=%d repeatedImmediateTotal=%llu mainThread=%d", (unsigned long long)acquisition_index, frame_count + 1, (void *)drawable_identity, metal_drawable.texture, (unsigned long)metal_drawable.texture.width, (unsigned long)metal_drawable.texture.height, repeated_immediately, (unsigned long long)repeated_drawable_identity_count, NSThread.isMainThread);
+        gfx_ios_diag_log("Metal CAMetalLayer drawable acquired count=%llu frame=%u drawableObject=%p drawableTexture=%p size=%lux%lu repeatedTextureImmediately=%d repeatedTextureTotal=%llu mainThread=%d", (unsigned long long)acquisition_index, frame_count + 1, (void *)drawable_identity, (void *)drawable_texture_identity, (unsigned long)metal_drawable.texture.width, (unsigned long)metal_drawable.texture.height, repeated_immediately, (unsigned long long)repeated_drawable_texture_count, NSThread.isMainThread);
     }
     metal_command = [metal_queue commandBuffer];
     if (!metal_command) {
@@ -657,6 +715,7 @@ static void gfx_metal_end_frame(void) {
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
     uintptr_t submitted_drawable_identity = (uintptr_t)(void *)submitted_drawable;
+    uintptr_t submitted_texture_identity = (uintptr_t)(void *)submitted_drawable.texture;
 #if !TARGET_OS_SIMULATOR
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
         double presented_time = presented_drawable.presentedTime;
@@ -668,7 +727,7 @@ static void gfx_metal_end_frame(void) {
                 displayed_index = ++displayed_drawable_count;
         }
         if (callback_index <= 10 || callback_index % 60 == 0 || (presented_time > 0.0 && displayed_index <= 10)) {
-            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u submittedDrawable=%p callbackDrawable=%p identityMatches=%d presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (void *)submitted_drawable_identity, (void *)presented_drawable, (uintptr_t)(void *)presented_drawable == submitted_drawable_identity, presented_time, presented_time > 0.0, drawable_width, drawable_height);
+            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u submittedDrawable=%p callbackDrawable=%p identityMatches=%d submittedTexture=%p callbackTexture=%p textureIdentityMatches=%d presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (void *)submitted_drawable_identity, (void *)presented_drawable, (uintptr_t)(void *)presented_drawable == submitted_drawable_identity, (void *)submitted_texture_identity, (void *)presented_drawable.texture, (uintptr_t)(void *)presented_drawable.texture == submitted_texture_identity, presented_time, presented_time > 0.0, drawable_width, drawable_height);
         }
         if (presented_time > 0.0 && !logged_first_presented_frame) {
             logged_first_presented_frame = true;
@@ -684,7 +743,7 @@ static void gfx_metal_end_frame(void) {
             scheduled_index = ++scheduled_command_count;
         }
         if (scheduled_index <= 3 || scheduled_index % 120 == 0) {
-            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawable=%p status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (void *)submitted_drawable_identity, (long)scheduled.status, metal_view.presentsWithTransaction);
+            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawable=%p texture=%p status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (void *)submitted_drawable_identity, (void *)submitted_texture_identity, (long)scheduled.status, metal_view.presentsWithTransaction);
         }
     }];
     // Register presentation observation before scheduling the drawable. This

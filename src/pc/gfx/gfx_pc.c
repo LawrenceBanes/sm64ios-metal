@@ -108,12 +108,24 @@ static struct {
 } gfx_texture_cache;
 static uint32_t gfx_texture_cache_rollover_count;
 static uint32_t gfx_texture_cache_failed_binding_count;
+static uint32_t gfx_texture_cache_high_water;
+static uint64_t gfx_render_snapshot_triangle_count;
 
 struct ColorCombiner {
     uint32_t cc_id;
+    uint32_t shader_id;
     struct ShaderProgram *prg;
     uint8_t shader_input_mapping[2][4];
 };
+
+static bool gfx_render_diagnostics_enabled(void) {
+#if defined(TARGET_OS_IOS)
+    return GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() ||
+           gfx_ios_render_diagnostic_mode() != GFX_IOS_RENDER_NORMAL;
+#else
+    return false;
+#endif
+}
 
 static struct ColorCombiner color_combiner_pool[64];
 static uint8_t color_combiner_pool_size;
@@ -284,6 +296,7 @@ static void gfx_generate_cc(struct ColorCombiner *comb, uint32_t cc_id) {
         }
     }
     comb->cc_id = cc_id;
+    comb->shader_id = shader_id;
     comb->prg = gfx_lookup_or_create_shader_program(shader_id);
     memcpy(comb->shader_input_mapping, shader_input_mapping, sizeof(shader_input_mapping));
 }
@@ -345,6 +358,8 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
         node = &gfx_texture_cache.hashmap[hash];
     }
     *node = &gfx_texture_cache.pool[gfx_texture_cache.pool_pos++];
+    if (gfx_texture_cache.pool_pos > gfx_texture_cache_high_water)
+        gfx_texture_cache_high_water = gfx_texture_cache.pool_pos;
     if ((*node)->texture_addr == NULL) {
         (*node)->texture_id = gfx_rapi->new_texture();
     }
@@ -1067,6 +1082,67 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     bool use_texture = used_textures[0] || used_textures[1];
     uint32_t tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
     uint32_t tex_height = (rdp.texture_tile.lrt - rdp.texture_tile.ult + 4) / 4;
+
+    if (gfx_render_diagnostics_enabled()) {
+        uint64_t snapshot_id = ++gfx_render_snapshot_triangle_count;
+        if (snapshot_id <= 16 || snapshot_id % 256 == 0) {
+            if (use_texture && tex_width > 0 && tex_height > 0) {
+                float uv[3][2];
+                for (int i = 0; i < 3; ++i) {
+                    float u = (v_arr[i]->u - rdp.texture_tile.uls * 8) / 32.0f;
+                    float v = (v_arr[i]->v - rdp.texture_tile.ult * 8) / 32.0f;
+                    if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
+                        u += 0.5f;
+                        v += 0.5f;
+                    }
+                    uv[i][0] = u / tex_width;
+                    uv[i][1] = v / tex_height;
+                }
+                GFX_TEXTURE_CACHE_DIAG_LOG("gfx source render snapshot triangle=%llu combiner=0x%08x shader=0x%08x textures=(%d,%d) inputs=%u fog=%d alpha=%d cacheOccupancy=%u cacheHighWater=%u cacheCapacity=%u rollovers=%u clip0=(%.4f,%.4f,%.4f,%.4f) clip1=(%.4f,%.4f,%.4f,%.4f) clip2=(%.4f,%.4f,%.4f,%.4f) rawUV0=(%.3f,%.3f) rawUV1=(%.3f,%.3f) rawUV2=(%.3f,%.3f) normalizedUV0=(%.5f,%.5f) normalizedUV1=(%.5f,%.5f) normalizedUV2=(%.5f,%.5f) tileOrigin=(%u,%u) tileSize=%ux%u",
+                    (unsigned long long)snapshot_id, cc_id, comb->shader_id,
+                    used_textures[0], used_textures[1], num_inputs, use_fog, use_alpha,
+                    gfx_texture_cache.pool_pos, gfx_texture_cache_high_water,
+                    (unsigned)(sizeof(gfx_texture_cache.pool) / sizeof(gfx_texture_cache.pool[0])),
+                    gfx_texture_cache_rollover_count,
+                    v1->x,v1->y,v1->z,v1->w,v2->x,v2->y,v2->z,v2->w,v3->x,v3->y,v3->z,v3->w,
+                    v1->u,v1->v,v2->u,v2->v,v3->u,v3->v,
+                    uv[0][0],uv[0][1],uv[1][0],uv[1][1],uv[2][0],uv[2][1],
+                    rdp.texture_tile.uls, rdp.texture_tile.ult, tex_width, tex_height);
+            } else {
+                GFX_TEXTURE_CACHE_DIAG_LOG("gfx source render snapshot triangle=%llu combiner=0x%08x shader=0x%08x textures=(%d,%d) inputs=%u fog=%d alpha=%d cacheOccupancy=%u cacheHighWater=%u cacheCapacity=%u rollovers=%u clip0=(%.4f,%.4f,%.4f,%.4f) clip1=(%.4f,%.4f,%.4f,%.4f) clip2=(%.4f,%.4f,%.4f,%.4f) rawUV0=(%.3f,%.3f) rawUV1=(%.3f,%.3f) rawUV2=(%.3f,%.3f) uvMapping=not-applicable",
+                    (unsigned long long)snapshot_id, cc_id, comb->shader_id,
+                    used_textures[0], used_textures[1], num_inputs, use_fog, use_alpha,
+                    gfx_texture_cache.pool_pos, gfx_texture_cache_high_water,
+                    (unsigned)(sizeof(gfx_texture_cache.pool) / sizeof(gfx_texture_cache.pool[0])),
+                    gfx_texture_cache_rollover_count,
+                    v1->x,v1->y,v1->z,v1->w,v2->x,v2->y,v2->z,v2->w,v3->x,v3->y,v3->z,v3->w,
+                    v1->u,v1->v,v2->u,v2->v,v3->u,v3->v);
+            }
+            GFX_TEXTURE_CACHE_DIAG_LOG("gfx source attributes triangle=%llu rgbInputMap=(%u,%u,%u,%u) alphaInputMap=(%u,%u,%u,%u) shade0=(%u,%u,%u,%u) shade1=(%u,%u,%u,%u) shade2=(%u,%u,%u,%u) fogColor=(%u,%u,%u,%u)",
+                (unsigned long long)snapshot_id,
+                comb->shader_input_mapping[0][0], comb->shader_input_mapping[0][1],
+                comb->shader_input_mapping[0][2], comb->shader_input_mapping[0][3],
+                comb->shader_input_mapping[1][0], comb->shader_input_mapping[1][1],
+                comb->shader_input_mapping[1][2], comb->shader_input_mapping[1][3],
+                v1->color.r, v1->color.g, v1->color.b, v1->color.a,
+                v2->color.r, v2->color.g, v2->color.b, v2->color.a,
+                v3->color.r, v3->color.g, v3->color.b, v3->color.a,
+                rdp.fog_color.r, rdp.fog_color.g, rdp.fog_color.b, rdp.fog_color.a);
+            for (int tile = 0; tile < 2; ++tile) {
+                struct TextureHashmapNode *node = rendering_state.textures[tile];
+                if (used_textures[tile] && node) {
+                    GFX_TEXTURE_CACHE_DIAG_LOG("gfx source texture snapshot triangle=%llu tile=%d logicalId=%u source=%p format=%u size=%u tileSampler=(cms=0x%x,cmt=0x%x,linear=%d) loadedSource=%p loadedBytes=%u",
+                        (unsigned long long)snapshot_id, tile, node->texture_id,
+                        node->texture_addr, node->fmt, node->siz, node->cms,
+                        node->cmt, node->linear_filter, rdp.loaded_texture[tile].addr,
+                        rdp.loaded_texture[tile].size_bytes);
+                } else if (used_textures[tile]) {
+                    GFX_TEXTURE_CACHE_DIAG_LOG("gfx source texture snapshot triangle=%llu tile=%d binding=missing",
+                        (unsigned long long)snapshot_id, tile);
+                }
+            }
+        }
+    }
 
     if (gfx_scene_capture_is_enabled()) {
         struct GfxSceneCaptureTriangle capture;
