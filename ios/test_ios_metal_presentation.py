@@ -13,11 +13,22 @@ def require(needle: str, description: str) -> None:
         raise SystemExit(f"Metal presentation regression missing {description}: {needle}")
 
 
+def require_compact(needle: str, description: str) -> None:
+    compact = " ".join(METAL.split())
+    if needle not in compact:
+        raise SystemExit(f"Metal presentation regression missing {description}: {needle}")
+
+
 def main() -> None:
     require("[metal_layer nextDrawable]", "a fresh layer drawable for each custom game frame")
     if "metal_view.currentDrawable" in METAL or "metal_view.currentRenderPassDescriptor" in METAL:
         raise SystemExit("custom render loop must not use MTKView's draw-callback-scoped drawable")
-    require("pass.colorAttachments[0].texture = metal_drawable.texture", "render pass targets the acquired layer drawable")
+    require("pass.colorAttachments[0].texture = color_texture",
+            "render pass uses the target selected for the current render path")
+    require_compact("(samples > 1 ? metal_multisample_color : metal_color_target) : metal_drawable.texture",
+                    "Classic binds the acquired drawable while Enhanced binds its offscreen target")
+    require_compact("samples > 1 ? MTLStoreActionMultisampleResolve : MTLStoreActionStore",
+                    "the offscreen MSAA target resolves and the direct path stores normally")
     require("pass.depthAttachment.texture = depth_texture", "custom render pass has a depth attachment")
     require("MTLPixelFormatDepth32Float", "depth format remains aligned with the game pipeline")
     require("metal_depth_width == width && metal_depth_height == height", "depth texture is reused only at matching dimensions")
