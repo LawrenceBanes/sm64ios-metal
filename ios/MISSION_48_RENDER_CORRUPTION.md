@@ -10,6 +10,18 @@
 - The existing drawable diagnostic labels repeated `CAMetalDrawable` object pointers as immediate reuse, but the log shows the underlying texture pointer alternating while the wrapper pointer repeats. Objective-C wrapper address reuse was being mistaken for drawable backing-resource reuse. Acquisition diagnostics now compare both identities and count only repeated backing texture pointers.
 - The capture has no per-triangle combiner, source UV, packed vertex, or bound-resource snapshots, so it cannot establish where the first incorrect value appears.
 
+## Build 52.1 diagnostic capture
+
+`SM64Diagnostics(5) (2).log` spans 14:06:41–14:09:40 on iOS 27.0. It confirms the new diagnostic path is active:
+
+- The log records 20 mode changes, including repeated cycles through Flat, UV, Tex ID, and Triangles. Sampled Metal draw snapshots carry each expected mode value (254 Normal, 139 Flat, 60 UV, 56 Tex ID, 79 Triangles). This proves the selected mode reached draw encoding; the log cannot record how the resulting image looked to the user.
+- Game ticks remain at about 30 FPS. There are 96 sampled Core Animation checkpoints through frame 5,100; the cumulative displayed count is 5,097. The sampled checkpoint for frame 1 has `presentedTime=0`; the other 95 sampled checkpoints have positive presentation times. Drawable and backing-texture identities match at every sampled checkpoint.
+- Cache occupancy reaches 300/512 and there are no generation resets. The capture reports no missing Metal texture/sampler, skipped triangle, shader/pipeline failure, texture creation failure, or GPU command error.
+- Upload samples have `sourceRowPitch = width * 4` for the sampled RGBA8 textures. They prove the logged bytes and row pitch passed to Metal, but the first four pixels alone cannot verify a whole texture against its source.
+- Logged UVs include negative and greater-than-one values. Those are valid with repeat/mirror addressing and can also be intentional tile coordinates; without the corresponding visual UV-mode result and exact surface/tile state, their range alone does not prove an error.
+
+This capture narrows the problem away from a stalled game loop, persistent presentation failure, cache rollover, and reported Metal resource/pipeline errors. It still does not distinguish a texture-coordinate/binding issue from bad geometry because there is no screenshot or description of what the same Goomba/terrain patch looked like in each mode. No production renderer fix is justified by the log alone.
+
 ## Backend comparison
 
 | Stage | Existing OpenGL reference | Metal implementation | Finding |
@@ -37,6 +49,6 @@ Snapshots are opt-in: select a non-Normal mode or enable **Tex log**. CPU and Me
 
 Linux shader-generation, renderer syntax, cache-reset, scene, state, CPU-BVH, diagnostics-mode, and presentation-source tests pass. Xcode 27.1 / iOS SDK 27.1 device and simulator builds, generated MSL compilation, the full arm64 unsigned IPA build, and package validation passed in [Apple validation run 41231848990](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41231848990) and [IPA run 41231849003](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41231849003). The private diagnostic package is [build 52.1](https://github.com/LawrenceBanes/sm64ios-metal/releases/tag/ios-unsigned-ipa-52-1), SHA-256 `ca2505eded431c9da90144324834f24d5622f1c89ac8d46ffc8306abfc2a02a8`.
 
-This verifies compilation and packaging only. The exact source of the visual corruption remains unknown because the supplied Build 47.1 log predates the new mode snapshots and contains no sampled draw/UV/upload-byte records. No visual fix is claimed until the diagnostic IPA has been inspected on the iPhone.
+This verifies compilation and packaging only. Build 52.1's device log now includes sampled draw, UV, binding, and upload-byte records, but no image or visual description for the diagnostic modes. The exact source of the corruption remains unknown and no visual fix is claimed.
 
-On device, install build 52.1, use one stable scene, and inspect the same Goomba/terrain region in this order: **Flat**, **UV**, **Tex ID**, then **Triangles**. Enable **Tex log** and share the Documents diagnostics log afterward. If Flat and Triangles have correct shapes but UV/Tex ID or Normal is wrong, focus next on texture/tile mapping and binding. If Flat remains malformed, compare packed positions and combiner inputs before changing the texture path. Compilation or IPA packaging alone will not establish visual correctness.
+The Build 52.1 log confirms those modes were selected and encoded, but not how they appeared. On the same scene, the key distinction is whether the Goomba remains malformed in **Flat** and **Triangles**, or its shape becomes correct when texture sampling is removed. If Flat looks correct but Normal does not, focus on texture/tile mapping and binding. If it remains malformed in Flat/Triangles, compare packed positions and combiner inputs before changing the texture path. Compilation, mode-selection logs, and IPA packaging alone do not establish visual correctness.
