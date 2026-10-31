@@ -19,6 +19,8 @@ class IpaValidationTests(unittest.TestCase):
             "CFBundleIdentifier": "com.example.sm64",
             "CFBundleSupportedPlatforms": ["iPhoneOS"],
             "CFBundleShortVersionString": "1.0",
+            "UIFileSharingEnabled": True,
+            "LSSupportsOpeningDocumentsInPlace": True,
             "UIMainStoryboardFile": "Main",
             "UILaunchStoryboardName": "LaunchScreen",
             "UIDeviceFamily": [1],

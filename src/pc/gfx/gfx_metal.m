@@ -16,6 +16,7 @@
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
 #include "gfx_cc.h"
+#include "gfx_uikit.h"
 #include "../configfile.h"
 
 #define METAL_SHADER_CAP 128
@@ -54,6 +55,10 @@ static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
 static uint32_t frame_count;
 static bool logged_first_completed_frame;
+static uint32_t drawable_unavailable_count;
+static uint32_t logged_pipeline_failures;
+static uint32_t logged_pipeline_successes;
+static uint32_t logged_draw_warnings;
 static struct MetalTexture *bound_textures[2];
 static struct MetalTexture *current_texture;
 static id<MTLSamplerState> metal_samplers[2];
@@ -72,18 +77,34 @@ static id<MTLDepthStencilState> depth_states[2][2];
 static bool gfx_metal_z_is_from_0_to_1(void) { return true; }
 
 void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
-    if (!view_controller || metal_view) return;
+    if (metal_view) {
+        gfx_ios_diag_log("Metal view attachment skipped: already attached view=%@ window=%@", metal_view, metal_view.window);
+        return;
+    }
+    if (!view_controller) {
+        gfx_ios_diag_log("Metal view attachment failed: SDL UIKit view controller is nil");
+        return;
+    }
+    gfx_ios_diag_log("Metal renderer selected; attaching MTKView to SDL controller=%s frame=(%.0f,%.0f %.0fx%.0f) window=%@ scene=%@", NSStringFromClass(view_controller.class).UTF8String ?: "unknown", view_controller.view.frame.origin.x, view_controller.view.frame.origin.y, view_controller.view.frame.size.width, view_controller.view.frame.size.height, view_controller.view.window, view_controller.view.window.windowScene.session.persistentIdentifier);
     metal_device = MTLCreateSystemDefaultDevice();
     if (!metal_device) {
+        gfx_ios_diag_log("Metal device initialization failed: MTLCreateSystemDefaultDevice returned nil");
         NSLog(@"Metal initialization failed: no system Metal device is available");
         return;
     }
+    gfx_ios_diag_log("Metal device initialized: %s lowPower=%d", metal_device.name.UTF8String ?: "unknown", metal_device.isLowPower);
     metal_queue = [metal_device newCommandQueue];
     if (!metal_queue) {
+        gfx_ios_diag_log("Metal command queue initialization failed for device=%s", metal_device.name.UTF8String ?: "unknown");
         NSLog(@"Metal initialization failed: could not create a command queue on %@", metal_device.name);
         return;
     }
+    gfx_ios_diag_log("Metal command queue initialized");
     metal_view = [[MTKView alloc] initWithFrame:view_controller.view.bounds device:metal_device];
+    if (!metal_view) {
+        gfx_ios_diag_log("Metal MTKView initialization failed");
+        return;
+    }
     metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
@@ -96,6 +117,7 @@ void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     // SDL's UIKit view can cover subviews inserted at index zero. Put Metal
     // above it; UIKit touch controls are added afterward and remain on top.
     [view_controller.view addSubview:metal_view];
+    gfx_ios_diag_log("Metal MTKView attached frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f pixelFormat=%lu depthFormat=%lu parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.contentScaleFactor, (unsigned long)metal_view.colorPixelFormat, (unsigned long)metal_view.depthStencilPixelFormat, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, (unsigned long)view_controller.view.subviews.count);
 }
 
 static struct MetalProgram *find_program(uint32_t shader_id) {
@@ -136,6 +158,7 @@ static void gfx_metal_shader_get_info(struct ShaderProgram *program, uint8_t *nu
 
 static uint32_t gfx_metal_new_texture(void) {
     if (texture_count >= METAL_TEXTURE_CAP) {
+        gfx_ios_diag_log("Metal texture allocation failed: texture table limit (%d) reached", METAL_TEXTURE_CAP);
         NSLog(@"Metal texture allocation failed: texture table limit (%d) reached", METAL_TEXTURE_CAP);
         return 0;
     }
@@ -149,7 +172,10 @@ static void gfx_metal_select_texture(int tile, uint32_t texture_id) {
 }
 
 static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height) {
-    if (!rgba || width <= 0 || height <= 0) return;
+    if (!rgba || width <= 0 || height <= 0) {
+        gfx_ios_diag_log("Metal texture upload rejected rgba=%p size=%dx%d", rgba, width, height);
+        return;
+    }
     struct MetalTexture *t = current_texture;
     if (!t) return;
     MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
@@ -160,6 +186,7 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
     [t->texture release];
     t->texture = [metal_device newTextureWithDescriptor:desc];
     if (!t->texture) {
+        gfx_ios_diag_log("Metal texture creation failed id=%lu size=%dx%d", (unsigned long)(t - textures + 1), width, height);
         NSLog(@"Metal texture creation failed for id=%lu size=%dx%d", (unsigned long)(t - textures + 1), width, height);
         return;
     }
@@ -167,6 +194,8 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
                     withBytes:rgba bytesPerRow:(NSUInteger)width * 4];
     t->width = width;
     t->height = height;
+    if (texture_count <= 3 || texture_count % 128 == 0)
+        gfx_ios_diag_log("Metal texture uploaded id=%lu size=%dx%d pixelFormat=RGBA8Unorm totalTextures=%lu", (unsigned long)(t - textures + 1), width, height, (unsigned long)texture_count);
 }
 
 static void gfx_metal_set_sampler_parameters(int sampler, bool linear, uint32_t cms, uint32_t cmt) {
@@ -202,18 +231,21 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     struct CCFeatures features;
     NSError *error = nil;
     if (!gfx_metal_build_shader(shader_id, source, sizeof(source), &features)) {
+        gfx_ios_diag_log("Metal shader generation failed shader=0x%08x", shader_id);
         NSLog(@"Metal shader generation failed for shader=0x%08x", shader_id);
         return NULL;
     }
     NSString *msl = [NSString stringWithUTF8String:source];
     id<MTLLibrary> library = [metal_device newLibraryWithSource:msl options:nil error:&error];
     if (!library) {
+        gfx_ios_diag_log("Metal MSL compilation failed shader=0x%08x inputs=%d textures=(%d,%d) fog=%d alpha=%d error=%s", shader_id, features.num_inputs, features.used_textures[0], features.used_textures[1], features.opt_fog, features.opt_alpha, error.localizedDescription.UTF8String ?: "unknown");
         NSLog(@"Metal shader compilation failed shader=0x%08x: %@", shader_id, error.localizedDescription);
         return NULL;
     }
     id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_vertex"];
     id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_fragment"];
     if (!vertex || !fragment) {
+        gfx_ios_diag_log("Metal shader stage lookup failed shader=0x%08x vertex=%s fragment=%s", shader_id, vertex ? "found" : "missing", fragment ? "found" : "missing");
         NSLog(@"Generated Metal shader is missing a stage function shader=0x%08x", shader_id);
         [vertex release]; [fragment release]; [library release];
         return NULL;
@@ -225,6 +257,7 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     p->vertex = vertex;
     p->fragment = fragment;
     p->features = features;
+    gfx_ios_diag_log("Metal MSL shader ready shader=0x%08x inputs=%d textures=(%d,%d) fog=%d alpha=%d programCount=%lu", shader_id, features.num_inputs, features.used_textures[0], features.used_textures[1], features.opt_fog, features.opt_alpha, (unsigned long)program_count);
     return p;
 }
 
@@ -268,27 +301,50 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     }
     NSError *error = nil;
     p->pipelines[key] = [metal_device newRenderPipelineStateWithDescriptor:desc error:&error];
-    if (!p->pipelines[key])
+    if (!p->pipelines[key]) {
+        if (logged_pipeline_failures++ < 16)
+            gfx_ios_diag_log("Metal render pipeline creation failed shader=0x%08x state=0x%lx colorFormat=%lu depthFormat=%lu error=%s", p->shader_id, (unsigned long)key, (unsigned long)metal_view.colorPixelFormat, (unsigned long)metal_view.depthStencilPixelFormat, error.localizedDescription.UTF8String ?: "unknown");
         NSLog(@"Metal pipeline creation failed shader=0x%08x state=0x%lx: %@",
               p->shader_id, (unsigned long)key, error.localizedDescription);
+    } else if (logged_pipeline_successes++ < 16) {
+        gfx_ios_diag_log("Metal pipeline created shader=0x%08x state=0x%lx", p->shader_id, (unsigned long)key);
+    }
     return p->pipelines[key];
 }
 
 static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t triangle_count) {
-    if (!metal_encoder || !active_program || !data || !triangle_count) return;
+    if (!triangle_count) return;
+    if (!metal_encoder || !active_program || !data) {
+        if (logged_draw_warnings++ < 12)
+            gfx_ios_diag_log("Metal triangle draw skipped encoder=%s shader=%s data=%s triangles=%lu", metal_encoder ? "ready" : "nil", active_program ? "selected" : "nil", data ? "ready" : "nil", (unsigned long)triangle_count);
+        return;
+    }
     id<MTLRenderPipelineState> pipeline = pipeline_for(active_program);
-    if (!pipeline) return;
+    if (!pipeline) {
+        if (logged_draw_warnings++ < 12)
+            gfx_ios_diag_log("Metal triangle draw skipped: no render pipeline shader=0x%08x triangles=%lu", active_program->shader_id, (unsigned long)triangle_count);
+        return;
+    }
     id<MTLBuffer> buffer = [metal_device newBufferWithBytes:data length:float_count * sizeof(float) options:MTLResourceStorageModeShared];
-    if (!buffer) return;
+    if (!buffer) {
+        if (logged_draw_warnings++ < 12) gfx_ios_diag_log("Metal vertex buffer allocation failed shader=0x%08x bytes=%lu", active_program->shader_id, (unsigned long)(float_count * sizeof(float)));
+        return;
+    }
     [metal_encoder setRenderPipelineState:pipeline];
     [metal_encoder setVertexBuffer:buffer offset:0 atIndex:0];
     if (active_program->features.used_textures[0]) {
-        if (!bound_textures[0] || !bound_textures[0]->texture || !metal_samplers[0]) { [buffer release]; return; }
+        if (!bound_textures[0] || !bound_textures[0]->texture || !metal_samplers[0]) {
+            if (logged_draw_warnings++ < 12) gfx_ios_diag_log("Metal draw missing texture/sampler shader=0x%08x tile=0 texture=%s sampler=%s", active_program->shader_id, bound_textures[0] && bound_textures[0]->texture ? "ready" : "nil", metal_samplers[0] ? "ready" : "nil");
+            [buffer release]; return;
+        }
         [metal_encoder setFragmentTexture:bound_textures[0]->texture atIndex:0];
         [metal_encoder setFragmentSamplerState:metal_samplers[0] atIndex:0];
     }
     if (active_program->features.used_textures[1]) {
-        if (!bound_textures[1] || !bound_textures[1]->texture || !metal_samplers[1]) { [buffer release]; return; }
+        if (!bound_textures[1] || !bound_textures[1]->texture || !metal_samplers[1]) {
+            if (logged_draw_warnings++ < 12) gfx_ios_diag_log("Metal draw missing texture/sampler shader=0x%08x tile=1 texture=%s sampler=%s", active_program->shader_id, bound_textures[1] && bound_textures[1]->texture ? "ready" : "nil", metal_samplers[1] ? "ready" : "nil");
+            [buffer release]; return;
+        }
         [metal_encoder setFragmentTexture:bound_textures[1]->texture atIndex:1];
         [metal_encoder setFragmentSamplerState:metal_samplers[1] atIndex:1];
     }
@@ -301,7 +357,10 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         };
         id<MTLBuffer> params = [metal_device newBufferWithBytes:&fragment_params length:sizeof(fragment_params)
                                                         options:MTLResourceStorageModeShared];
-        if (!params) { [buffer release]; return; }
+        if (!params) {
+            if (logged_draw_warnings++ < 12) gfx_ios_diag_log("Metal fragment parameter buffer allocation failed shader=0x%08x", active_program->shader_id);
+            [buffer release]; return;
+        }
         [metal_encoder setFragmentBuffer:params offset:0 atIndex:1];
         [params release];
     }
@@ -344,11 +403,12 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
 }
 
 static void gfx_metal_init(void) {
+    gfx_ios_diag_log("Metal graphics API init entered backend=RAPI_METAL device=%@ view=%@ drawable=%.0fx%.0f", metal_device.name, metal_view, metal_view.drawableSize.width, metal_view.drawableSize.height);
     if (!metal_device) metal_device = MTLCreateSystemDefaultDevice();
-    if (!metal_device) { NSLog(@"Metal initialization failed: no Metal device available"); return; }
+    if (!metal_device) { gfx_ios_diag_log("Metal graphics API init failed: no Metal device available"); NSLog(@"Metal initialization failed: no Metal device available"); return; }
     if (!metal_queue) metal_queue = [metal_device newCommandQueue];
-    if (!metal_queue) { NSLog(@"Metal initialization failed: could not create command queue"); return; }
-    if (!metal_view) NSLog(@"Metal view was not attached before renderer initialization");
+    if (!metal_queue) { gfx_ios_diag_log("Metal graphics API init failed: command queue unavailable"); NSLog(@"Metal initialization failed: could not create command queue"); return; }
+    if (!metal_view) { gfx_ios_diag_log("Metal graphics API init warning: no MTKView was attached before renderer initialization"); NSLog(@"Metal view was not attached before renderer initialization"); }
     texture_count = 0;
     for (int i = 0; i < 2; ++i) {
         MTLSamplerDescriptor *desc = [[[MTLSamplerDescriptor alloc] init] autorelease];
@@ -357,16 +417,28 @@ static void gfx_metal_init(void) {
         desc.sAddressMode = MTLSamplerAddressModeRepeat;
         desc.tAddressMode = MTLSamplerAddressModeRepeat;
         metal_samplers[i] = [metal_device newSamplerStateWithDescriptor:desc];
+        if (!metal_samplers[i]) gfx_ios_diag_log("Metal default sampler creation failed tile=%d", i);
     }
+    gfx_ios_diag_log("Metal graphics API init completed backend=RAPI_METAL device=%s commandQueue=%@ view=%@", metal_device.name.UTF8String ?: "unknown", metal_queue, metal_view);
 }
 static void gfx_metal_on_resize(void) { if (metal_view) [metal_view setNeedsLayout]; }
 static void gfx_metal_start_frame(void) {
-    if (!metal_view || !metal_queue) return;
+    if (!metal_view || !metal_queue) {
+        if (drawable_unavailable_count++ < 4) gfx_ios_diag_log("Metal frame start unavailable view=%@ queue=%@", metal_view, metal_queue);
+        return;
+    }
     MTLRenderPassDescriptor *pass = metal_view.currentRenderPassDescriptor;
     metal_drawable = [metal_view currentDrawable];
-    if (!metal_drawable || !pass) return;
+    if (!metal_drawable || !pass) {
+        uint32_t unavailable = ++drawable_unavailable_count;
+        if (unavailable <= 5 || unavailable % 60 == 0)
+            gfx_ios_diag_log("Metal frame drawable unavailable count=%u pass=%s drawable=%s viewFrame=(%.0f,%.0f %.0fx%.0f) drawableSize=%.0fx%.0f attachedWindow=%@ scene=%@ windowHidden=%d viewHidden=%d appState=%ld", unavailable, pass ? "yes" : "nil", metal_drawable ? "yes" : "nil", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.window.hidden, metal_view.hidden, (long)UIApplication.sharedApplication.applicationState);
+        metal_drawable = nil;
+        return;
+    }
     metal_command = [metal_queue commandBuffer];
     if (!metal_command) {
+        gfx_ios_diag_log("Metal frame %u could not create command buffer queue=%@ drawable=%@", frame_count + 1, metal_queue, metal_drawable);
         NSLog(@"Metal frame %u could not create a command buffer", frame_count + 1);
         metal_drawable = nil;
         return;
@@ -379,12 +451,15 @@ static void gfx_metal_start_frame(void) {
     pass.depthAttachment.clearDepth = 1.0;
     metal_encoder = [metal_command renderCommandEncoderWithDescriptor:pass];
     if (!metal_encoder) {
+        gfx_ios_diag_log("Metal frame %u could not create render encoder pass=%@ drawable=%@", frame_count + 1, pass, metal_drawable);
         NSLog(@"Metal frame %u could not create a render encoder", frame_count + 1);
         metal_command = nil;
         metal_drawable = nil;
         return;
     }
     ++frame_count;
+    if (frame_count == 1 || frame_count == 2 || frame_count == 30)
+        gfx_ios_diag_log("Metal game frame encoding started frame=%u drawable=%.0fx%.0f viewVisible=%d alpha=%.2f scene=%@", frame_count, metal_view.drawableSize.width, metal_view.drawableSize.height, !metal_view.hidden && metal_view.window && !metal_view.window.hidden, metal_view.alpha, metal_view.window.windowScene.session.persistentIdentifier);
     has_viewport = has_scissor = false;
 }
 static void gfx_metal_end_frame(void) {
@@ -396,14 +471,19 @@ static void gfx_metal_end_frame(void) {
     double drawable_height = metal_view.drawableSize.height;
     [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
         if (completed.status == MTLCommandBufferStatusError) {
+            gfx_ios_diag_log("Metal GPU command failed frame=%u status=%ld error=%s", submitted_frame, (long)completed.status, completed.error.localizedDescription.UTF8String ?: "unknown");
             NSLog(@"Metal GPU command failed frame=%u: %@", submitted_frame, completed.error.localizedDescription);
         } else if (!logged_first_completed_frame) {
             logged_first_completed_frame = true;
+            gfx_ios_diag_log("Metal first game command buffer completed frame=%u drawable=%.0fx%.0f status=%ld", submitted_frame, drawable_width, drawable_height, (long)completed.status);
+            gfx_ios_diag_mark_first_game_frame();
             NSLog(@"Metal first command buffer completed frame=%u drawable=%.0fx%.0f; presentation/runtime rendering still requires visual verification",
                   submitted_frame, drawable_width, drawable_height);
         }
     }];
     [metal_command commit];
+    if (submitted_frame <= 3 || submitted_frame % 60 == 0)
+        gfx_ios_diag_log("Metal presentation submitted frame=%u drawable=%.0fx%.0f drawable=%@ commandStatus=%ld", submitted_frame, drawable_width, drawable_height, metal_drawable, (long)metal_command.status);
     metal_command = nil; metal_drawable = nil;
 }
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
@@ -422,6 +502,10 @@ static void gfx_metal_shutdown(void) {
     memset(programs, 0, sizeof(programs)); memset(textures, 0, sizeof(textures));
     program_count = 0; texture_count = 0; memset(depth_states, 0, sizeof(depth_states));
     frame_count = 0;
+    drawable_unavailable_count = 0;
+    logged_pipeline_failures = 0;
+    logged_pipeline_successes = 0;
+    logged_draw_warnings = 0;
     logged_first_completed_frame = false;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;

@@ -142,11 +142,27 @@ const SDL_Scancode scancode_rmapping_nonextended[][2] = {
 @end
 
 UIViewController *get_sdl_viewcontroller() {
+    if (!wnd) {
+#if TARGET_OS_IOS
+        gfx_ios_diag_log("SDL UIKit host lookup skipped: SDL_Window is nil");
+#endif
+        return nil;
+    }
     SDL_SysWMinfo systemWindowInfo;
     SDL_VERSION(&systemWindowInfo.version);
-    SDL_GetWindowWMInfo(wnd, &systemWindowInfo);
+    SDL_ClearError();
+    SDL_bool gotInfo = SDL_GetWindowWMInfo(wnd, &systemWindowInfo);
+#if TARGET_OS_IOS
+    if (!gotInfo) {
+        gfx_ios_diag_log("SDL_GetWindowWMInfo failed: %s", SDL_GetError());
+        return nil;
+    }
+#endif
     
     UIWindow *uiWindow = systemWindowInfo.info.uikit.window;
+#if TARGET_OS_IOS
+    gfx_ios_diag_log("SDL UIKit window=%@ scene=%@ rootController=%s key=%d hidden=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) SDLFlags=0x%x", uiWindow, uiWindow.windowScene.session.persistentIdentifier, NSStringFromClass(uiWindow.rootViewController.class).UTF8String ?: "nil", uiWindow.isKeyWindow, uiWindow.hidden, uiWindow.alpha, uiWindow.frame.origin.x, uiWindow.frame.origin.y, uiWindow.frame.size.width, uiWindow.frame.size.height, SDL_GetWindowFlags(wnd));
+#endif
     return uiWindow.rootViewController;
 }
 
@@ -263,7 +279,11 @@ void gfx_sdl_swap_buffer(void) {
 }
 
 static void gfx_sdl_init(const char *window_title) {
-    SDL_Init(SDL_INIT_VIDEO);
+    SDL_ClearError();
+    int sdl_init_result = SDL_Init(SDL_INIT_VIDEO);
+#if TARGET_OS_IOS
+    gfx_ios_diag_log("SDL_Init(SDL_INIT_VIDEO) result=%d error='%s' videoDriver=%s", sdl_init_result, SDL_GetError(), SDL_GetCurrentVideoDriver() ?: "nil");
+#endif
 
 #if !defined(RAPI_METAL) || !TARGET_OS_IOS
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -282,6 +302,7 @@ static void gfx_sdl_init(const char *window_title) {
     int xpos = (configWindow.x == WAPI_WIN_CENTERPOS) ? SDL_WINDOWPOS_CENTERED : configWindow.x;
     int ypos = (configWindow.y == WAPI_WIN_CENTERPOS) ? SDL_WINDOWPOS_CENTERED : configWindow.y;
     
+    SDL_ClearError();
     wnd = SDL_CreateWindow(
         window_title,
         xpos, ypos, configWindow.w, configWindow.h,
@@ -291,13 +312,32 @@ static void gfx_sdl_init(const char *window_title) {
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_FULLSCREEN
 #endif
     );
+#if TARGET_OS_IOS
+    gfx_ios_diag_log("SDL_CreateWindow title='%s' requested=%dx%d result=%s error='%s'", window_title ?: "(null)", configWindow.w, configWindow.h, wnd ? "non-null" : "NULL", SDL_GetError());
+#endif
+    if (!wnd) {
+#if TARGET_OS_IOS
+        gfx_ios_diag_log("SDL window creation stopped graphics initialization; SDL video driver=%s", SDL_GetCurrentVideoDriver() ?: "nil");
+#endif
+        return;
+    }
 #if !defined(RAPI_METAL) || !TARGET_OS_IOS
     ctx = SDL_GL_CreateContext(wnd);
 #endif
     gfx_sdl_get_drawable_size(wnd, &configWindow.w, &configWindow.h);
+#if TARGET_OS_IOS
+    int sdl_window_width = 0, sdl_window_height = 0;
+    float display_dpi = 0.0f;
+    int display_index = SDL_GetWindowDisplayIndex(wnd);
+    if (display_index >= 0) SDL_GetDisplayDPI(display_index, &display_dpi, NULL, NULL);
+    SDL_GetWindowSize(wnd, &sdl_window_width, &sdl_window_height);
+    gfx_ios_diag_log("SDL window dimensions logical=%dx%d renderer=%dx%d flags=0x%x display=%d displayDPI=%.1f", sdl_window_width, sdl_window_height, configWindow.w, configWindow.h, SDL_GetWindowFlags(wnd), display_index, display_dpi);
+#endif
     SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
 #if defined(RAPI_METAL) && TARGET_OS_IOS
-    gfx_metal_attach_to_view_controller(get_sdl_viewcontroller());
+    UIViewController *sdlViewController = get_sdl_viewcontroller();
+    gfx_ios_diag_log("Metal attachment target controller=%s controllerView=%@ window=%@", NSStringFromClass(sdlViewController.class).UTF8String ?: "nil", sdlViewController.view, sdlViewController.view.window);
+    gfx_metal_attach_to_view_controller(sdlViewController);
 #endif
 
     gfx_sdl_set_vsync(configWindow.vsync);
@@ -322,6 +362,16 @@ static void gfx_sdl_init(const char *window_title) {
     
     [frameController.onScreenRefresh addObject:[NSValue valueWithPointer:gfx_sdl_swap_buffer]];
     SDL_RaiseWindow(wnd);
+#if TARGET_OS_IOS
+    SDL_SysWMinfo finalWindowInfo;
+    SDL_VERSION(&finalWindowInfo.version);
+    if (SDL_GetWindowWMInfo(wnd, &finalWindowInfo)) {
+        UIWindow *uiWindow = finalWindowInfo.info.uikit.window;
+        gfx_ios_diag_log("SDL window final presentation uiWindow=%@ scene=%@ key=%d visible=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) root=%s windowLevel=%.1f", uiWindow, uiWindow.windowScene.session.persistentIdentifier, uiWindow.isKeyWindow, !uiWindow.hidden, uiWindow.alpha, uiWindow.frame.origin.x, uiWindow.frame.origin.y, uiWindow.frame.size.width, uiWindow.frame.size.height, NSStringFromClass(uiWindow.rootViewController.class).UTF8String ?: "nil", uiWindow.windowLevel);
+    } else {
+        gfx_ios_diag_log("SDL final window query failed: %s", SDL_GetError());
+    }
+#endif
 }
 
 static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {

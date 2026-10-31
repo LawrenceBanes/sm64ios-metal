@@ -85,6 +85,7 @@ void set_vblank_handler(s32 index, struct VblankHandler *handler, OSMesgQueue *q
 }
 
 static bool inited = false;
+static uint64_t ios_diagnostic_frame_count = 0;
 
 #include "game/display.h" // for gGlobalTimer
 void send_display_list(struct SPTask *spTask) {
@@ -101,9 +102,13 @@ void send_display_list(struct SPTask *spTask) {
 #endif
 
 void produce_one_frame(void) {
+    uint64_t frame = ++ios_diagnostic_frame_count;
+    if (frame <= 3 || frame == 30)
+        gfx_ios_diag_log("Game frame callback entered frame=%llu initialized=%d paused=%d", (unsigned long long)frame, inited, paused_by_menu);
     wm_api->handle_events();
     if(!paused_by_menu) {
         gfx_start_frame();
+        if (frame == 1) gfx_ios_diag_log("gfx_start_frame returned for first game frame");
         const f32 master_mod = (f32)configMasterVolume / 127.0f;
         set_sequence_player_volume(SEQ_PLAYER_LEVEL, (f32)configMusicVolume / 127.0f * master_mod);
         set_sequence_player_volume(SEQ_PLAYER_SFX, (f32)configSfxVolume / 127.0f * master_mod);
@@ -111,6 +116,7 @@ void produce_one_frame(void) {
 
         
         game_loop_one_iteration();
+        if (frame == 1) gfx_ios_diag_log("SM64 game logic completed its first frame");
         thread6_rumble_loop(NULL);
 
         int samples_left = audio_api->buffered();
@@ -128,6 +134,7 @@ void produce_one_frame(void) {
 
         audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
         gfx_end_frame();
+        if (frame <= 3 || frame == 30) gfx_ios_diag_log("gfx_end_frame returned frame=%llu audioSamples=%u", (unsigned long long)frame, num_audio_samples);
     }
 }
 
@@ -201,11 +208,14 @@ void ios_produce_one_frame(void) {
 }
 
 void main_func(void) {
+    gfx_ios_diag_log("SDL main initialization entered argc context; argv processed, iOS applicationState=%ld", (long)UIApplication.sharedApplication.applicationState);
     const char *gamedir = gCLIOpts.GameDir[0] ? gCLIOpts.GameDir : FS_BASEDIR;
     const char *userpath = gCLIOpts.SavePath[0] ? gCLIOpts.SavePath : sys_user_path();
     fs_init(sys_ropaths, gamedir, userpath);
+    gfx_ios_diag_log("Filesystem initialized gameDir=%s userPath=%s", gamedir, userpath);
 
     configfile_load(configfile_name());
+    gfx_ios_diag_log("Configuration load completed filename=%s window=%dx%d fullscreen=%d", configfile_name(), configWindow.w, configWindow.h, configWindow.fullscreen);
 
     if (gCLIOpts.FullScreen == 1)
         configWindow.fullscreen = true;
@@ -246,6 +256,14 @@ void main_func(void) {
     #error No rendering API!
     #endif
 
+#if defined(RAPI_METAL)
+    gfx_ios_diag_log("Selected graphics backend=RAPI_METAL API=%s windowBackend=SDL2 UIKit; no OpenGL renderer selected", RAPI_NAME);
+#elif defined(RAPI_GL) || defined(RAPI_GL_LEGACY)
+    gfx_ios_diag_log("Selected graphics backend=OpenGL API=%s windowBackend=SDL2", RAPI_NAME);
+#else
+    gfx_ios_diag_log("Selected graphics backend=%s", RAPI_NAME);
+#endif
+
     char window_title[96] =
     "Super Mario 64 EX (" RAPI_NAME ")"
     #ifdef NIGHTLY
@@ -267,16 +285,20 @@ void main_func(void) {
     
     audio_init();
     sound_init();
+    gfx_ios_diag_log("Audio and sound engine initialization calls completed selectedAudioAPI=%s", audio_api == &audio_null ? "null" : "SDL");
     
     thread5_game_loop(NULL);
 
     gfx_current_dimensions.width = 0;
     gfx_current_dimensions.height = 0;
     
+    gfx_ios_diag_log("gfx_init entering windowBackend=SDL2 renderer=%s title='%s'", RAPI_NAME, window_title);
     gfx_init(wm_api, rendering_api, window_title);
+    gfx_ios_diag_log("gfx_init returned dimensions=%dx%d", gfx_current_dimensions.width, gfx_current_dimensions.height);
     wm_api->set_keyboard_callbacks(keyboard_on_key_down, keyboard_on_key_up, keyboard_on_all_keys_up);
     
     UIViewController *gfxVc = get_sdl_viewcontroller();
+    gfx_ios_diag_log("SDL window controller lookup returned %s controller=%@ window=%@", gfxVc ? "controller" : "nil", gfxVc, gfxVc.view.window);
     gfx_uikit_init(gfxVc);
 #if TARGET_OS_IOS
     gfx_uikit_set_touchscreen_callbacks((void*)touch_down, (void*)touch_motion, (void*)touch_up);
@@ -284,6 +306,7 @@ void main_func(void) {
 #endif
     configWindow.settings_changed = true;
     wm_api->reset_dimension_and_pos();
+    gfx_ios_diag_log("UIKit input integration and window dimension reset completed dimensions=%dx%d", gfx_current_dimensions.width, gfx_current_dimensions.height);
     
     inited = true;
 
@@ -311,7 +334,9 @@ void main_func(void) {
 }
 
 int SDL_main(int argc, char *argv[]) {
+    gfx_ios_diag_log("SDL_main entered argc=%d bundle=%s", argc, NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "unknown");
     parse_cli_opts(argc, argv);
+    gfx_ios_diag_log("Command-line options parsed; entering main_func");
     main_func();
     return 0;
 }

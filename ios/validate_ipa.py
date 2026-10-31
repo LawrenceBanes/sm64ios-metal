@@ -136,6 +136,10 @@ def validate(ipa_path: str, require_system_deps: bool) -> None:
             raise ValueError("app bundle is not marked for iPhoneOS")
         if not info.get("CFBundleIdentifier"):
             raise ValueError("Info.plist has no bundle identifier")
+        if info.get("UIFileSharingEnabled") is not True:
+            raise ValueError("app Info.plist must expose Documents through iOS Files")
+        if info.get("LSSupportsOpeningDocumentsInPlace") is not True:
+            raise ValueError("app Info.plist must allow Files to open app Documents in place")
         if 1 not in info.get("UIDeviceFamily", []):
             raise ValueError("app does not declare iPhone device support")
         orientations = set(info.get("UISupportedInterfaceOrientations", []))

@@ -29,9 +29,10 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile ios/asset_bundle.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_scene_lifecycle.py
+          python3 -m py_compile ios/asset_bundle.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py
           bash -n ios/build_sdl2_ios.sh
           python3 ios/test_scene_lifecycle.py
+          python3 ios/test_ios_diagnostics.py
           (cd ios && python3 -m unittest -v test_ipa_validation.py)
 
   ios-arm64-ipa:
