@@ -31,7 +31,7 @@ def main() -> None:
     require('SDL_GetWindowWMInfo', SDL, "SDL to UIKit window relationship")
     require('Metal renderer selected; attaching MTKView', METAL, "actual renderer selection")
     require('currentRenderPassDescriptor', METAL, "Metal game drawable acquisition")
-    require('Metal presentDrawable submitted', METAL, "game drawable presentation checkpoint")
+    require('Metal presentation heartbeat', METAL, "rate-limited game drawable submission checkpoint")
     require('First SM64 game drawable presented by CoreAnimation', METAL, "actual presentation callback")
     require('MTLCommandBufferStatusError', METAL, "GPU command completion errors")
     require('metal_view.frame = host_view.bounds', METAL, "MTKView frame reconciliation after resume")
