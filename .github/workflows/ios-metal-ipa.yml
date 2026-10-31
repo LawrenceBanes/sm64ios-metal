@@ -203,7 +203,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/SDL2" "$RUNNER_TEMP/sdl2-stage" "$RUNNER_TEMP/DerivedData" "$RUNNER_TEMP/ios-products"
           rm -rf "$GITHUB_WORKSPACE/build/us_pc"
       - name: Delete temporary private asset release
-        if: always() && inputs.asset_bundle_release_tag != ''
+        if: success() && inputs.asset_bundle_release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
