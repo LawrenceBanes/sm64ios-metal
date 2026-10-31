@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 49 — configurable Metal renderer foundation (implementation in progress)
+
+- Tagged the visually confirmed Build 53.1 source tree as `ios-classic-53.1-device-confirmed`. Classic remains the default direct-to-drawable mode at native scale, 1x samples, and 1x anisotropy.
+- Added portable graphics-setting validation for Classic/Enhanced presets, render scales, supported sample counts, anisotropy levels, internal target dimensions, and sample-aware pipeline cache indexing. Added native UIKit controls and `NSUserDefaults` persistence.
+- Added the Enhanced render-target path: capability-checked MSAA, size-matched depth attachments, single-sample resolve, and a generated full-screen presentation shader. Target allocation or final-pass failures fall back to direct drawable rendering. The per-frame `CAMetalLayer.nextDrawable` acquisition and final present/commit remain in place.
+- Added CPU frame duration, smoothed FPS estimate, command-buffer GPU timestamps when valid, per-frame draw/triangle counts, and active resolution/settings in the Graphics panel. GPU timing is explicitly unavailable if the completed command buffer has no timestamps.
+- Local state/shader/source regression checks and `tests/run_linux_checks.sh` pass. Apple SDK compilation, the full IPA build, and A16/A18/M1 device rendering checks are pending. See [`METAL_GRAPHICS_FOUNDATION.md`](METAL_GRAPHICS_FOUNDATION.md) for target lifetime, fallbacks, performance measurement definitions, and the future post-processing/ray-tracing seams.
+
 ### Mission 48 — sampler-state mismatch correction (Build 52.1 evidence; device retest pending)
 
 - Audited `SM64Diagnostics(5) (2).log` from build 52.1: game ticks and Metal presentation continue, with 5,097 displayed frames by submitted frame 5,100; there are no sampled drawable identity mismatches, cache rollovers (high-water 300/512), missing texture bindings, skipped draws, or Metal errors. The log confirms Flat/UV/Tex ID/Triangles modes reached Metal draws, but does not say what they looked like. See [`MISSION_48_RENDER_CORRUPTION.md`](MISSION_48_RENDER_CORRUPTION.md) for the findings and next visual distinction.

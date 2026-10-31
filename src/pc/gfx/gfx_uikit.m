@@ -42,11 +42,20 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *probeCloseButton;
 @property(nonatomic, strong) UIButton *textureCacheButton;
 @property(nonatomic, strong) UIButton *renderModeButton;
+@property(nonatomic, strong) UIButton *graphicsButton;
+@property(nonatomic, strong) UIView *graphicsPanel;
+@property(nonatomic, strong) UISegmentedControl *presetControl;
+@property(nonatomic, strong) UISegmentedControl *scaleControl;
+@property(nonatomic, strong) UISegmentedControl *msaaControl;
+@property(nonatomic, strong) UISegmentedControl *anisotropyControl;
+@property(nonatomic, strong) UILabel *performanceLabel;
+@property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
 @property(nonatomic) CGRect hitRect;
 @property(nonatomic) NSUInteger probeFrameCount;
 @property(nonatomic) BOOL probeAvailabilityLogged;
 @property(nonatomic) BOOL collapsed;
+@property(nonatomic) BOOL graphicsSettingsVisible;
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentStatus;
 - (void)appendStatus:(NSString *)status;
 - (void)collapsePanel;
@@ -57,6 +66,11 @@ static int sm64RenderDiagnosticMode;
 - (void)updateTextureCacheDiagnosticsButton;
 - (void)toggleTextureCacheDiagnostics;
 - (void)cycleRenderDiagnosticMode;
+- (void)toggleGraphicsSettings;
+- (void)applyGraphicsSettingsSelection:(UISegmentedControl *)sender;
+- (void)refreshGraphicsSettings;
+- (void)refreshGraphicsPerformance;
+- (void)resetGraphicsSettings;
 @end
 
 @interface SM64DiagnosticsPassthroughView : UIView
@@ -149,12 +163,17 @@ static int sm64RenderDiagnosticMode;
     UIButton *probe = [self buttonWithTitle:@"Metal test" action:@selector(startColorProbe)];
     self.textureCacheButton = [self buttonWithTitle:@"Tex log: OFF" action:@selector(toggleTextureCacheDiagnostics)];
     self.renderModeButton = [self buttonWithTitle:@"Mode: Normal" action:@selector(cycleRenderDiagnosticMode)];
+    self.graphicsButton = [self buttonWithTitle:@"Graphics" action:@selector(toggleGraphicsSettings)];
     [buttons addArrangedSubview:share];
     [buttons addArrangedSubview:probe];
     [buttons addArrangedSubview:self.textureCacheButton];
     [buttons addArrangedSubview:self.renderModeButton];
+    [buttons addArrangedSubview:self.graphicsButton];
     self.renderModeButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
+    self.textureCacheButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
+    self.graphicsButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     [self updateTextureCacheDiagnosticsButton];
+    [self buildGraphicsSettingsPanel];
     self.recentStatus = [NSMutableArray array];
     [self appendStatus:@"Native UIKit diagnostic panel ready"];
 }
@@ -172,13 +191,17 @@ static int sm64RenderDiagnosticMode;
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    CGFloat width = MIN(350.0, MAX(250.0, self.view.bounds.size.width - 24.0));
+    CGFloat width = MIN(430.0, MAX(250.0, self.view.bounds.size.width - 24.0));
     CGFloat panelWidth = self.collapsed ? 118.0 : width;
     CGFloat panelHeight = self.collapsed ? 38.0 : 154.0;
     CGFloat top = self.view.safeAreaInsets.top + 6.0;
     CGRect frame = CGRectMake(MAX(10.0, (self.view.bounds.size.width - panelWidth) * 0.5), top, panelWidth, panelHeight);
     self.panel.frame = frame;
-    ((SM64DiagnosticsPassthroughView *)self.view).hitRect = self.probeView ? self.view.bounds : CGRectInset(frame, -2, -2);
+    ((SM64DiagnosticsPassthroughView *)self.view).hitRect = (self.probeView || self.graphicsSettingsVisible) ? self.view.bounds : CGRectInset(frame, -2, -2);
+    CGFloat settingsWidth = MIN(520.0, MAX(320.0, self.view.bounds.size.width - 24.0));
+    CGFloat settingsHeight = MIN(374.0, MAX(330.0, self.view.bounds.size.height - 20.0));
+    self.graphicsPanel.frame = CGRectMake((self.view.bounds.size.width - settingsWidth) * 0.5,
+        (self.view.bounds.size.height - settingsHeight) * 0.5, settingsWidth, settingsHeight);
     if (self.collapsed) {
         self.titleLabel.hidden = YES;
         self.statusLabel.hidden = YES;
@@ -197,6 +220,71 @@ static int sm64RenderDiagnosticMode;
     }
 }
 
+- (void)buildGraphicsSettingsPanel {
+    self.graphicsPanel = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, 520, 374)] autorelease];
+    self.graphicsPanel.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.97];
+    self.graphicsPanel.layer.cornerRadius = 12.0;
+    self.graphicsPanel.layer.borderWidth = 1.0;
+    self.graphicsPanel.layer.borderColor = [UIColor colorWithWhite:0.7 alpha:0.85].CGColor;
+    self.graphicsPanel.hidden = YES;
+    [self.view addSubview:self.graphicsPanel];
+
+    UILabel *heading = [[[UILabel alloc] initWithFrame:CGRectMake(14, 8, 260, 24)] autorelease];
+    heading.text = @"Graphics Settings";
+    heading.textColor = UIColor.whiteColor;
+    heading.font = [UIFont boldSystemFontOfSize:16.0];
+    [self.graphicsPanel addSubview:heading];
+    UIButton *close = [self buttonWithTitle:@"Close" action:@selector(toggleGraphicsSettings)];
+    close.frame = CGRectMake(0, 5, 62, 32);
+    close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.graphicsPanel addSubview:close];
+    self.graphicsPanel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
+        UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+
+    self.presetControl = [self graphicsControl:@[@"Classic", @"Enhanced"] y:38];
+    [self addGraphicsLabel:@"Render scale" y:78];
+    self.scaleControl = [self graphicsControl:@[@"50%", @"75%", @"100%"] y:96];
+    [self addGraphicsLabel:@"Anti-aliasing" y:134];
+    self.msaaControl = [self graphicsControl:@[@"Off", @"2×", @"4×"] y:152];
+    [self addGraphicsLabel:@"Anisotropic filtering" y:190];
+    self.anisotropyControl = [self graphicsControl:@[@"Off", @"2×", @"4×", @"8×", @"16×"] y:208];
+
+    self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+    self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
+    self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
+    self.performanceLabel.numberOfLines = 4;
+    self.performanceLabel.frame = CGRectMake(14, 245, 492, 72);
+    self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.graphicsPanel addSubview:self.performanceLabel];
+
+    UIButton *reset = [self buttonWithTitle:@"Reset defaults" action:@selector(resetGraphicsSettings)];
+    reset.frame = CGRectMake(14, 327, 145, 34);
+    reset.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;
+    [self.graphicsPanel addSubview:reset];
+    UIButton *done = [self buttonWithTitle:@"Done" action:@selector(toggleGraphicsSettings)];
+    done.frame = CGRectMake(0, 327, 80, 34);
+    done.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+    [self.graphicsPanel addSubview:done];
+}
+
+- (UISegmentedControl *)graphicsControl:(NSArray<NSString *> *)titles y:(CGFloat)y {
+    UISegmentedControl *control = [[[UISegmentedControl alloc] initWithItems:titles] autorelease];
+    control.frame = CGRectMake(14, y, 492, 31);
+    control.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    control.backgroundColor = [UIColor colorWithWhite:0.20 alpha:1.0];
+    [control addTarget:self action:@selector(applyGraphicsSettingsSelection:) forControlEvents:UIControlEventValueChanged];
+    [self.graphicsPanel addSubview:control];
+    return control;
+}
+
+- (void)addGraphicsLabel:(NSString *)text y:(CGFloat)y {
+    UILabel *label = [[[UILabel alloc] initWithFrame:CGRectMake(14, y, 240, 17)] autorelease];
+    label.text = text;
+    label.textColor = [UIColor colorWithWhite:0.86 alpha:1.0];
+    label.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
+    [self.graphicsPanel addSubview:label];
+}
+
 - (void)appendStatus:(NSString *)status {
     if (!status.length) return;
     [self.recentStatus addObject:status];
@@ -211,9 +299,105 @@ static int sm64RenderDiagnosticMode;
 }
 
 - (void)togglePanel {
+    if (self.graphicsSettingsVisible) [self toggleGraphicsSettings];
     self.collapsed = !self.collapsed;
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
+}
+
+- (void)toggleGraphicsSettings {
+    self.graphicsSettingsVisible = !self.graphicsSettingsVisible;
+    self.graphicsPanel.hidden = !self.graphicsSettingsVisible;
+    ((SM64DiagnosticsPassthroughView *)self.view).hitRect = self.graphicsSettingsVisible ?
+        self.view.bounds : (self.probeView ? self.view.bounds : CGRectInset(self.panel.frame, -2, -2));
+    if (self.graphicsSettingsVisible) {
+        [self refreshGraphicsSettings];
+        [self refreshGraphicsPerformance];
+        self.performanceTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self
+            selector:@selector(refreshGraphicsPerformance) userInfo:nil repeats:YES];
+        gfx_ios_diag_log("Native Metal graphics settings panel opened");
+    } else {
+        [self.performanceTimer invalidate];
+        self.performanceTimer = nil;
+        gfx_ios_diag_log("Native Metal graphics settings panel closed");
+    }
+}
+
+- (void)refreshGraphicsSettings {
+#if defined(RAPI_METAL)
+    struct GfxMetalSettings settings = gfx_metal_get_settings();
+    struct GfxMetalCapabilities capabilities = gfx_metal_get_capabilities();
+    self.presetControl.selectedSegmentIndex = settings.preset == GFX_METAL_PRESET_ENHANCED ? 1 : 0;
+    self.scaleControl.selectedSegmentIndex = settings.render_scale_percent == 50 ? 0 :
+        (settings.render_scale_percent == 75 ? 1 : 2);
+    self.msaaControl.selectedSegmentIndex = settings.sample_count >= 4 ? 2 :
+        (settings.sample_count >= 2 ? 1 : 0);
+    static const uint32_t levels[] = { 1, 2, 4, 8, 16 };
+    self.anisotropyControl.selectedSegmentIndex = 0;
+    for (NSUInteger i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i)
+        if (levels[i] == settings.anisotropy) self.anisotropyControl.selectedSegmentIndex = (NSInteger)i;
+    [self.msaaControl setEnabled:capabilities.sample_count_2 forSegmentAtIndex:1];
+    [self.msaaControl setEnabled:capabilities.sample_count_4 forSegmentAtIndex:2];
+    for (NSUInteger i = 1; i < sizeof(levels) / sizeof(levels[0]); ++i)
+        [self.anisotropyControl setEnabled:levels[i] <= capabilities.max_anisotropy forSegmentAtIndex:i];
+#endif
+}
+
+- (void)applyGraphicsSettingsSelection:(UISegmentedControl *)sender {
+#if defined(RAPI_METAL)
+    struct GfxMetalSettings settings;
+    if (self.presetControl.selectedSegmentIndex == 0) {
+        settings = gfx_metal_classic_settings();
+    } else {
+        if (sender == self.presetControl) {
+            struct GfxMetalCapabilities capabilities = gfx_metal_get_capabilities();
+            self.scaleControl.selectedSegmentIndex = 2;
+            self.msaaControl.selectedSegmentIndex = capabilities.sample_count_4 ? 2 :
+                (capabilities.sample_count_2 ? 1 : 0);
+            self.anisotropyControl.selectedSegmentIndex = capabilities.max_anisotropy >= 8 ? 3 :
+                (capabilities.max_anisotropy >= 4 ? 2 :
+                 (capabilities.max_anisotropy >= 2 ? 1 : 0));
+        }
+        settings = gfx_metal_enhanced_settings();
+        settings.render_scale_percent = self.scaleControl.selectedSegmentIndex == 0 ? 50u :
+            (self.scaleControl.selectedSegmentIndex == 1 ? 75u : 100u);
+        settings.sample_count = self.msaaControl.selectedSegmentIndex == 0 ? 1u :
+            (self.msaaControl.selectedSegmentIndex == 1 ? 2u : 4u);
+        static const uint32_t levels[] = { 1, 2, 4, 8, 16 };
+        NSInteger aniso_index = MAX(0, self.anisotropyControl.selectedSegmentIndex);
+        settings.anisotropy = levels[MIN((NSUInteger)aniso_index, (sizeof(levels) / sizeof(levels[0])) - 1)];
+    }
+    gfx_metal_apply_settings(settings);
+    [self refreshGraphicsSettings];
+    [self refreshGraphicsPerformance];
+    [self appendStatus:[NSString stringWithFormat:@"Graphics: %@", settings.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced"]];
+#endif
+}
+
+- (void)refreshGraphicsPerformance {
+#if defined(RAPI_METAL)
+    struct GfxMetalPerformanceStats stats = { 0 };
+    gfx_metal_get_performance_stats(&stats);
+    NSString *gpu = stats.gpu_timing_available ?
+        [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
+    NSString *preset = stats.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced";
+    self.performanceLabel.text = [NSString stringWithFormat:
+        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×",
+        preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
+        (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
+        stats.render_width, stats.render_height, stats.render_scale_percent,
+        stats.sample_count, stats.anisotropy];
+#endif
+}
+
+- (void)resetGraphicsSettings {
+#if defined(RAPI_METAL)
+    gfx_metal_apply_settings(gfx_metal_classic_settings());
+    [self refreshGraphicsSettings];
+    [self refreshGraphicsPerformance];
+    gfx_ios_diag_log("Metal graphics settings reset to Classic defaults");
+    [self appendStatus:@"Graphics reset to Classic defaults"];
+#endif
 }
 
 - (void)updateTextureCacheDiagnosticsButton {

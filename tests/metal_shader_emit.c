@@ -35,6 +35,21 @@ static int emit_shader_id(const char *directory, const char *name, uint32_t shad
     return ok;
 }
 
+static int emit_present_shader(const char *directory) {
+    char path[1024];
+    int length = snprintf(path, sizeof(path), "%s/%s.metal", directory, "enhanced_present");
+    if (length < 0 || (size_t)length >= sizeof(path)) return 0;
+    FILE *file = fopen(path, "wb");
+    if (!file) { perror(path); return 0; }
+    const char *source = gfx_metal_present_shader_source();
+    size_t size = strlen(source);
+    int ok = fwrite(source, 1, size, file) == size;
+    if (fclose(file) != 0) ok = 0;
+    if (!ok) fprintf(stderr, "could not write %s\n", path);
+    else printf("generated %s\n", path);
+    return ok;
+}
+
 static int emit(const char *directory, const char *name, const uint8_t rgb[4],
                 const uint8_t alpha[4], uint32_t options) {
     return emit_shader_id(directory, name, make_shader(rgb, alpha, options));
@@ -58,5 +73,6 @@ int main(int argc, char **argv) {
            emit_shader_id(argv[1], "device_failure_01200200", 0x01200200u) &&
            emit_shader_id(argv[1], "device_failure_00000045", 0x00000045u) &&
            emit_shader_id(argv[1], "device_failure_00000200", 0x00000200u) &&
-           emit_shader_id(argv[1], "device_failure_01200a00", 0x01200a00u) ? 0 : 1;
+           emit_shader_id(argv[1], "device_failure_01200a00", 0x01200a00u) &&
+           emit_present_shader(argv[1]) ? 0 : 1;
 }

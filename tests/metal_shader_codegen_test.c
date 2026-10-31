@@ -54,6 +54,10 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
 int main(void) {
     char source[8192];
     struct CCFeatures features;
+    const char *present_source = gfx_metal_present_shader_source();
+    assert(strstr(present_source, "sm64_present_vertex") != NULL);
+    assert(strstr(present_source, "sm64_present_fragment") != NULL);
+    assert(strstr(present_source, "texture2d<float> image") != NULL);
     uint8_t flat_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint8_t flat_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint32_t id = shader(flat_rgb, flat_alpha, 0);

@@ -42,6 +42,7 @@ jobs:
           python3 ios/test_ios_metal_presentation.py
           python3 ios/test_texture_cache_reset.py
           python3 ios/test_render_diagnostics.py
+          python3 ios/test_metal_graphics_foundation.py
       - name: Compile iOS Metal backend and generated MSL
         env:
           METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/metal-apple-validation
