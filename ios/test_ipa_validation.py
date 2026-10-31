@@ -13,6 +13,11 @@ from validate_ipa import validate
 
 
 class IpaValidationTests(unittest.TestCase):
+    def test_ipa_workflow_preserves_private_asset_release_for_retries(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ios-metal-ipa.yml").read_text()
+        self.assertIn("asset_bundle_release_tag", workflow)
+        self.assertNotIn("gh release delete", workflow)
+
     def make_app(self, path: Path, cpu_type: int = 0x0100000C, platform: int = 2) -> Path:
         info = {
             "CFBundleExecutable": "sm64ios",

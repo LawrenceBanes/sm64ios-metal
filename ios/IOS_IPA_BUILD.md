@@ -16,7 +16,7 @@ The ROM stays in the developer checkout. Create an archive from the 1,538 USA-ma
 python3 ios/asset_bundle.py create /tmp/sm64-assets.tar.gz
 ```
 
-For the simplest one-time transfer, use a temporary **draft release in the private project repository**. It requires no extra hosting account or URL secret and is deleted, along with its temporary tag, by the IPA workflow even when a later build step fails:
+For the simplest transfer, use a temporary **draft release in the private project repository**. It requires no extra hosting account or URL secret. The IPA workflow keeps the draft release after a run so it remains available for retries; remove it manually after you no longer need the bundle:
 
 ```sh
 bundle=/tmp/sm64-assets.tar.gz
@@ -34,7 +34,7 @@ gh workflow run ios-metal-ipa.yml \
   -f "asset_bundle_release_tag=$tag"
 ```
 
-The manual workflow downloads the two files using its repository-scoped token and validates the SHA-256 and archive contents. The checksum file may contain only the digest or standard `sha256sum` output with the archive filename. A failed build leaves the draft release available for retry; a successful build removes it during cleanup. Draft releases do not create a Git tag ref. This places the asset bundle briefly in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
+The manual workflow downloads the two files using its repository-scoped token and validates the SHA-256 and archive contents. The checksum file may contain only the digest or standard `sha256sum` output with the archive filename. Draft releases do not create a Git tag ref. This places the asset bundle in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
 
 The archive is limited to the USA-mapped regular asset files and checked against `assets.json`, then extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
 

@@ -15,6 +15,7 @@ static uint64_t ios_touch_began_count;
 static uint64_t ios_touch_motion_count;
 static uint64_t ios_touch_ended_count;
 static uint64_t ios_touch_action_count;
+static int ios_next_touch_id = 1;
 
 @implementation OverlayImageView
 
@@ -38,85 +39,81 @@ static uint64_t ios_touch_action_count;
     void (*touch_motion_callback)(void* event);
     void (*touch_up_callback)(void* event);
     
-    NSMutableArray *trackedTouches;
+    NSMapTable<UITouch *, NSNumber *> *trackedTouchIDs;
 }
 
 - (id)initWithTarget:(id)target action:(SEL)action {
     if((self = [super initWithTarget:target action:action])) {
         
     }
-    trackedTouches = [[NSMutableArray alloc] init];
+    trackedTouchIDs = [[NSMapTable strongToStrongObjectsMapTable] retain];
     return self;
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [super touchesBegan:touches withEvent:event];
-    [trackedTouches addObjectsFromArray:[touches allObjects]];
-    for(int i = 0; i < trackedTouches.count; i++) {
-        UITouch *touch = [trackedTouches objectAtIndex:i];
-        if(![touch isEqual:[NSNull null]]) {
-            CGPoint position = [touch locationInView:self.view];
-            struct TouchEvent touchEvent;
-            touchEvent.x = position.x;
-            touchEvent.y = position.y;
-            touchEvent.touchID = i + 1;
-            uint64_t sequence = ++ios_touch_began_count;
-            if (sequence <= 12 || sequence % 120 == 0) {
-                CGPoint windowPoint = [touch locationInView:self.view.window];
-                UIView *hitView = [self.view.window hitTest:windowPoint withEvent:event];
-                gfx_ios_diag_log("UIKit touch began seq=%llu id=%d pointInTouchView=(%.1f,%.1f) viewBounds=(%.1f,%.1f %.1fx%.1f) receiver=%@ hitView=%@ window=%@ scene=%@ interaction=%d callback=%d tracked=%lu", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view, hitView, self.view.window, self.view.window.windowScene.session.persistentIdentifier, self.view.userInteractionEnabled, touch_down_callback != NULL, (unsigned long)trackedTouches.count);
+    for (UITouch *touch in touches) {
+        if ([trackedTouchIDs objectForKey:touch]) continue;
+        int touchID = ios_next_touch_id++;
+        if (ios_next_touch_id <= 0) ios_next_touch_id = 1;
+        [trackedTouchIDs setObject:@(touchID) forKey:touch];
+        CGPoint position = [touch locationInView:self.view];
+        struct TouchEvent touchEvent;
+        touchEvent.x = position.x;
+        touchEvent.y = position.y;
+        touchEvent.touchID = touchID;
+        uint64_t sequence = ++ios_touch_began_count;
+        if (sequence <= 12 || sequence % 120 == 0) {
+            CGPoint windowPoint = [touch locationInView:self.view.window];
+            UIView *hitView = [self.view.window hitTest:windowPoint withEvent:event];
+            UIWindowScene *scene = self.view.window.windowScene;
+            UIWindow *topWindow = nil;
+            for (UIWindow *candidate in scene.windows) {
+                if (!candidate.hidden && candidate.alpha > 0 && (!topWindow || candidate.windowLevel > topWindow.windowLevel)) topWindow = candidate;
             }
-            if (touch_down_callback != NULL) {
-                touch_down_callback((void*)&touchEvent);
-            }
+            gfx_ios_diag_log("UIKit touch began seq=%llu id=%d pointInTouchView=(%.1f,%.1f) viewBounds=(%.1f,%.1f %.1fx%.1f) receiver=%@ hitView=%@ window=%@ topVisibleWindow=%@ scene=%@ interaction=%d callback=%d tracked=%lu", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view, hitView, self.view.window, topWindow, scene.session.persistentIdentifier, self.view.userInteractionEnabled, touch_down_callback != NULL, (unsigned long)trackedTouchIDs.count);
         }
+        if (touch_down_callback != NULL) touch_down_callback((void *)&touchEvent);
     }
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [super touchesMoved:touches withEvent:event];
-    for(UITouch *touch in touches) {
-        if(![touch isEqual:[NSNull null]]) {
-            int i = [trackedTouches indexOfObject:touch];
-            UITouch *touch = [trackedTouches objectAtIndex:i];
-            CGPoint position = [touch locationInView:self.view];
-            struct TouchEvent touchEvent;
-            touchEvent.x = position.x;
-            touchEvent.y = position.y;
-            touchEvent.touchID = i + 1;
-            uint64_t sequence = ++ios_touch_motion_count;
-            if (sequence <= 4 || sequence % 240 == 0)
-                gfx_ios_diag_log("UIKit touch moved seq=%llu id=%d point=(%.1f,%.1f) callback=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_motion_callback != NULL);
-            if (touch_motion_callback != NULL) {
-                touch_motion_callback((void*)&touchEvent);
-            }
+    for (UITouch *touch in touches) {
+        NSNumber *trackedID = [trackedTouchIDs objectForKey:touch];
+        if (!trackedID) {
+            gfx_ios_diag_log("UIKit touch moved without tracked begin; ignoring touch=%@", touch);
+            continue;
         }
+        CGPoint position = [touch locationInView:self.view];
+        struct TouchEvent touchEvent;
+        touchEvent.x = position.x;
+        touchEvent.y = position.y;
+        touchEvent.touchID = trackedID.intValue;
+        uint64_t sequence = ++ios_touch_motion_count;
+        if (sequence <= 4 || sequence % 240 == 0)
+            gfx_ios_diag_log("UIKit touch moved seq=%llu id=%d point=(%.1f,%.1f) callback=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_motion_callback != NULL);
+        if (touch_motion_callback != NULL) touch_motion_callback((void *)&touchEvent);
     }
 }
 
 - (void)handleTouchesEnded:(NSSet<UITouch *> *)touches {
-    bool isAllNull = YES;
-    for(UITouch *touch in touches) {
-        if(![touch isEqual:[NSNull null]]) {
-            isAllNull = NO;
-            int i = [trackedTouches indexOfObject:touch];
-            UITouch *touch = [trackedTouches objectAtIndex:i];
-            CGPoint position = [touch locationInView:self.view];
-            struct TouchEvent touchEvent;
-            touchEvent.x = position.x;
-            touchEvent.y = position.y;
-            touchEvent.touchID = i + 1;
-            uint64_t sequence = ++ios_touch_ended_count;
-            if (sequence <= 12 || sequence % 120 == 0)
-                gfx_ios_diag_log("UIKit touch ended seq=%llu id=%d point=(%.1f,%.1f) callback=%d cancelled=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_up_callback != NULL, touch.phase == UITouchPhaseCancelled);
-            if (touch_up_callback != NULL) {
-                touch_up_callback((void*)&touchEvent);
-            }
-            [trackedTouches setObject:[NSNull null] atIndexedSubscript:i];
+    for (UITouch *touch in touches) {
+        NSNumber *trackedID = [trackedTouchIDs objectForKey:touch];
+        if (!trackedID) {
+            gfx_ios_diag_log("UIKit touch ended without tracked begin; ignoring touch=%@ cancelled=%d", touch, touch.phase == UITouchPhaseCancelled);
+            continue;
         }
-    }
-    if(isAllNull) {
-        [trackedTouches removeAllObjects];
+        CGPoint position = [touch locationInView:self.view];
+        struct TouchEvent touchEvent;
+        touchEvent.x = position.x;
+        touchEvent.y = position.y;
+        touchEvent.touchID = trackedID.intValue;
+        uint64_t sequence = ++ios_touch_ended_count;
+        if (sequence <= 12 || sequence % 120 == 0)
+            gfx_ios_diag_log("UIKit touch ended seq=%llu id=%d point=(%.1f,%.1f) callback=%d cancelled=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_up_callback != NULL, touch.phase == UITouchPhaseCancelled);
+        if (touch_up_callback != NULL) touch_up_callback((void *)&touchEvent);
+        [trackedTouchIDs removeObjectForKey:touch];
     }
 }
 
@@ -138,6 +135,16 @@ static uint64_t ios_touch_action_count;
 
 - (void)reset {
     [super reset];
+    NSEnumerator<UITouch *> *touches = trackedTouchIDs.keyEnumerator;
+    UITouch *touch = nil;
+    while ((touch = [touches nextObject])) {
+        NSNumber *trackedID = [trackedTouchIDs objectForKey:touch];
+        if (trackedID && touch_up_callback) {
+            struct TouchEvent touchEvent = { .touchID = trackedID.intValue, .x = 0, .y = 0 };
+            touch_up_callback((void *)&touchEvent);
+        }
+    }
+    [trackedTouchIDs removeAllObjects];
 }
 
 @end
@@ -171,7 +178,11 @@ static uint64_t ios_touch_action_count;
     
     self.view.multipleTouchEnabled = YES;
     gestureRecognizer = [[GestureRecognizer alloc] initWithTarget:self action:@selector(handleTouchAction:)];
-    gestureRecognizer.cancelsTouchesInView = YES;
+    // Touch controls use the recognizer's direct callback path, while allowing
+    // UIKit's normal view responder chain to finish the same touch sequence.
+    gestureRecognizer.cancelsTouchesInView = NO;
+    gestureRecognizer.delaysTouchesBegan = NO;
+    gestureRecognizer.delaysTouchesEnded = NO;
     [gestureRecognizer set_touchscreen_callbacks:touch_down_callback motion:touch_motion_callback up:touch_up_callback];
     [self.view addGestureRecognizer:gestureRecognizer];
     gfx_ios_diag_log("UIKit touch recognizer installed touchView=%@ bounds=(%.1f,%.1f %.1fx%.1f) interaction=%d multipleTouch=%d cancelsTouches=%d subviews=%lu", self.view, self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view.userInteractionEnabled, self.view.multipleTouchEnabled, gestureRecognizer.cancelsTouchesInView, (unsigned long)self.view.subviews.count);
@@ -228,6 +239,38 @@ static uint64_t ios_touch_action_count;
     if (sequence <= 8 || sequence % 120 == 0) {
         gfx_ios_diag_log("UIKit gesture target action seq=%llu state=%ld touches=%lu receiver=%@ callbackRoute=direct-controller", (unsigned long long)sequence, (long)sender.state, (unsigned long)sender.numberOfTouches, sender.view);
     }
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesBegan:touches withEvent:event];
+    static uint64_t responder_began_count;
+    uint64_t sequence = ++responder_began_count;
+    if (sequence <= 8 || sequence % 120 == 0)
+        gfx_ios_diag_log("UIKit touch view-controller responder began seq=%llu touches=%lu view=%@ window=%@", (unsigned long long)sequence, (unsigned long)touches.count, self.view, self.view.window);
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesMoved:touches withEvent:event];
+    static uint64_t responder_moved_count;
+    uint64_t sequence = ++responder_moved_count;
+    if (sequence <= 4 || sequence % 240 == 0)
+        gfx_ios_diag_log("UIKit touch view-controller responder moved seq=%llu touches=%lu", (unsigned long long)sequence, (unsigned long)touches.count);
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesEnded:touches withEvent:event];
+    static uint64_t responder_ended_count;
+    uint64_t sequence = ++responder_ended_count;
+    if (sequence <= 8 || sequence % 120 == 0)
+        gfx_ios_diag_log("UIKit touch view-controller responder ended seq=%llu touches=%lu", (unsigned long long)sequence, (unsigned long)touches.count);
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+    static uint64_t responder_cancelled_count;
+    uint64_t sequence = ++responder_cancelled_count;
+    if (sequence <= 8 || sequence % 120 == 0)
+        gfx_ios_diag_log("UIKit touch view-controller responder cancelled seq=%llu touches=%lu", (unsigned long long)sequence, (unsigned long)touches.count);
 }
 
 - (void)set_touchscreen_callbacks:(void (*)(void* event))down motion:(void (*)(void* event))motion up:(void (*)(void* event))up {

@@ -6,7 +6,7 @@ The iOS app writes timestamped checkpoints to `Documents/SM64Diagnostics.log` an
 
 In the Files app, open **Browse → On My iPhone → Super Mario 64** and copy or share `SM64Diagnostics.log`. If that folder is not shown, open SM64 once and return to Files. The native **Share log** button in the diagnostic panel sends the same file through the iOS share sheet.
 
-The compact native diagnostics panel appears at the upper left while the app starts. It updates independently of SDL and the game renderer. Tap **Hide** to collapse it to a small **Diagnostics** button; tap that button to reopen it. The panel accepts touches only over itself so game controls remain usable elsewhere.
+The compact native diagnostics panel appears at the top center while the app starts. After SDL creates its window, the panel moves into the SDL controller hierarchy and its temporary higher-level window is removed. It updates independently of SDL and the game renderer. Tap **Hide** to collapse it to a small **Diagnostics** button; tap that button to reopen it. The panel accepts touches only over itself so game controls remain usable elsewhere.
 
 Tap **Metal color test** to temporarily cover the game with a bright magenta color rendered by a separate native `MTKView`. This test does not use SDL, the SM64 `GfxRenderingAPI`, game shaders, or game geometry. Tap **Close color test** to return to the game. The log records drawable availability, command submission, and GPU completion for the test.
 
@@ -21,6 +21,8 @@ Tap **Metal color test** to temporarily cover the game with a bright magenta col
 - Repeated `Metal frame drawable unavailable`: the game MTKView has no current drawable/pass. Check the recorded view size, scene, and visibility fields.
 - No `Metal presentDrawable submitted` entry: the game frame did not reach Metal's present call. Earlier game-frame checkpoints show how far scheduling, game logic, and rendering got.
 - `Metal first game command buffer completed` without `First SM64 game drawable presented by CoreAnimation`: GPU work completed, but the system has not confirmed display presentation for the game drawable.
+- `Metal command buffer scheduled` advances while `Metal CoreAnimation drawable presented` does not: work reaches the GPU scheduler but Core Animation is not reporting displayed drawables. Compare `presentsWithTransaction` and drawable IDs; the game renderer uses command-buffer presentation with transaction synchronization disabled.
+- UIKit `touch began` does not appear after tapping: UIKit did not deliver the touch to the recognizer; inspect the logged top visible window and SDL hit-test result. If it appears but there is no `Virtual control hit` or hit-test miss, the direct callback bridge failed. A hit followed by `Touch controller read` with a nonzero active-control count confirms controller state received the touch.
 - Game command buffers complete but the screen stays black: GPU completion confirms command execution, not visible pixels. Compare against the independent magenta test. If magenta appears, UIKit and a basic Metal present work; investigate SM64 geometry, shader/pipeline state, textures, viewport/scissor, or composition next. If the magenta test also fails, its own drawable and GPU errors narrow the issue to the native Metal view/presentation path.
 
 These checkpoints identify where the pipeline stops; they do not claim that any GPU submission produced visible pixels. A real iPhone check remains necessary.

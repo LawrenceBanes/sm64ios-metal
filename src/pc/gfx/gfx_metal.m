@@ -62,6 +62,7 @@ static bool logged_first_presented_frame;
 static bool logged_first_triangle_draw;
 static uint64_t presented_drawable_count;
 static uint64_t completed_drawable_count;
+static uint64_t scheduled_command_count;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
 static uint32_t inactive_scene_frame_count;
@@ -151,6 +152,9 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
+    // This renderer schedules presentation directly on each command buffer.
+    // Transaction synchronized presentation requires a different scheduling path.
+    metal_view.presentsWithTransaction = NO;
     metal_view.framebufferOnly = YES;
     metal_view.paused = YES;
     metal_view.enableSetNeedsDisplay = NO;
@@ -590,7 +594,6 @@ static void gfx_metal_end_frame(void) {
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
-    [metal_command presentDrawable:submitted_drawable];
 #if !TARGET_OS_SIMULATOR
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
         uint64_t presentation_index;
@@ -598,14 +601,27 @@ static void gfx_metal_end_frame(void) {
             presentation_index = ++presented_drawable_count;
         }
         if (presentation_index <= 3 || presentation_index % 120 == 0) {
-            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, presented_drawable.presentedTime, drawable_width, drawable_height);
+            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u drawableID=%lu presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, (unsigned long)presented_drawable.drawableID, presented_drawable.presentedTime, drawable_width, drawable_height);
         }
         if (!logged_first_presented_frame) {
             logged_first_presented_frame = true;
-            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
+            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation drawableID=%lu presentedTime=%.6f size=%.0fx%.0f", (unsigned long)presented_drawable.drawableID, presented_drawable.presentedTime, drawable_width, drawable_height);
         }
     }];
 #endif
+    [metal_command addScheduledHandler:^(id<MTLCommandBuffer> scheduled) {
+        uint64_t scheduled_index;
+        @synchronized ([NSObject class]) {
+            scheduled_index = ++scheduled_command_count;
+        }
+        if (scheduled_index <= 3 || scheduled_index % 120 == 0) {
+            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawableID=%lu status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (unsigned long)submitted_drawable.drawableID, (long)scheduled.status, metal_view.presentsWithTransaction);
+        }
+    }];
+    // Register presentation observation before scheduling the drawable. This
+    // makes the callback ordering explicit and lets the log distinguish GPU
+    // scheduling/completion from Core Animation actually displaying a frame.
+    [metal_command presentDrawable:submitted_drawable];
     [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
         if (completed.status == MTLCommandBufferStatusError) {
             gfx_ios_diag_log("Metal GPU command failed frame=%u status=%ld error=%s", submitted_frame, (long)completed.status, completed.error.localizedDescription.UTF8String ?: "unknown");
