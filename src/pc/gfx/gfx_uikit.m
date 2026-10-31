@@ -31,6 +31,7 @@ static __weak id sm64DiagnosticsController;
 static BOOL sm64DiagnosticsLaunchMarkerWritten;
 static BOOL sm64OrientationSourceLogged;
 static BOOL sm64DiagnosticsEmbeddedInSDL;
+static int sm64RenderDiagnosticMode;
 
 @interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate>
 @property(nonatomic, strong) UIView *panel;
@@ -40,6 +41,7 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
 @property(nonatomic, strong) MTKView *probeView;
 @property(nonatomic, strong) UIButton *probeCloseButton;
 @property(nonatomic, strong) UIButton *textureCacheButton;
+@property(nonatomic, strong) UIButton *renderModeButton;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
 @property(nonatomic) CGRect hitRect;
 @property(nonatomic) NSUInteger probeFrameCount;
@@ -54,6 +56,7 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
 - (void)shareLog;
 - (void)updateTextureCacheDiagnosticsButton;
 - (void)toggleTextureCacheDiagnostics;
+- (void)cycleRenderDiagnosticMode;
 @end
 
 @interface SM64DiagnosticsPassthroughView : UIView
@@ -145,9 +148,12 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
     UIButton *share = [self buttonWithTitle:@"Share log" action:@selector(shareLog)];
     UIButton *probe = [self buttonWithTitle:@"Metal test" action:@selector(startColorProbe)];
     self.textureCacheButton = [self buttonWithTitle:@"Tex log: OFF" action:@selector(toggleTextureCacheDiagnostics)];
+    self.renderModeButton = [self buttonWithTitle:@"Mode: Normal" action:@selector(cycleRenderDiagnosticMode)];
     [buttons addArrangedSubview:share];
     [buttons addArrangedSubview:probe];
     [buttons addArrangedSubview:self.textureCacheButton];
+    [buttons addArrangedSubview:self.renderModeButton];
+    self.renderModeButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     [self updateTextureCacheDiagnosticsButton];
     self.recentStatus = [NSMutableArray array];
     [self appendStatus:@"Native UIKit diagnostic panel ready"];
@@ -222,6 +228,15 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
     [self updateTextureCacheDiagnosticsButton];
     gfx_ios_diag_log("Texture-cache diagnostics %s", enabled ? "enabled" : "disabled");
     [self appendStatus:enabled ? @"Texture cache logging enabled" : @"Texture cache logging disabled"];
+}
+
+- (void)cycleRenderDiagnosticMode {
+    static NSString *const modeNames[] = {@"Normal", @"Flat", @"UV", @"Tex ID", @"Triangles"};
+    sm64RenderDiagnosticMode = (sm64RenderDiagnosticMode + 1) % 5;
+    NSString *title = [NSString stringWithFormat:@"Mode: %@", modeNames[sm64RenderDiagnosticMode]];
+    [self.renderModeButton setTitle:title forState:UIControlStateNormal];
+    gfx_ios_diag_log("Render diagnostic mode changed mode=%d name=%s; Normal mode preserves the regular shader output", sm64RenderDiagnosticMode, modeNames[sm64RenderDiagnosticMode].UTF8String);
+    [self appendStatus:[NSString stringWithFormat:@"Render diagnostic: %@", modeNames[sm64RenderDiagnosticMode]]];
 }
 
 - (void)shareLog {
@@ -472,6 +487,10 @@ bool gfx_ios_texture_cache_diagnostics_enabled(void) {
 #else
     return false;
 #endif
+}
+
+int gfx_ios_render_diagnostic_mode(void) {
+    return sm64RenderDiagnosticMode;
 }
 
 void gfx_ios_diag_mark_first_game_frame(void) {

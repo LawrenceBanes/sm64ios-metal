@@ -111,6 +111,34 @@ int main(void) {
     assert(strstr(source, "offset-=step(1.0,offset.x+offset.y)") != NULL);
     assert(strstr(source, "discard_fragment()") != NULL);
     assert(strstr(source, "mix(color.rgb,in.fog.rgb,in.fog.a)") != NULL);
+    assert(strstr(source, "diagnosticMode==1u?float4(1.0):sampleTex") != NULL);
+    assert(strstr(source, "diagnosticMode==2u") != NULL);
+    assert(strstr(source, "diagnosticTextureColor(params.textureId0)") != NULL);
+    assert(strstr(source, "diagnosticMode==4u") != NULL);
+    assert(strstr(source, "vertex_id [[vertex_id]]") != NULL);
+    assert(strstr(source, "o.barycentric=") != NULL);
+
+    /* No-texture variants still accept per-draw diagnostic parameters and
+     * provide explicit outputs for UV and texture-ID inspection. */
+    id = shader(flat_rgb, flat_alpha, 0);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(!features.used_textures[0] && !features.used_textures[1]);
+    assert(strstr(source, "constant FragmentParams &params [[buffer(1)]]") != NULL);
+    assert(strstr(source, "return float4(1.0,0.0,1.0,1.0)") != NULL);
+    assert(strstr(source, "diagnosticMode==3u") != NULL);
+    assert(strstr(source, "diagnosticMode==4u") != NULL);
+    assert_dense_vertex_attributes(source, &features);
+
+    /* A dual-texture variant substitutes both combiner inputs without
+     * bypassing the existing fog/alpha path in normal mode. */
+    id = 0x01a00a6fu;
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(features.used_textures[0] && features.used_textures[1]);
+    assert(strstr(source, "diagnosticMode==1u?float4(1.0):sampleTex(tex0") != NULL);
+    assert(strstr(source, "diagnosticMode==1u?float4(1.0):sampleTex(tex1") != NULL);
+    assert(strstr(source, "diagnosticMode==2u") != NULL);
+    assert(strstr(source, "diagnosticTextureColor(params.textureId1)") != NULL);
+    assert_dense_vertex_attributes(source, &features);
 
     /* Reproduce the four shader IDs that failed on the device and check their
      * complete MSL attribute lists against the packed descriptor cardinality. */
