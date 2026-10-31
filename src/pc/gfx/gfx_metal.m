@@ -60,6 +60,8 @@ static bool metal_scene_active;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
 static bool logged_first_triangle_draw;
+static uint64_t presented_drawable_count;
+static uint64_t completed_drawable_count;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
 static uint32_t inactive_scene_frame_count;
@@ -167,6 +169,8 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     metal_scene_active = scene && scene.activationState == UISceneActivationStateForegroundActive &&
                          UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
     gfx_ios_diag_log("Game Metal MTKView attached to SDL scene window frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f color=BGRA8Unorm depth=Depth32Float stencil=None parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f interaction=%d parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, metal_view.userInteractionEnabled, (unsigned long)view_controller.view.subviews.count);
+    CAMetalLayer *metal_layer = (CAMetalLayer *)metal_view.layer;
+    gfx_ios_diag_log("Metal CoreAnimation layer configuration presentsWithTransaction=%d framebufferOnly=%d paused=%d enableSetNeedsDisplay=%d", metal_layer.presentsWithTransaction, metal_view.framebufferOnly, metal_view.paused, metal_view.enableSetNeedsDisplay);
     gfx_ios_diag_log("Metal scene geometry attached sceneBounds=(%.0fx%.0f) windowBounds=(%.0fx%.0f) rootBounds=(%.0fx%.0f) MTKViewBounds=(%.0fx%.0f) drawable=(%.0fx%.0f) scale=%.2f", scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, view_controller.view.bounds.size.width, view_controller.view.bounds.size.height, metal_view.bounds.size.width, metal_view.bounds.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor);
     bool ready = gfx_metal_surface_is_ready();
     gfx_ios_diag_log("Game Metal surface readiness=%s drawable=%.0fx%.0f attachedToScene=%d", ready ? "ready" : "not-ready", drawable.width, drawable.height, metal_view.window.windowScene != nil);
@@ -585,26 +589,42 @@ static void gfx_metal_end_frame(void) {
     id<MTLDrawable> submitted_drawable = (id<MTLDrawable>)metal_drawable;
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
+    uint32_t submitted_frame = frame_count;
     [metal_command presentDrawable:submitted_drawable];
 #if !TARGET_OS_SIMULATOR
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
+        uint64_t presentation_index;
+        @synchronized ([NSObject class]) {
+            presentation_index = ++presented_drawable_count;
+        }
+        if (presentation_index <= 3 || presentation_index % 120 == 0) {
+            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, presented_drawable.presentedTime, drawable_width, drawable_height);
+        }
         if (!logged_first_presented_frame) {
             logged_first_presented_frame = true;
             gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
         }
     }];
 #endif
-    uint32_t submitted_frame = frame_count;
     [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
         if (completed.status == MTLCommandBufferStatusError) {
             gfx_ios_diag_log("Metal GPU command failed frame=%u status=%ld error=%s", submitted_frame, (long)completed.status, completed.error.localizedDescription.UTF8String ?: "unknown");
             NSLog(@"Metal GPU command failed frame=%u: %@", submitted_frame, completed.error.localizedDescription);
-        } else if (!logged_first_completed_frame) {
-            logged_first_completed_frame = true;
-            gfx_ios_diag_log("Metal first game command buffer completed frame=%u drawable=%.0fx%.0f status=%ld", submitted_frame, drawable_width, drawable_height, (long)completed.status);
-            gfx_ios_diag_mark_first_game_frame();
-            NSLog(@"Metal first command buffer completed frame=%u drawable=%.0fx%.0f; presentation/runtime rendering still requires visual verification",
-                  submitted_frame, drawable_width, drawable_height);
+        } else {
+            uint64_t completion_index;
+            @synchronized ([NSObject class]) {
+                completion_index = ++completed_drawable_count;
+            }
+            if (completion_index <= 3 || completion_index % 120 == 0) {
+                gfx_ios_diag_log("Metal GPU command completion count=%llu frame=%u status=%ld drawable=%.0fx%.0f", (unsigned long long)completion_index, submitted_frame, (long)completed.status, drawable_width, drawable_height);
+            }
+            if (!logged_first_completed_frame) {
+                logged_first_completed_frame = true;
+                gfx_ios_diag_log("Metal first game command buffer completed frame=%u drawable=%.0fx%.0f status=%ld", submitted_frame, drawable_width, drawable_height, (long)completed.status);
+                gfx_ios_diag_mark_first_game_frame();
+                NSLog(@"Metal first command buffer completed frame=%u drawable=%.0fx%.0f; presentation/runtime rendering still requires visual verification",
+                      submitted_frame, drawable_width, drawable_height);
+            }
         }
     }];
     [metal_command commit];

@@ -14,6 +14,7 @@
 static uint64_t ios_touch_began_count;
 static uint64_t ios_touch_motion_count;
 static uint64_t ios_touch_ended_count;
+static uint64_t ios_touch_action_count;
 
 @implementation OverlayImageView
 
@@ -223,7 +224,10 @@ static uint64_t ios_touch_ended_count;
 }
 
 - (void)handleTouchAction:(GestureRecognizer *)sender {
-    
+    uint64_t sequence = ++ios_touch_action_count;
+    if (sequence <= 8 || sequence % 120 == 0) {
+        gfx_ios_diag_log("UIKit gesture target action seq=%llu state=%ld touches=%lu receiver=%@ callbackRoute=direct-controller", (unsigned long long)sequence, (long)sender.state, (unsigned long)sender.numberOfTouches, sender.view);
+    }
 }
 
 - (void)set_touchscreen_callbacks:(void (*)(void* event))down motion:(void (*)(void* event))motion up:(void (*)(void* event))up {

@@ -35,6 +35,7 @@ def main() -> None:
     require("Virtual control hit seq=", CONTROLLER, "matched virtual control diagnostics")
     require("Touch controller read heartbeat", CONTROLLER, "controller polling heartbeat")
     require("Virtual MENU input dispatched", CONTROLLER, "MENU dispatch diagnostics")
+    require("UIKit gesture target action seq=", GESTURE, "UIGestureRecognizer action-state diagnostics")
     require("SDL event pump heartbeat", SDL, "SDL event polling heartbeat")
     require("SDL touch event type=down", SDL, "SDL finger event diagnostics")
     require("Touch input callbacks installed source=UIKit GestureRecognizer", MAIN, "actual UIKit callback route is explicit")
@@ -45,6 +46,12 @@ def main() -> None:
     require("Metal presentation heartbeat", METAL, "Metal command submission heartbeat")
     require("userInteractionEnabled", METAL, "Metal view interaction state diagnostic")
     require("UIKit SDL controller subview zIndex=", UIKIT, "post-attachment UIKit subview ordering diagnostics")
+    require("sm64_diag_attach_to_game_controller(viewControllerPointer)", UIKIT, "diagnostic controls move into the SDL scene hierarchy")
+    require("diagnosticWindow.rootViewController = nil", UIKIT, "extra diagnostics UIWindow is removed after SDL initialization")
+    require("BOOL inside = CGRectContainsPoint(self.hitRect, point)", UIKIT, "diagnostic overlay passes through touches outside its panel")
+    require("return inside;", UIKIT, "diagnostic overlay returns false outside its panel hit rectangle")
+    require("diagnosticWindow.hidden = YES", UIKIT, "temporary higher-level startup window is hidden before gameplay")
+    require("UIKit diagnostics overlay hit-test seq=", UIKIT, "diagnostics window/subview touch routing evidence")
     print("UIKit touch routing, transformed hit-test coordinates, controller polling, and simulation/presentation heartbeat checks passed")
 
 

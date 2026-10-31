@@ -30,6 +30,7 @@ static NSDateFormatter *sm64DiagnosticsDateFormatter;
 static __weak id sm64DiagnosticsController;
 static BOOL sm64DiagnosticsLaunchMarkerWritten;
 static BOOL sm64OrientationSourceLogged;
+static BOOL sm64DiagnosticsEmbeddedInSDL;
 
 @interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate>
 @property(nonatomic, strong) UIView *panel;
@@ -59,7 +60,13 @@ static BOOL sm64OrientationSourceLogged;
 @implementation SM64DiagnosticsPassthroughView
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     (void)event;
-    return CGRectContainsPoint(self.hitRect, point);
+    BOOL inside = CGRectContainsPoint(self.hitRect, point);
+    static uint64_t hit_test_count;
+    uint64_t sequence = ++hit_test_count;
+    if (sequence <= 12 || sequence % 240 == 0) {
+        gfx_ios_diag_log("UIKit diagnostics overlay hit-test seq=%llu point=(%.1f,%.1f) panelHit=%d hitRect=(%.1f,%.1f %.1fx%.1f) embeddedInSDL=%d", (unsigned long long)sequence, point.x, point.y, inside, self.hitRect.origin.x, self.hitRect.origin.y, self.hitRect.size.width, self.hitRect.size.height, sm64DiagnosticsEmbeddedInSDL);
+    }
+    return inside;
 }
 @end
 
@@ -157,7 +164,7 @@ static BOOL sm64OrientationSourceLogged;
     CGFloat panelWidth = self.collapsed ? 118.0 : width;
     CGFloat panelHeight = self.collapsed ? 38.0 : 154.0;
     CGFloat top = self.view.safeAreaInsets.top + 6.0;
-    CGRect frame = CGRectMake(10.0, top, panelWidth, panelHeight);
+    CGRect frame = CGRectMake(MAX(10.0, (self.view.bounds.size.width - panelWidth) * 0.5), top, panelWidth, panelHeight);
     self.panel.frame = frame;
     ((SM64DiagnosticsPassthroughView *)self.view).hitRect = self.probeView ? self.view.bounds : CGRectInset(frame, -2, -2);
     if (self.collapsed) {
@@ -321,6 +328,31 @@ static void sm64_diag_create_window(UIWindowScene *scene) {
     // handles touches only over its small panel or while the color probe runs.
     sm64DiagnosticsWindow.hidden = NO;
     gfx_ios_diag_log("Native diagnostic window attached scene=%@ bounds=(%.0f,%.0f %.0fx%.0f) level=%.1f", scene.session.persistentIdentifier, scene.coordinateSpace.bounds.origin.x, scene.coordinateSpace.bounds.origin.y, scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height, sm64DiagnosticsWindow.windowLevel);
+    [controller collapsePanel];
+}
+
+static void sm64_diag_attach_to_game_controller(UIViewController *host) {
+    SM64DiagnosticsViewController *controller = sm64_diag_controller();
+    UIWindow *diagnosticWindow = sm64DiagnosticsWindow;
+    if (!host || !controller || !diagnosticWindow || controller.parentViewController == host) return;
+
+    gfx_ios_diag_log("Moving native diagnostics into SDL controller hierarchy host=%s hostWindow=%@ diagnosticWindow=%@", NSStringFromClass(host.class).UTF8String ?: "unknown", host.view.window, diagnosticWindow);
+    [host addChildViewController:controller];
+    [controller.view removeFromSuperview];
+    controller.view.frame = host.view.bounds;
+    controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    controller.view.opaque = NO;
+    [host.view addSubview:controller.view];
+    [controller didMoveToParentViewController:host];
+    sm64DiagnosticsEmbeddedInSDL = YES;
+    [host.view setNeedsLayout];
+    [host.view layoutIfNeeded];
+
+    diagnosticWindow.hidden = YES;
+    diagnosticWindow.rootViewController = nil;
+    [diagnosticWindow release];
+    sm64DiagnosticsWindow = nil;
+    gfx_ios_diag_log("Native diagnostics embedded as pass-through SDL subview; separate diagnostic UIWindow removed sceneWindows=%lu hostSubviews=%lu", (unsigned long)host.view.window.windowScene.windows.count, (unsigned long)host.view.subviews.count);
 }
 
 void gfx_ios_diag_log(const char *format, ...) {
@@ -523,6 +555,11 @@ void gfx_uikit_init(UIViewController *viewControllerPointer) {
     } else {
         [gameViewController.view addSubview:tcvc.view];
     }
+
+    // The startup panel uses a temporary scene window before SDL exists.
+    // Once the SDL controller is ready, keep diagnostics in its view tree so
+    // a second UIWindow cannot sit above the Metal surface or consume game input.
+    sm64_diag_attach_to_game_controller(viewControllerPointer);
     
     [gameViewController setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
     UIWindow *sdlWindow = viewControllerPointer.view.window;
