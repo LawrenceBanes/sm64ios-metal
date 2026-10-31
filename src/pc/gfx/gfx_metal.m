@@ -166,7 +166,7 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     UIWindowScene *scene = metal_view.window.windowScene;
     metal_scene_active = scene && scene.activationState == UISceneActivationStateForegroundActive &&
                          UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
-    gfx_ios_diag_log("Game Metal MTKView attached to SDL scene window frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f color=BGRA8Unorm depth=Depth32Float stencil=None parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, (unsigned long)view_controller.view.subviews.count);
+    gfx_ios_diag_log("Game Metal MTKView attached to SDL scene window frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f color=BGRA8Unorm depth=Depth32Float stencil=None parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f interaction=%d parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, metal_view.userInteractionEnabled, (unsigned long)view_controller.view.subviews.count);
     gfx_ios_diag_log("Metal scene geometry attached sceneBounds=(%.0fx%.0f) windowBounds=(%.0fx%.0f) rootBounds=(%.0fx%.0f) MTKViewBounds=(%.0fx%.0f) drawable=(%.0fx%.0f) scale=%.2f", scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, view_controller.view.bounds.size.width, view_controller.view.bounds.size.height, metal_view.bounds.size.width, metal_view.bounds.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor);
     bool ready = gfx_metal_surface_is_ready();
     gfx_ios_diag_log("Game Metal surface readiness=%s drawable=%.0fx%.0f attachedToScene=%d", ready ? "ready" : "not-ready", drawable.width, drawable.height, metal_view.window.windowScene != nil);
@@ -575,7 +575,7 @@ static void gfx_metal_start_frame(void) {
         return;
     }
     ++frame_count;
-    if (frame_count == 1 || frame_count == 2 || frame_count == 30)
+    if (frame_count <= 3 || frame_count % 120 == 0)
         gfx_ios_diag_log("Metal game frame encoding started frame=%u drawable=%.0fx%.0f viewVisible=%d alpha=%.2f scene=%@", frame_count, metal_view.drawableSize.width, metal_view.drawableSize.height, !metal_view.hidden && metal_view.window && !metal_view.window.hidden, metal_view.alpha, metal_view.window.windowScene.session.persistentIdentifier);
     has_viewport = has_scissor = false;
 }
@@ -608,8 +608,8 @@ static void gfx_metal_end_frame(void) {
         }
     }];
     [metal_command commit];
-    if (submitted_frame <= 3 || submitted_frame % 60 == 0)
-        gfx_ios_diag_log("Metal presentDrawable submitted frame=%u drawable=%.0fx%.0f commandStatus=%ld", submitted_frame, drawable_width, drawable_height, (long)metal_command.status);
+    if (submitted_frame <= 3 || submitted_frame % 120 == 0)
+        gfx_ios_diag_log("Metal presentation heartbeat submittedFrame=%u drawable=%.0fx%.0f commandStatus=%ld sceneCanRender=%d", submitted_frame, drawable_width, drawable_height, (long)metal_command.status, gfx_metal_scene_can_render());
     metal_command = nil; metal_drawable = nil;
 }
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }

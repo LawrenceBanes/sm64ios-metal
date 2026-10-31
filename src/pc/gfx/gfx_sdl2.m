@@ -532,8 +532,13 @@ static void gfx_sdl_fingerup(SDL_TouchFingerEvent sdl_event) {
 #endif
 
 static void gfx_sdl_handle_events(void) {
+    static uint64_t ios_event_pump_ticks;
+    static uint64_t ios_finger_events;
+    ++ios_event_pump_ticks;
     SDL_Event event;
+    uint32_t event_count = 0;
     while (SDL_PollEvent(&event)) {
+        ++event_count;
         switch (event.type) {
 #ifndef TARGET_WEB
             // Scancodes are broken in Emscripten SDL2: https://bugzilla.libsdl.org/show_bug.cgi?id=3259
@@ -564,6 +569,8 @@ static void gfx_sdl_handle_events(void) {
                 break;
 #if TARGET_OS_IOS
             case SDL_FINGERDOWN:
+                if (ios_finger_events++ < 8)
+                    gfx_ios_diag_log("SDL touch event type=down id=%lld normalized=(%.4f,%.4f) callbackInstalled=%d", (long long)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y, touch_down_callback != NULL);
                 gfx_sdl_fingerdown(event.tfinger);
                 break;
             case SDL_FINGERMOTION:
@@ -630,6 +637,9 @@ static void gfx_sdl_handle_events(void) {
                 break;
         }
     }
+
+    if (ios_event_pump_ticks <= 3 || ios_event_pump_ticks % 120 == 0)
+        gfx_ios_diag_log("SDL event pump heartbeat tick=%llu drained=%u fingerEvents=%llu window=%p", (unsigned long long)ios_event_pump_ticks, event_count, (unsigned long long)ios_finger_events, wnd);
 
     if (configWindow.settings_changed) {
         gfx_sdl_set_fullscreen();

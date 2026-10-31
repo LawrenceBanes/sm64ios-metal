@@ -7,8 +7,13 @@
 
 #import "TouchControlsViewController.h"
 #import "src/pc/controller/controller_touchscreen.h"
+#import "src/pc/gfx/gfx_uikit.h"
 #include "src/pc/configfile.h"
 #include <PR/os_cont.h>
+
+static uint64_t ios_touch_began_count;
+static uint64_t ios_touch_motion_count;
+static uint64_t ios_touch_ended_count;
 
 @implementation OverlayImageView
 
@@ -54,6 +59,12 @@
             touchEvent.x = position.x;
             touchEvent.y = position.y;
             touchEvent.touchID = i + 1;
+            uint64_t sequence = ++ios_touch_began_count;
+            if (sequence <= 12 || sequence % 120 == 0) {
+                CGPoint windowPoint = [touch locationInView:self.view.window];
+                UIView *hitView = [self.view.window hitTest:windowPoint withEvent:event];
+                gfx_ios_diag_log("UIKit touch began seq=%llu id=%d pointInTouchView=(%.1f,%.1f) viewBounds=(%.1f,%.1f %.1fx%.1f) receiver=%@ hitView=%@ window=%@ scene=%@ interaction=%d callback=%d tracked=%lu", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view, hitView, self.view.window, self.view.window.windowScene.session.persistentIdentifier, self.view.userInteractionEnabled, touch_down_callback != NULL, (unsigned long)trackedTouches.count);
+            }
             if (touch_down_callback != NULL) {
                 touch_down_callback((void*)&touchEvent);
             }
@@ -72,6 +83,9 @@
             touchEvent.x = position.x;
             touchEvent.y = position.y;
             touchEvent.touchID = i + 1;
+            uint64_t sequence = ++ios_touch_motion_count;
+            if (sequence <= 4 || sequence % 240 == 0)
+                gfx_ios_diag_log("UIKit touch moved seq=%llu id=%d point=(%.1f,%.1f) callback=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_motion_callback != NULL);
             if (touch_motion_callback != NULL) {
                 touch_motion_callback((void*)&touchEvent);
             }
@@ -91,6 +105,9 @@
             touchEvent.x = position.x;
             touchEvent.y = position.y;
             touchEvent.touchID = i + 1;
+            uint64_t sequence = ++ios_touch_ended_count;
+            if (sequence <= 12 || sequence % 120 == 0)
+                gfx_ios_diag_log("UIKit touch ended seq=%llu id=%d point=(%.1f,%.1f) callback=%d cancelled=%d", (unsigned long long)sequence, touchEvent.touchID, touchEvent.x, touchEvent.y, touch_up_callback != NULL, touch.phase == UITouchPhaseCancelled);
             if (touch_up_callback != NULL) {
                 touch_up_callback((void*)&touchEvent);
             }
@@ -133,6 +150,21 @@
     bool hidden;
 }
 
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    static CGRect lastLoggedBounds;
+    if (CGRectEqualToRect(lastLoggedBounds, self.view.bounds)) return;
+    lastLoggedBounds = self.view.bounds;
+    gfx_ios_diag_log("UIKit touch layout bounds=(%.1f,%.1f %.1fx%.1f) frame=(%.1f,%.1f %.1fx%.1f) window=%@ scene=%@ interaction=%d", self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view.frame.origin.x, self.view.frame.origin.y, self.view.frame.size.width, self.view.frame.size.height, self.view.window, self.view.window.windowScene.session.persistentIdentifier, self.view.userInteractionEnabled);
+    OverlayImageView *controls[] = { self.m_iv_l, self.m_iv_r, self.m_iv_a, self.m_iv_b, self.m_iv_z, self.m_iv_up, self.m_iv_down, self.m_iv_left, self.m_iv_right, self.m_iv_start, self.m_iv_menu, self.m_iv_joystick, self.m_iv_joystick_bg };
+    for (NSUInteger i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
+        OverlayImageView *control = controls[i];
+        if (!control) continue;
+        CGPoint origin = [control convertPoint:CGPointZero toView:self.view];
+        gfx_ios_diag_log("UIKit touch control layout tag=%d image=%@ frame=(%.1f,%.1f %.1fx%.1f) convertedOrigin=(%.1f,%.1f) bounds=(%.1fx%.1f) interaction=%d hidden=%d", control.buttonTag, control.image, control.frame.origin.x, control.frame.origin.y, control.frame.size.width, control.frame.size.height, origin.x, origin.y, control.bounds.size.width, control.bounds.size.height, control.userInteractionEnabled, control.hidden);
+    }
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     
@@ -141,6 +173,7 @@
     gestureRecognizer.cancelsTouchesInView = YES;
     [gestureRecognizer set_touchscreen_callbacks:touch_down_callback motion:touch_motion_callback up:touch_up_callback];
     [self.view addGestureRecognizer:gestureRecognizer];
+    gfx_ios_diag_log("UIKit touch recognizer installed touchView=%@ bounds=(%.1f,%.1f %.1fx%.1f) interaction=%d multipleTouch=%d cancelsTouches=%d subviews=%lu", self.view, self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view.userInteractionEnabled, self.view.multipleTouchEnabled, gestureRecognizer.cancelsTouchesInView, (unsigned long)self.view.subviews.count);
     
     [self.m_gl_up setRotation:0.0];
     [self.m_gl_down setRotation:180.0];
@@ -198,6 +231,7 @@
     touch_motion_callback = motion;
     touch_up_callback = up;
     [gestureRecognizer set_touchscreen_callbacks:touch_down_callback motion:touch_motion_callback up:touch_up_callback];
+    gfx_ios_diag_log("UIKit touch callbacks bound down=%d motion=%d up=%d recognizer=%@", touch_down_callback != NULL, touch_motion_callback != NULL, touch_up_callback != NULL, gestureRecognizer);
 }
 
 - (void)setTouchControlsHidden:(bool)hide {

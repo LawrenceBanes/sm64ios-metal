@@ -74,6 +74,8 @@ static int ControlElementsLength = sizeof(ControlElementsDefault)/sizeof(struct 
 int joystick_size = 128;
 
 static HapticsController *haptics = nil;
+static uint64_t ios_controller_touch_down_count;
+static uint64_t ios_controller_touch_read_count;
 
 #define TRIGGER_DETECT(size) (((pos.x + size > event->x) && (pos.x < event->x)) && ((pos.y + size > event->y) && (pos.y < event->y)))
 
@@ -81,13 +83,34 @@ static HapticsController *haptics = nil;
 #define BUTTON_IMAGE_DARK [UIImage imageNamed:@"touch_button_dark"]
 
 void touch_down(struct TouchEvent* event) {
+    uint64_t sequence = ++ios_controller_touch_down_count;
+    int matched_index = -1;
+    CGPoint matched_position = CGPointZero;
+    CGRect matched_frame = CGRectZero;
+    char candidate_summary[900] = { 0 };
+    size_t candidate_summary_length = 0;
     CGRect frame;
     for(int i = 0; i < ControlElementsLength; i++) {
-        if (ControlElements[i].touchID == 0) {
+        if (ControlElements[i].touchID == 0 && ControlElements[i].imageView != nil) {
             frame = ControlElements[i].imageView.frame;
             CGFloat scale = ((float)configTouchUiScale/100.0);
-            CGPoint pos = [ControlElements[i].imageView convertPoint:frame.origin toView:tcvc.view];
+            // frame.origin is in the superview's coordinates. Convert local zero
+            // from the image view itself so nested controls and transforms use
+            // the same coordinate space as GestureRecognizer's point values.
+            CGPoint pos = [ControlElements[i].imageView convertPoint:CGPointZero toView:tcvc.view];
+            if (sequence <= 12 && candidate_summary_length < sizeof(candidate_summary)) {
+                int written = snprintf(candidate_summary + candidate_summary_length,
+                                       sizeof(candidate_summary) - candidate_summary_length,
+                                       "%s%s@%.0f,%.0f/%.0fx%.0f",
+                                       candidate_summary_length ? ";" : "",
+                                       ControlElements[i].name ? ControlElements[i].name : "?",
+                                       pos.x, pos.y, frame.size.width * scale, frame.size.height * scale);
+                if (written > 0) candidate_summary_length += (size_t)written;
+            }
             if (TRIGGER_DETECT(frame.size.width * scale)) {
+                matched_index = i;
+                matched_position = pos;
+                matched_frame = frame;
                 switch (ControlElements[i].type) {
                     case Joystick:
                         joystick_size = frame.size.width*scale;
@@ -103,6 +126,12 @@ void touch_down(struct TouchEvent* event) {
             }
         }
     }
+    if (sequence <= 12 || sequence % 120 == 0) {
+        if (matched_index >= 0)
+            gfx_ios_diag_log("Virtual control hit seq=%llu touch=%d control=%s buttonID=%d menu=%d point=(%.1f,%.1f) controlOrigin=(%.1f,%.1f) frameSize=(%.1fx%.1f) touchID=%d candidates={%s}", (unsigned long long)sequence, event->touchID, ControlElements[matched_index].name, ControlElements[matched_index].buttonID, ControlElements[matched_index].menuButton, event->x, event->y, matched_position.x, matched_position.y, matched_frame.size.width, matched_frame.size.height, ControlElements[matched_index].touchID, candidate_summary);
+        else
+            gfx_ios_diag_log("Virtual control hit-test miss seq=%llu touch=%d point=(%.1f,%.1f) touchViewBounds=(%.1f,%.1f %.1fx%.1f) controls=%d scale=%.2f candidates={%s}", (unsigned long long)sequence, event->touchID, event->x, event->y, tcvc.view.bounds.origin.x, tcvc.view.bounds.origin.y, tcvc.view.bounds.size.width, tcvc.view.bounds.size.height, ControlElementsLength, (float)configTouchUiScale / 100.0f, candidate_summary);
+    }
     set_current_input(Touch);
 }
 
@@ -111,7 +140,7 @@ void touch_motion(struct TouchEvent* event) {
     for(int i = 0; i < ControlElementsLength; i++) {
         frame = ControlElements[i].imageView.frame;
         CGFloat scale = ((float)configTouchUiScale/100.0);
-        CGPoint pos = [ControlElements[i].imageView convertPoint:frame.origin toView:tcvc.view];
+        CGPoint pos = [ControlElements[i].imageView convertPoint:CGPointZero toView:tcvc.view];
         if (ControlElements[i].touchID == event->touchID) {
             switch (ControlElements[i].type) {
                 case Joystick:
@@ -224,7 +253,10 @@ void touchscreen_set_imageviews(NSMutableArray *imageViews) {
 }
 
 static void touchscreen_read(OSContPad *pad) {
+    uint64_t read_sequence = ++ios_controller_touch_read_count;
+    int active_controls = 0;
     for(int i = 0; i < ControlElementsLength; i++) {
+        if (ControlElements[i].touchID != 0) ++active_controls;
         switch (ControlElements[i].type) {
             case Joystick:
                 if (ControlElements[i].joyX || ControlElements[i].joyY) {
@@ -235,7 +267,13 @@ static void touchscreen_read(OSContPad *pad) {
             case Button:
                 if (ControlElements[i].touchID) {
                     if(ControlElements[i].menuButton) {
-                        (*menu_button_pressed)();
+                        if (menu_button_pressed) {
+                            if (read_sequence <= 12 || read_sequence % 120 == 0)
+                                gfx_ios_diag_log("Virtual MENU input dispatched read=%llu touch=%d callbackInstalled=%d", (unsigned long long)read_sequence, ControlElements[i].touchID, menu_button_pressed != NULL);
+                            (*menu_button_pressed)();
+                        } else if (read_sequence <= 12) {
+                            gfx_ios_diag_log("Virtual MENU input has active touch=%d but menu callback is nil", ControlElements[i].touchID);
+                        }
                     } else {
                         pad->button |= ControlElements[i].buttonID;
                     }
@@ -243,6 +281,8 @@ static void touchscreen_read(OSContPad *pad) {
                 break;
         }
     }
+    if (read_sequence <= 3 || read_sequence % 120 == 0)
+        gfx_ios_diag_log("Touch controller read heartbeat read=%llu activeControls=%d padButtons=0x%04x stick=(%d,%d) inputSource=%d", (unsigned long long)read_sequence, active_controls, pad->button, pad->stick_x, pad->stick_y, get_current_input());
 }
 
 static u32 touchscreen_rawkey(void) { //dunno what this does but I'll skip it for now

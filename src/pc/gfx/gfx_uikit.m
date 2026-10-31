@@ -527,8 +527,9 @@ void gfx_uikit_init(UIViewController *viewControllerPointer) {
     [gameViewController setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
     UIWindow *sdlWindow = viewControllerPointer.view.window;
     gfx_ios_diag_log("UIKit host attached touch controls controller=%s touchView=%@ to SDL controller view; SDL view window=%@ scene=%@ visible=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) bounds=(%.0f,%.0f %.0fx%.0f)", NSStringFromClass(tcvc.class).UTF8String, tcvc.view, sdlWindow, sdlWindow.windowScene.session.persistentIdentifier, !viewControllerPointer.view.hidden && viewControllerPointer.view.alpha > 0, viewControllerPointer.view.alpha, viewControllerPointer.view.frame.origin.x, viewControllerPointer.view.frame.origin.y, viewControllerPointer.view.frame.size.width, viewControllerPointer.view.frame.size.height, viewControllerPointer.view.bounds.origin.x, viewControllerPointer.view.bounds.origin.y, viewControllerPointer.view.bounds.size.width, viewControllerPointer.view.bounds.size.height);
+    NSUInteger subviewIndex = 0;
     for (UIView *subview in viewControllerPointer.view.subviews) {
-        gfx_ios_diag_log("UIKit SDL controller subview=%s classView=%@ hidden=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) interaction=%d", NSStringFromClass(subview.class).UTF8String, subview, subview.hidden, subview.alpha, subview.frame.origin.x, subview.frame.origin.y, subview.frame.size.width, subview.frame.size.height, subview.userInteractionEnabled);
+        gfx_ios_diag_log("UIKit SDL controller subview zIndex=%lu class=%s view=%@ hidden=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) interaction=%d", (unsigned long)subviewIndex++, NSStringFromClass(subview.class).UTF8String, subview, subview.hidden, subview.alpha, subview.frame.origin.x, subview.frame.origin.y, subview.frame.size.width, subview.frame.size.height, subview.userInteractionEnabled);
     }
 #elif TARGET_OS_TV
     RemoteInputController *remoteInput = [[RemoteInputController alloc] initWithTarget:gameViewController];
