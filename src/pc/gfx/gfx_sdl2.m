@@ -61,6 +61,7 @@
 #endif
 
 static SDL_GLContext ctx = NULL;
+static bool sdl_window_ready = false;
 static int inverted_scancode_table[512];
 
 static kb_callback_t kb_key_down = NULL;
@@ -279,11 +280,19 @@ void gfx_sdl_swap_buffer(void) {
 }
 
 static void gfx_sdl_init(const char *window_title) {
+    sdl_window_ready = false;
     SDL_ClearError();
     int sdl_init_result = SDL_Init(SDL_INIT_VIDEO);
 #if TARGET_OS_IOS
     gfx_ios_diag_log("SDL_Init(SDL_INIT_VIDEO) result=%d error='%s' videoDriver=%s", sdl_init_result, SDL_GetError(), SDL_GetCurrentVideoDriver() ?: "nil");
 #endif
+
+    if (sdl_init_result < 0) {
+#if TARGET_OS_IOS
+        gfx_ios_diag_log("SDL video initialization aborted after SDL_Init failure: %s", SDL_GetError());
+#endif
+        return;
+    }
 
 #if !defined(RAPI_METAL) || !TARGET_OS_IOS
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -332,12 +341,19 @@ static void gfx_sdl_init(const char *window_title) {
     if (display_index >= 0) SDL_GetDisplayDPI(display_index, &display_dpi, NULL, NULL);
     SDL_GetWindowSize(wnd, &sdl_window_width, &sdl_window_height);
     gfx_ios_diag_log("SDL window dimensions logical=%dx%d renderer=%dx%d flags=0x%x display=%d displayDPI=%.1f", sdl_window_width, sdl_window_height, configWindow.w, configWindow.h, SDL_GetWindowFlags(wnd), display_index, display_dpi);
+    if (sdl_window_width <= 0 || sdl_window_height <= 0 || configWindow.w <= 0 || configWindow.h <= 0) {
+        gfx_ios_diag_log("SDL window initialization aborted: invalid dimensions logical=%dx%d renderer=%dx%d", sdl_window_width, sdl_window_height, configWindow.w, configWindow.h);
+        return;
+    }
 #endif
     SDL_SetWindowSize(wnd, configWindow.w, configWindow.h);
 #if defined(RAPI_METAL) && TARGET_OS_IOS
     UIViewController *sdlViewController = get_sdl_viewcontroller();
     gfx_ios_diag_log("Metal attachment target controller=%s controllerView=%@ window=%@", NSStringFromClass(sdlViewController.class).UTF8String ?: "nil", sdlViewController.view, sdlViewController.view.window);
-    gfx_metal_attach_to_view_controller(sdlViewController);
+    if (!gfx_metal_attach_to_view_controller(sdlViewController)) {
+        gfx_ios_diag_log("SDL window creation succeeded but game MTKView is not ready; renderer startup will be aborted");
+        return;
+    }
 #endif
 
     gfx_sdl_set_vsync(configWindow.vsync);
@@ -363,15 +379,33 @@ static void gfx_sdl_init(const char *window_title) {
     [frameController.onScreenRefresh addObject:[NSValue valueWithPointer:gfx_sdl_swap_buffer]];
     SDL_RaiseWindow(wnd);
 #if TARGET_OS_IOS
+    bool final_scene_window_ready = false;
     SDL_SysWMinfo finalWindowInfo;
     SDL_VERSION(&finalWindowInfo.version);
     if (SDL_GetWindowWMInfo(wnd, &finalWindowInfo)) {
         UIWindow *uiWindow = finalWindowInfo.info.uikit.window;
-        gfx_ios_diag_log("SDL window final presentation uiWindow=%@ scene=%@ key=%d visible=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) root=%s windowLevel=%.1f", uiWindow, uiWindow.windowScene.session.persistentIdentifier, uiWindow.isKeyWindow, !uiWindow.hidden, uiWindow.alpha, uiWindow.frame.origin.x, uiWindow.frame.origin.y, uiWindow.frame.size.width, uiWindow.frame.size.height, NSStringFromClass(uiWindow.rootViewController.class).UTF8String ?: "nil", uiWindow.windowLevel);
+        UIWindowScene *expectedScene = gfx_uikit_window_scene_for_screen([UIScreen mainScreen]);
+        bool scene_matches = uiWindow.windowScene != nil && uiWindow.windowScene == expectedScene;
+        bool visible = !uiWindow.hidden && uiWindow.alpha > 0.0;
+#if defined(RAPI_METAL)
+        bool renderer_ready = gfx_metal_surface_is_ready();
+#else
+        bool renderer_ready = true;
+#endif
+        final_scene_window_ready = scene_matches && visible && renderer_ready;
+        gfx_ios_diag_log("SDL window final presentation uiWindow=%@ scene=%@ matchesActiveScene=%d key=%d visible=%d alpha=%.2f frame=(%.0f,%.0f %.0fx%.0f) root=%s windowLevel=%.1f gameMetalReady=%d", uiWindow, uiWindow.windowScene.session.persistentIdentifier, scene_matches, uiWindow.isKeyWindow, visible, uiWindow.alpha, uiWindow.frame.origin.x, uiWindow.frame.origin.y, uiWindow.frame.size.width, uiWindow.frame.size.height, NSStringFromClass(uiWindow.rootViewController.class).UTF8String ?: "nil", uiWindow.windowLevel, renderer_ready);
     } else {
         gfx_ios_diag_log("SDL final window query failed: %s", SDL_GetError());
     }
+    sdl_window_ready = final_scene_window_ready && configWindow.w > 0 && configWindow.h > 0;
+    gfx_ios_diag_log("SDL graphics initialization readiness=%s dimensions=%dx%d", sdl_window_ready ? "ready" : "failed", configWindow.w, configWindow.h);
+#else
+    sdl_window_ready = wnd != NULL && configWindow.w > 0 && configWindow.h > 0;
 #endif
+}
+
+bool gfx_sdl_is_window_ready(void) {
+    return sdl_window_ready;
 }
 
 static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
@@ -379,6 +413,11 @@ static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
 }
 
 static void gfx_sdl_get_dimensions(uint32_t *width, uint32_t *height) {
+    if (!wnd) {
+        if (width) *width = 0;
+        if (height) *height = 0;
+        return;
+    }
     int w, h;
     SDL_GetWindowSize(wnd, &w, &h);
     if (width) *width = w;
@@ -456,12 +495,17 @@ static void gfx_sdl_handle_events(void) {
                 break;
 #endif
             case SDL_APP_WILLENTERBACKGROUND:
+                gfx_ios_diag_log("SDL application lifecycle: entering background; pause render display link");
                 paused_by_menu = true;
                 frameController.gfxDisplayLink.paused = true;
                 break;
             case SDL_APP_DIDENTERFOREGROUND:
+                gfx_ios_diag_log("SDL application lifecycle: entering foreground; resume render display link");
                 paused_by_menu = false;
                 frameController.gfxDisplayLink.paused = false;
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+                if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();
+#endif
                 break;
 #if TARGET_OS_IOS
             case SDL_FINGERDOWN:
@@ -475,6 +519,14 @@ static void gfx_sdl_handle_events(void) {
                 break;
 #endif
             case SDL_WINDOWEVENT: // TODO: Check if this makes sense to be included in the Web build
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+                if (event.window.event == SDL_WINDOWEVENT_RESIZED || event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    int width = 0, height = 0;
+                    if (wnd) SDL_GetWindowSize(wnd, &width, &height);
+                    gfx_ios_diag_log("SDL window resize event=%u eventDimensions=%dx%d currentDimensions=%dx%d MetalSurfaceReady=%d", event.window.event, event.window.data1, event.window.data2, width, height, gfx_metal_surface_is_ready());
+                    if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();
+                }
+#endif
                 if (!IS_FULLSCREEN()) {
                     switch (event.window.event) {
                         case SDL_WINDOWEVENT_MOVED:

@@ -386,6 +386,8 @@ void gfx_ios_diag_mark_first_game_frame(void) {
     if ([scene isKindOfClass:[UIWindowScene class]]) {
         sm64WindowScene = (UIWindowScene *)scene;
         gfx_ios_diag_log("UIApplication scene connected delegate=%s scene=%s role=%s state=%ld bounds=(%.0f,%.0f %.0fx%.0f) scale=%.2f", NSStringFromClass(UIApplication.sharedApplication.delegate.class).UTF8String, NSStringFromClass(scene.class).UTF8String, scene.session.role.UTF8String, (long)scene.activationState, sm64WindowScene.coordinateSpace.bounds.origin.x, sm64WindowScene.coordinateSpace.bounds.origin.y, sm64WindowScene.coordinateSpace.bounds.size.width, sm64WindowScene.coordinateSpace.bounds.size.height, sm64WindowScene.screen.scale);
+        gfx_ios_diag_log("Publishing SDL startup notification after UIWindowScene connection scene=%@", sm64WindowScene.session.persistentIdentifier);
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"SM64WindowSceneDidConnectNotification" object:sm64WindowScene];
         sm64_diag_create_window(sm64WindowScene);
     }
 }

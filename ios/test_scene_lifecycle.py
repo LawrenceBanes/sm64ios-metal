@@ -62,6 +62,15 @@ def main() -> None:
         raise SystemExit("pinned SDL2 build must validate and apply the scene lifecycle patch")
     if "if (data.uiscreen != [UIScreen mainScreen]) {" not in builder:
         raise SystemExit("pinned SDL2 build must verify its existing external-screen handling")
+    if "startSDLMainWhenSceneIsReady" not in patch or "SM64WindowSceneDidConnectNotification" not in patch:
+        raise SystemExit("SDL2 must defer its SDL_main call until the application scene connects")
+    for startup_check in (
+        'selector:@selector(applicationWindowSceneDidConnect:)',
+        "if (forwardedMain)",
+        "gfx_ios_diag_log(\"SDL UIKit scene gate passed; invoking SDL_main on the main thread\")",
+    ):
+        if startup_check not in patch:
+            raise SystemExit(f"SDL2 scene startup gate is missing: {startup_check}")
     print("iOS scene manifest, delegate, and SDL window-scene bridge checks passed")
 
 

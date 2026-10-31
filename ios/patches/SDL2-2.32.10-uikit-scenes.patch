@@ -1,3 +1,100 @@
+diff --git a/src/video/uikit/SDL_uikitappdelegate.m b/src/video/uikit/SDL_uikitappdelegate.m
+index 31b114a..a40c709 100644
+--- a/src/video/uikit/SDL_uikitappdelegate.m
++++ b/src/video/uikit/SDL_uikitappdelegate.m
+@@ -31,6 +31,10 @@
+ #import "SDL_uikitmodes.h"
+ #import "SDL_uikitwindow.h"
+ 
++#if !TARGET_OS_TV
++extern void gfx_ios_diag_log(const char *format, ...);
++#endif
++
+ #include "../../events/SDL_events_c.h"
+ 
+ #if !TARGET_OS_TV
+@@ -351,6 +355,8 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
+ 
+ @implementation SDLUIKitDelegate {
+     UIWindow *launchWindow;
++    BOOL hasConnectedApplicationScene;
++    BOOL forwardedMain;
+ }
+ 
+ /* convenience method */
+@@ -388,8 +394,44 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
+     }];
+ }
+ 
++- (void)startSDLMainWhenSceneIsReady
++{
++#if !TARGET_OS_TV
++    if (@available(iOS 13.0, *)) {
++        if (!hasConnectedApplicationScene) {
++            gfx_ios_diag_log("SDL UIKit launch sequence deferred: scene connection callback has not arrived; returning to UIKit run loop");
++            NSLog(@"Deferring SDL_main until the application UIWindowScene connects");
++            return;
++        }
++    }
++#endif
++    [self postFinishLaunch];
++}
++
++- (void)applicationWindowSceneDidConnect:(NSNotification *)notification
++{
++#if !TARGET_OS_TV
++    if ([notification.object isKindOfClass:[UIWindowScene class]] &&
++        [((UIWindowScene *)notification.object).session.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
++        hasConnectedApplicationScene = YES;
++        gfx_ios_diag_log("SDL UIKit scene-ready notification received scene=%s", ((UIWindowScene *)notification.object).session.persistentIdentifier.UTF8String);
++        NSLog(@"SDL_main released after UIWindowScene connection: %@", ((UIWindowScene *)notification.object).session.persistentIdentifier);
++        [self performSelector:@selector(startSDLMainWhenSceneIsReady) withObject:nil afterDelay:0.0];
++    }
++#else
++    (void)notification;
++#endif
++}
++
+ - (void)postFinishLaunch
+ {
++    if (forwardedMain) {
++        gfx_ios_diag_log("SDL UIKit main forward ignored: SDL_main was already started");
++        return;
++    }
++    forwardedMain = YES;
++    gfx_ios_diag_log("SDL UIKit scene gate passed; invoking SDL_main on the main thread");
++    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"SM64WindowSceneDidConnectNotification" object:nil];
+     /* Hide the launch screen the next time the run loop is run. SDL apps will
+      * have a chance to load resources while the launch screen is still up. */
+     [self performSelector:@selector(hideLaunchScreen) withObject:nil afterDelay:0.0];
+@@ -470,7 +512,27 @@ static UIImage *SDL_LoadLaunchImageNamed(NSString *name, int screenh)
+                         SDL_IdleTimerDisabledChanged, NULL);
+ 
+     SDL_SetMainReady();
++#if !TARGET_OS_TV
++    if (@available(iOS 13.0, *)) {
++        gfx_ios_diag_log("SDL UIKit didFinishLaunching; registering for the application UIWindowScene connection before starting SDL_main");
++        [[NSNotificationCenter defaultCenter] addObserver:self
++                                                 selector:@selector(applicationWindowSceneDidConnect:)
++                                                     name:@"SM64WindowSceneDidConnectNotification"
++                                                   object:nil];
++        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
++            if ([scene isKindOfClass:[UIWindowScene class]] &&
++                [scene.session.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
++                hasConnectedApplicationScene = YES;
++                break;
++            }
++        }
++        [self performSelector:@selector(startSDLMainWhenSceneIsReady) withObject:nil afterDelay:0.0];
++    } else {
++        [self performSelector:@selector(postFinishLaunch) withObject:nil afterDelay:0.0];
++    }
++#else
+     [self performSelector:@selector(postFinishLaunch) withObject:nil afterDelay:0.0];
++#endif
+ 
+     return YES;
+ }
 diff --git a/src/video/uikit/SDL_uikitwindow.m b/src/video/uikit/SDL_uikitwindow.m
 index 0e0ea05..415d9fd 100644
 --- a/src/video/uikit/SDL_uikitwindow.m

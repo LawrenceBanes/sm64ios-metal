@@ -55,6 +55,7 @@ static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
 static uint32_t frame_count;
 static bool logged_first_completed_frame;
+static bool logged_first_presented_frame;
 static uint32_t drawable_unavailable_count;
 static uint32_t logged_pipeline_failures;
 static uint32_t logged_pipeline_successes;
@@ -76,34 +77,47 @@ static id<MTLDepthStencilState> depth_states[2][2];
 
 static bool gfx_metal_z_is_from_0_to_1(void) { return true; }
 
-void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
-    if (metal_view) {
-        gfx_ios_diag_log("Metal view attachment skipped: already attached view=%@ window=%@", metal_view, metal_view.window);
-        return;
+bool gfx_metal_surface_is_ready(void) {
+    if (!metal_device || !metal_queue || !metal_view || !metal_view.window ||
+        !metal_view.window.windowScene || metal_view.hidden || metal_view.window.hidden || metal_view.alpha <= 0.0) {
+        return false;
     }
+    CGSize drawable = metal_view.drawableSize;
+    return drawable.width > 0.0 && drawable.height > 0.0;
+}
+
+bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     if (!view_controller) {
         gfx_ios_diag_log("Metal view attachment failed: SDL UIKit view controller is nil");
-        return;
+        return false;
+    }
+    if (metal_view) {
+        gfx_ios_diag_log("Metal view attachment skipped: already attached view=%@ window=%@", metal_view, metal_view.window);
+        [view_controller.view setNeedsLayout];
+        [view_controller.view layoutIfNeeded];
+        [metal_view setNeedsLayout];
+        [metal_view layoutIfNeeded];
+        return gfx_metal_surface_is_ready();
     }
     gfx_ios_diag_log("Metal renderer selected; attaching MTKView to SDL controller=%s frame=(%.0f,%.0f %.0fx%.0f) window=%@ scene=%@", NSStringFromClass(view_controller.class).UTF8String ?: "unknown", view_controller.view.frame.origin.x, view_controller.view.frame.origin.y, view_controller.view.frame.size.width, view_controller.view.frame.size.height, view_controller.view.window, view_controller.view.window.windowScene.session.persistentIdentifier);
     metal_device = MTLCreateSystemDefaultDevice();
     if (!metal_device) {
         gfx_ios_diag_log("Metal device initialization failed: MTLCreateSystemDefaultDevice returned nil");
         NSLog(@"Metal initialization failed: no system Metal device is available");
-        return;
+        return false;
     }
     gfx_ios_diag_log("Metal device initialized: %s lowPower=%d", metal_device.name.UTF8String ?: "unknown", metal_device.isLowPower);
     metal_queue = [metal_device newCommandQueue];
     if (!metal_queue) {
         gfx_ios_diag_log("Metal command queue initialization failed for device=%s", metal_device.name.UTF8String ?: "unknown");
         NSLog(@"Metal initialization failed: could not create a command queue on %@", metal_device.name);
-        return;
+        return false;
     }
     gfx_ios_diag_log("Metal command queue initialized");
     metal_view = [[MTKView alloc] initWithFrame:view_controller.view.bounds device:metal_device];
     if (!metal_view) {
         gfx_ios_diag_log("Metal MTKView initialization failed");
-        return;
+        return false;
     }
     metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -117,7 +131,15 @@ void gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     // SDL's UIKit view can cover subviews inserted at index zero. Put Metal
     // above it; UIKit touch controls are added afterward and remain on top.
     [view_controller.view addSubview:metal_view];
-    gfx_ios_diag_log("Metal MTKView attached frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f pixelFormat=%lu depthFormat=%lu parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.contentScaleFactor, (unsigned long)metal_view.colorPixelFormat, (unsigned long)metal_view.depthStencilPixelFormat, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, (unsigned long)view_controller.view.subviews.count);
+    [view_controller.view setNeedsLayout];
+    [view_controller.view layoutIfNeeded];
+    [metal_view setNeedsLayout];
+    [metal_view layoutIfNeeded];
+    CGSize drawable = metal_view.drawableSize;
+    gfx_ios_diag_log("Game Metal MTKView attached to SDL scene window frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f color=BGRA8Unorm depth=Depth32Float stencil=None parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, (unsigned long)view_controller.view.subviews.count);
+    bool ready = gfx_metal_surface_is_ready();
+    gfx_ios_diag_log("Game Metal surface readiness=%s drawable=%.0fx%.0f attachedToScene=%d", ready ? "ready" : "not-ready", drawable.width, drawable.height, metal_view.window.windowScene != nil);
+    return ready;
 }
 
 static struct MetalProgram *find_program(uint32_t shader_id) {
@@ -421,10 +443,23 @@ static void gfx_metal_init(void) {
     }
     gfx_ios_diag_log("Metal graphics API init completed backend=RAPI_METAL device=%s commandQueue=%@ view=%@", metal_device.name.UTF8String ?: "unknown", metal_queue, metal_view);
 }
-static void gfx_metal_on_resize(void) { if (metal_view) [metal_view setNeedsLayout]; }
+static void gfx_metal_on_resize(void) {
+    if (!metal_view) return;
+    [metal_view.superview setNeedsLayout];
+    [metal_view.superview layoutIfNeeded];
+    [metal_view setNeedsLayout];
+    [metal_view layoutIfNeeded];
+    gfx_ios_diag_log("Game MTKView resize/layout frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f window=%@ scene=%@", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier);
+}
 static void gfx_metal_start_frame(void) {
     if (!metal_view || !metal_queue) {
         if (drawable_unavailable_count++ < 4) gfx_ios_diag_log("Metal frame start unavailable view=%@ queue=%@", metal_view, metal_queue);
+        return;
+    }
+    if (!gfx_metal_surface_is_ready()) {
+        uint32_t unavailable = ++drawable_unavailable_count;
+        if (unavailable <= 5 || unavailable % 60 == 0)
+            gfx_ios_diag_log("Metal game frame blocked until SDL scene/view/drawable is ready count=%u window=%@ scene=%@ frame=%.0fx%.0f drawable=%.0fx%.0f appState=%ld", unavailable, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, (long)UIApplication.sharedApplication.applicationState);
         return;
     }
     MTLRenderPassDescriptor *pass = metal_view.currentRenderPassDescriptor;
@@ -465,7 +500,14 @@ static void gfx_metal_start_frame(void) {
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
-    [metal_command presentDrawable:metal_drawable];
+    id<CAMetalDrawable> submitted_drawable = metal_drawable;
+    [metal_command presentDrawable:submitted_drawable];
+    [submitted_drawable addPresentedHandler:^(id<CAMetalDrawable> presented_drawable) {
+        if (!logged_first_presented_frame) {
+            logged_first_presented_frame = true;
+            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%lux%lu", presented_drawable.presentedTime, (unsigned long)presented_drawable.texture.width, (unsigned long)presented_drawable.texture.height);
+        }
+    }];
     uint32_t submitted_frame = frame_count;
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
@@ -483,7 +525,7 @@ static void gfx_metal_end_frame(void) {
     }];
     [metal_command commit];
     if (submitted_frame <= 3 || submitted_frame % 60 == 0)
-        gfx_ios_diag_log("Metal presentation submitted frame=%u drawable=%.0fx%.0f drawable=%@ commandStatus=%ld", submitted_frame, drawable_width, drawable_height, metal_drawable, (long)metal_command.status);
+        gfx_ios_diag_log("Metal presentDrawable submitted frame=%u drawable=%.0fx%.0f commandStatus=%ld", submitted_frame, drawable_width, drawable_height, (long)metal_command.status);
     metal_command = nil; metal_drawable = nil;
 }
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
@@ -507,6 +549,7 @@ static void gfx_metal_shutdown(void) {
     logged_pipeline_successes = 0;
     logged_draw_warnings = 0;
     logged_first_completed_frame = false;
+    logged_first_presented_frame = false;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;
     sampler_linear[0] = sampler_linear[1] = false;

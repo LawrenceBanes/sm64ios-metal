@@ -27,6 +27,8 @@ git -C "$SDL2_SOURCE" apply --check "$SCENE_PATCH"
 git -C "$SDL2_SOURCE" apply "$SCENE_PATCH"
 grep -Fq 'initWithWindowScene:windowScene' "$SDL2_SOURCE/src/video/uikit/SDL_uikitwindow.m"
 grep -Fq 'if (data.uiscreen != [UIScreen mainScreen]) {' "$SDL2_SOURCE/src/video/uikit/SDL_uikitwindow.m"
+grep -Fq 'startSDLMainWhenSceneIsReady' "$SDL2_SOURCE/src/video/uikit/SDL_uikitappdelegate.m"
+grep -Fq 'SM64WindowSceneDidConnectNotification' "$SDL2_SOURCE/src/video/uikit/SDL_uikitappdelegate.m"
 
 BUILD_ROOT="$SDL2_STAGE/build"
 mkdir -p "$BUILD_ROOT"

@@ -295,6 +295,12 @@ void main_func(void) {
     gfx_ios_diag_log("gfx_init entering windowBackend=SDL2 renderer=%s title='%s'", RAPI_NAME, window_title);
     gfx_init(wm_api, rendering_api, window_title);
     gfx_ios_diag_log("gfx_init returned dimensions=%dx%d", gfx_current_dimensions.width, gfx_current_dimensions.height);
+#if TARGET_OS_IOS && defined(WAPI_SDL2)
+    if (!gfx_sdl_is_window_ready()) {
+        gfx_ios_diag_log("Game startup aborted: SDL scene-backed window or game Metal surface did not become ready; frame timers will not start");
+        return;
+    }
+#endif
     wm_api->set_keyboard_callbacks(keyboard_on_key_down, keyboard_on_key_up, keyboard_on_all_keys_up);
     
     UIViewController *gfxVc = get_sdl_viewcontroller();
