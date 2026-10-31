@@ -50,7 +50,7 @@ def main() -> None:
     require("gfx_metal_set_scene_active(true);", UIKIT, "active lifecycle resumes Metal submission")
     start_frame = METAL.index("static void gfx_metal_start_frame(void) {")
     render_gate = METAL.index("if (!gfx_metal_scene_can_render())", start_frame)
-    drawable_acquire = METAL.index("metal_view.currentRenderPassDescriptor", start_frame)
+    drawable_acquire = METAL.index("[metal_layer nextDrawable]", start_frame)
     if not render_gate < drawable_acquire:
         raise SystemExit("Metal must gate background frames before acquiring a drawable or creating a command buffer")
     draw_entry = METAL.index("static void gfx_metal_draw_triangles(float data[]")
@@ -60,7 +60,7 @@ def main() -> None:
         raise SystemExit("Metal must suppress background triangle encoding before pipeline/draw work")
     require("Metal first game triangle draw encoded", METAL, "successful triangle encoding checkpoint")
     require("Metal pipeline created shader=", METAL, "successful pipeline checkpoint")
-    require("First SM64 game drawable presented by CoreAnimation", METAL, "drawable presentation checkpoint")
+    require("First SM64 game drawable confirmed displayed by CoreAnimation", METAL, "drawable presentation checkpoint requires nonzero presented time")
 
     # iPhone 14 Pro Max: 932x430 landscape points at 3x become 2796x1290 pixels.
     assert landscape_frame((430, 932), "landscape_left") == (932, 430)
