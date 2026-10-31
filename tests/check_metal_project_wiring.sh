@@ -12,6 +12,9 @@ grep -Fq 'Metal.framework' "$pbxproj"
 grep -Fq 'CoreGraphics' "$repo_dir/ios/validate-metal-apple.sh"
 grep -Fq 'metal_backend_diagnostics_stub.m' "$repo_dir/ios/validate-metal-apple.sh"
 grep -Fq '#if !TARGET_OS_SIMULATOR' "$repo_dir/src/pc/gfx/gfx_metal.m"
+for shader_id in 0x01200200u 0x00000045u 0x00000200u 0x01200a00u; do
+    grep -Fq "$shader_id" "$repo_dir/tests/metal_shader_emit.c"
+done
 grep -Fq 'src/pc/gfx' "$makefile"
 grep -Fq -- '-framework Metal' "$makefile"
 grep -Fq -- '-framework MetalKit' "$makefile"
