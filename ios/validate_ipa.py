@@ -97,10 +97,14 @@ def validate(ipa_path: str, require_system_deps: bool) -> None:
             path = PurePosixPath(name)
             if path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"unsafe IPA member path: {name!r}")
+        if "Payload/" not in names:
+            raise ValueError("IPA is missing the Payload directory entry")
         app_roots = sorted({p.split("/", 2)[1] for p in names if p.startswith("Payload/") and len(p.split("/", 2)) > 2 and p.split("/", 2)[1].endswith(".app")})
         if len(app_roots) != 1:
             raise ValueError(f"IPA must contain exactly one app bundle under Payload (found {app_roots})")
         app = "Payload/" + app_roots[0] + "/"
+        if app not in names:
+            raise ValueError("IPA is missing the app bundle directory entry")
         info_path = app + "Info.plist"
         try:
             info = plistlib.loads(ipa.read(info_path))
