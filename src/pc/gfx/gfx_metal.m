@@ -7,6 +7,7 @@
 #if defined(RAPI_METAL) && TARGET_OS_IOS
 
 #import <Metal/Metal.h>
+#import <Metal/MTLDrawable.h>
 #import <MetalKit/MetalKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
@@ -535,7 +536,7 @@ static void gfx_metal_start_frame(void) {
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
-    id<CAMetalDrawable> submitted_drawable = metal_drawable;
+    id<MTLDrawable> submitted_drawable = (id<MTLDrawable>)metal_drawable;
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     [metal_command presentDrawable:submitted_drawable];
