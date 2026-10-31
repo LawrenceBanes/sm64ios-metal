@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Metal presentation boundary investigation (build 43.1 log)
+
+- The 2026-10-31 device log has 960 game submissions and GPU completion checkpoints through frame 960, but only one `addPresentedHandler` callback. That callback reported `presentedTime=0`, which Apple documents as unpresented or dropped. It is therefore not evidence of a displayed frame.
+- Source audit found the presentation-path mismatch: this custom SM64 loop set `MTKView.paused=YES` and directly queried `currentRenderPassDescriptor`/`currentDrawable` outside `draw(_:)` or `drawInMTKView:`. Apple documents that `MTKView.currentDrawable` advances only after the draw callback returns. This makes a cached drawable a plausible cause of the repeated static image.
+- Changed the manual game loop to acquire from the attached `CAMetalLayer.nextDrawable` on each frame and build a render-pass descriptor for that drawable. Added a matching-size private Depth32Float target, preserving the existing color/depth formats, command-buffer `presentDrawable:` flow, landscape geometry, and UIKit touch hierarchy. No UIView invalidation or extra main-thread presentation is used: presentation continues through the drawable's command buffer.
+- Added drawable ID and texture identity checkpoints, immediate duplicate-ID tracking, and separately synchronized counts for presentation-handler callbacks and callbacks with nonzero `presentedTime`. A callback is no longer described as a confirmed display unless its timestamp is nonzero.
+- Added `ios/test_ios_metal_presentation.py`, included in both Apple validation and full IPA workflow portable checks. Local Linux checks and source regressions pass; Apple compilation and the replacement IPA are pending. Only a device log can show whether fresh drawable IDs and nonzero presentation times now advance, and only a visual iPhone check can confirm animation.
+
 ### Build 42.1 diagnostics containment crash
 
 - Root cause: `sm64_diag_attach_to_game_controller` attempted `[host addChildViewController:controller]` while the diagnostics controller was still `diagnosticWindow.rootViewController`. A window root controller is UIKit-owned even when its `parentViewController` is `nil`; the illegal transition raised `NSInvalidArgumentException` in `_addChildViewController:`.

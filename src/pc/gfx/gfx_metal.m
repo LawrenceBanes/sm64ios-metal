@@ -48,6 +48,9 @@ struct MetalFragmentParams {
 static id<MTLDevice> metal_device;
 static id<MTLCommandQueue> metal_queue;
 static MTKView *metal_view;
+static id<MTLTexture> metal_depth_texture;
+static NSUInteger metal_depth_width;
+static NSUInteger metal_depth_height;
 static id<MTLCommandBuffer> metal_command;
 static id<MTLRenderCommandEncoder> metal_encoder;
 static id<CAMetalDrawable> metal_drawable;
@@ -60,9 +63,13 @@ static bool metal_scene_active;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
 static bool logged_first_triangle_draw;
-static uint64_t presented_drawable_count;
+static uint64_t presentation_callback_count;
+static uint64_t displayed_drawable_count;
 static uint64_t completed_drawable_count;
 static uint64_t scheduled_command_count;
+static uint64_t acquired_drawable_count;
+static uint64_t last_acquired_drawable_id;
+static uint64_t repeated_drawable_identity_count;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
 static uint32_t inactive_scene_frame_count;
@@ -83,6 +90,34 @@ static int scissor[4];
 static bool has_viewport;
 static bool has_scissor;
 static id<MTLDepthStencilState> depth_states[2][2];
+
+static id<MTLTexture> gfx_metal_depth_for_drawable(id<CAMetalDrawable> drawable) {
+    id<MTLTexture> color_texture = drawable.texture;
+    NSUInteger width = color_texture.width;
+    NSUInteger height = color_texture.height;
+    if (metal_depth_texture && metal_depth_width == width && metal_depth_height == height)
+        return metal_depth_texture;
+
+    [metal_depth_texture release];
+    metal_depth_texture = nil;
+    metal_depth_width = metal_depth_height = 0;
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                          width:width
+                                                                                         height:height
+                                                                                      mipmapped:NO];
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    metal_depth_texture = [metal_device newTextureWithDescriptor:descriptor];
+    if (!metal_depth_texture) {
+        gfx_ios_diag_log("Metal depth texture creation failed drawable=%lux%lu format=Depth32Float", (unsigned long)width, (unsigned long)height);
+        return nil;
+    }
+    metal_depth_width = width;
+    metal_depth_height = height;
+    metal_depth_texture.label = @"SM64 game depth";
+    gfx_ios_diag_log("Metal depth texture ready size=%lux%lu format=Depth32Float", (unsigned long)width, (unsigned long)height);
+    return metal_depth_texture;
+}
 
 static void gfx_metal_on_resize(void);
 
@@ -552,14 +587,45 @@ static void gfx_metal_start_frame(void) {
             gfx_ios_diag_log("Metal game frame blocked until SDL scene/view/drawable is ready count=%u window=%@ scene=%@ frame=%.0fx%.0f drawable=%.0fx%.0f appState=%ld", unavailable, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, (long)UIApplication.sharedApplication.applicationState);
         return;
     }
-    MTLRenderPassDescriptor *pass = metal_view.currentRenderPassDescriptor;
-    metal_drawable = [metal_view currentDrawable];
+    // The game owns its frame loop, so it does not run inside MTKView's
+    // draw(_:) / drawInMTKView: callback. MTKView.currentDrawable is scoped
+    // to that callback and is not advanced by this manual loop. Acquire each
+    // frame from the backing layer instead of reusing MTKView's cached one.
+    CAMetalLayer *metal_layer = (CAMetalLayer *)metal_view.layer;
+    metal_drawable = [metal_layer nextDrawable];
+    MTLRenderPassDescriptor *pass = nil;
+    if (metal_drawable) {
+        id<MTLTexture> depth_texture = gfx_metal_depth_for_drawable(metal_drawable);
+        if (depth_texture) {
+            pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = metal_drawable.texture;
+            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            pass.depthAttachment.texture = depth_texture;
+            pass.depthAttachment.loadAction = MTLLoadActionClear;
+            pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+            pass.depthAttachment.clearDepth = 1.0;
+        }
+    }
     if (!metal_drawable || !pass) {
         uint32_t unavailable = ++drawable_unavailable_count;
         if (unavailable <= 5 || unavailable % 60 == 0)
             gfx_ios_diag_log("Metal frame drawable unavailable count=%u pass=%s drawable=%s viewFrame=(%.0f,%.0f %.0fx%.0f) drawableSize=%.0fx%.0f attachedWindow=%@ scene=%@ windowHidden=%d viewHidden=%d appState=%ld", unavailable, pass ? "yes" : "nil", metal_drawable ? "yes" : "nil", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, metal_view.drawableSize.width, metal_view.drawableSize.height, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.window.hidden, metal_view.hidden, (long)UIApplication.sharedApplication.applicationState);
         metal_drawable = nil;
         return;
+    }
+    uint64_t drawable_id = metal_drawable.drawableID;
+    uint64_t acquisition_index;
+    bool repeated_immediately;
+    @synchronized ([NSObject class]) {
+        acquisition_index = ++acquired_drawable_count;
+        repeated_immediately = acquisition_index > 1 && drawable_id == last_acquired_drawable_id;
+        if (repeated_immediately)
+            ++repeated_drawable_identity_count;
+        last_acquired_drawable_id = drawable_id;
+    }
+    if (acquisition_index <= 5 || acquisition_index % 120 == 0 || repeated_immediately) {
+        gfx_ios_diag_log("Metal CAMetalLayer drawable acquired count=%llu frame=%u drawableID=%llu texture=%p size=%lux%lu repeatedImmediately=%d repeatedImmediateTotal=%llu mainThread=%d", (unsigned long long)acquisition_index, frame_count + 1, (unsigned long long)drawable_id, metal_drawable.texture, (unsigned long)metal_drawable.texture.width, (unsigned long)metal_drawable.texture.height, repeated_immediately, (unsigned long long)repeated_drawable_identity_count, NSThread.isMainThread);
     }
     metal_command = [metal_queue commandBuffer];
     if (!metal_command) {
@@ -568,12 +634,7 @@ static void gfx_metal_start_frame(void) {
         metal_drawable = nil;
         return;
     }
-    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
     pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,1);
-    pass.depthAttachment.loadAction = MTLLoadActionClear;
-    pass.depthAttachment.storeAction = MTLStoreActionDontCare;
-    pass.depthAttachment.clearDepth = 1.0;
     metal_encoder = [metal_command renderCommandEncoderWithDescriptor:pass];
     if (!metal_encoder) {
         gfx_ios_diag_log("Metal frame %u could not create render encoder pass=%@ drawable=%@", frame_count + 1, pass, metal_drawable);
@@ -595,17 +656,24 @@ static void gfx_metal_end_frame(void) {
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
 #if !TARGET_OS_SIMULATOR
+    uint64_t submitted_drawable_id = submitted_drawable.drawableID;
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
-        uint64_t presentation_index;
+        double presented_time = presented_drawable.presentedTime;
+        uint64_t callback_index;
+        uint64_t displayed_index = 0;
         @synchronized ([NSObject class]) {
-            presentation_index = ++presented_drawable_count;
+            callback_index = ++presentation_callback_count;
+            if (presented_time > 0.0)
+                displayed_index = ++displayed_drawable_count;
         }
-        if (presentation_index <= 3 || presentation_index % 120 == 0) {
-            gfx_ios_diag_log("Metal CoreAnimation drawable presented count=%llu submittedFrame=%u presentedTime=%.6f size=%.0fx%.0f", (unsigned long long)presentation_index, submitted_frame, presented_drawable.presentedTime, drawable_width, drawable_height);
+        if (callback_index <= 10 || callback_index % 60 == 0 || (presented_time > 0.0 && displayed_index <= 10)) {
+            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u drawableID=%llu callbackDrawableID=%llu presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (unsigned long long)submitted_drawable_id, (unsigned long long)presented_drawable.drawableID, presented_time, presented_time > 0.0, drawable_width, drawable_height);
         }
-        if (!logged_first_presented_frame) {
+        if (presented_time > 0.0 && !logged_first_presented_frame) {
             logged_first_presented_frame = true;
-            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
+            gfx_ios_diag_log("First SM64 game drawable confirmed displayed by CoreAnimation presentedTime=%.6f drawableID=%llu frame=%u size=%.0fx%.0f", presented_time, (unsigned long long)presented_drawable.drawableID, submitted_frame, drawable_width, drawable_height);
+        } else if (presented_time <= 0.0 && callback_index == 1) {
+            gfx_ios_diag_log("First SM64 drawable presentation callback has presentedTime=0; Apple reports the drawable as unpresented or dropped drawableID=%llu frame=%u", (unsigned long long)presented_drawable.drawableID, submitted_frame);
         }
     }];
 #endif
@@ -615,7 +683,7 @@ static void gfx_metal_end_frame(void) {
             scheduled_index = ++scheduled_command_count;
         }
         if (scheduled_index <= 3 || scheduled_index % 120 == 0) {
-            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (long)scheduled.status, metal_view.presentsWithTransaction);
+            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawableID=%llu status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (unsigned long long)submitted_drawable_id, (long)scheduled.status, metal_view.presentsWithTransaction);
         }
     }];
     // Register presentation observation before scheduling the drawable. This
@@ -632,7 +700,7 @@ static void gfx_metal_end_frame(void) {
                 completion_index = ++completed_drawable_count;
             }
             if (completion_index <= 3 || completion_index % 120 == 0) {
-                gfx_ios_diag_log("Metal GPU command completion count=%llu frame=%u status=%ld drawable=%.0fx%.0f", (unsigned long long)completion_index, submitted_frame, (long)completed.status, drawable_width, drawable_height);
+                gfx_ios_diag_log("Metal GPU command completion count=%llu frame=%u status=%ld drawableID=%llu drawable=%.0fx%.0f", (unsigned long long)completion_index, submitted_frame, (long)completed.status, (unsigned long long)submitted_drawable_id, drawable_width, drawable_height);
             }
             if (!logged_first_completed_frame) {
                 logged_first_completed_frame = true;
@@ -651,6 +719,8 @@ static void gfx_metal_end_frame(void) {
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
 static void gfx_metal_shutdown(void) {
     metal_encoder = nil; metal_drawable = nil; metal_command = nil;
+    [metal_depth_texture release]; metal_depth_texture = nil;
+    metal_depth_width = metal_depth_height = 0;
     for (size_t i = 0; i < program_count; ++i) {
         for (size_t j = 0; j < 16; ++j) [programs[i].pipelines[j] release];
         [programs[i].vertex release]; [programs[i].fragment release]; [programs[i].library release];

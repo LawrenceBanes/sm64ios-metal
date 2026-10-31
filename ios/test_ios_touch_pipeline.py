@@ -52,7 +52,7 @@ def main() -> None:
     require("UIKit CADisplayLink heartbeat", DISPLAY_LINK, "UIKit display-link heartbeat")
     require("Metal presentation heartbeat", METAL, "Metal command submission heartbeat")
     require("Metal command buffer scheduled count=", METAL, "GPU command scheduling diagnostics")
-    require("Metal CoreAnimation drawable presented count=", METAL, "periodic Core Animation display completion diagnostics")
+    require("Metal CoreAnimation presentation callback count=", METAL, "periodic Core Animation display completion diagnostics")
     require("addPresentedHandler", METAL, "display callback registration before drawable presentation")
     if METAL.index("addPresentedHandler") > METAL.index("presentDrawable:submitted_drawable"):
         raise SystemExit("Metal display handler must be registered before scheduling drawable presentation")
