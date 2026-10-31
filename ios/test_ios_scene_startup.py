@@ -74,7 +74,7 @@ def main() -> None:
         raise SystemExit("SDL desktop window-size restoration must be excluded from iOS resize events")
     require("gfx_metal_api.on_resize) gfx_metal_api.on_resize();", SDL_HOST, "Metal resize callback remains active on iOS")
     require("if (!gfx_sdl_is_window_ready())", MAIN, "game startup stops on renderer/window failure")
-    require("First SM64 game drawable presented by CoreAnimation", METAL, "actual drawable presentation callback")
+    require("First SM64 game drawable confirmed displayed by CoreAnimation", METAL, "nonzero-time drawable presentation callback")
     require("drawable.width > 0.0 && drawable.height > 0.0", METAL, "game MTKView has nonzero drawable")
 
     for order in permutations(("did_finish_launching", "scene_connected", "runloop_callback", "runloop_callback")):

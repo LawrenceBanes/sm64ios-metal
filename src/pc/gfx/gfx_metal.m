@@ -12,6 +12,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include "gfx_metal.h"
 #include "gfx_metal_state.h"
@@ -68,7 +69,7 @@ static uint64_t displayed_drawable_count;
 static uint64_t completed_drawable_count;
 static uint64_t scheduled_command_count;
 static uint64_t acquired_drawable_count;
-static uint64_t last_acquired_drawable_id;
+static uintptr_t last_acquired_drawable_identity;
 static uint64_t repeated_drawable_identity_count;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
@@ -614,18 +615,18 @@ static void gfx_metal_start_frame(void) {
         metal_drawable = nil;
         return;
     }
-    uint64_t drawable_id = metal_drawable.drawableID;
+    uintptr_t drawable_identity = (uintptr_t)(void *)metal_drawable;
     uint64_t acquisition_index;
     bool repeated_immediately;
     @synchronized ([NSObject class]) {
         acquisition_index = ++acquired_drawable_count;
-        repeated_immediately = acquisition_index > 1 && drawable_id == last_acquired_drawable_id;
+        repeated_immediately = acquisition_index > 1 && drawable_identity == last_acquired_drawable_identity;
         if (repeated_immediately)
             ++repeated_drawable_identity_count;
-        last_acquired_drawable_id = drawable_id;
+        last_acquired_drawable_identity = drawable_identity;
     }
     if (acquisition_index <= 5 || acquisition_index % 120 == 0 || repeated_immediately) {
-        gfx_ios_diag_log("Metal CAMetalLayer drawable acquired count=%llu frame=%u drawableID=%llu texture=%p size=%lux%lu repeatedImmediately=%d repeatedImmediateTotal=%llu mainThread=%d", (unsigned long long)acquisition_index, frame_count + 1, (unsigned long long)drawable_id, metal_drawable.texture, (unsigned long)metal_drawable.texture.width, (unsigned long)metal_drawable.texture.height, repeated_immediately, (unsigned long long)repeated_drawable_identity_count, NSThread.isMainThread);
+        gfx_ios_diag_log("Metal CAMetalLayer drawable acquired count=%llu frame=%u drawableIdentity=%p texture=%p size=%lux%lu repeatedImmediately=%d repeatedImmediateTotal=%llu mainThread=%d", (unsigned long long)acquisition_index, frame_count + 1, (void *)drawable_identity, metal_drawable.texture, (unsigned long)metal_drawable.texture.width, (unsigned long)metal_drawable.texture.height, repeated_immediately, (unsigned long long)repeated_drawable_identity_count, NSThread.isMainThread);
     }
     metal_command = [metal_queue commandBuffer];
     if (!metal_command) {
@@ -655,8 +656,8 @@ static void gfx_metal_end_frame(void) {
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
+    uintptr_t submitted_drawable_identity = (uintptr_t)(void *)submitted_drawable;
 #if !TARGET_OS_SIMULATOR
-    uint64_t submitted_drawable_id = submitted_drawable.drawableID;
     [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
         double presented_time = presented_drawable.presentedTime;
         uint64_t callback_index;
@@ -667,13 +668,13 @@ static void gfx_metal_end_frame(void) {
                 displayed_index = ++displayed_drawable_count;
         }
         if (callback_index <= 10 || callback_index % 60 == 0 || (presented_time > 0.0 && displayed_index <= 10)) {
-            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u drawableID=%llu callbackDrawableID=%llu presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (unsigned long long)submitted_drawable_id, (unsigned long long)presented_drawable.drawableID, presented_time, presented_time > 0.0, drawable_width, drawable_height);
+            gfx_ios_diag_log("Metal CoreAnimation presentation callback count=%llu displayedCount=%llu submittedFrame=%u submittedDrawable=%p callbackDrawable=%p identityMatches=%d presentedTime=%.6f wasDisplayed=%d size=%.0fx%.0f", (unsigned long long)callback_index, (unsigned long long)displayed_index, submitted_frame, (void *)submitted_drawable_identity, (void *)presented_drawable, (uintptr_t)(void *)presented_drawable == submitted_drawable_identity, presented_time, presented_time > 0.0, drawable_width, drawable_height);
         }
         if (presented_time > 0.0 && !logged_first_presented_frame) {
             logged_first_presented_frame = true;
-            gfx_ios_diag_log("First SM64 game drawable confirmed displayed by CoreAnimation presentedTime=%.6f drawableID=%llu frame=%u size=%.0fx%.0f", presented_time, (unsigned long long)presented_drawable.drawableID, submitted_frame, drawable_width, drawable_height);
+            gfx_ios_diag_log("First SM64 game drawable confirmed displayed by CoreAnimation presentedTime=%.6f drawable=%p frame=%u size=%.0fx%.0f", presented_time, (void *)presented_drawable, submitted_frame, drawable_width, drawable_height);
         } else if (presented_time <= 0.0 && callback_index == 1) {
-            gfx_ios_diag_log("First SM64 drawable presentation callback has presentedTime=0; Apple reports the drawable as unpresented or dropped drawableID=%llu frame=%u", (unsigned long long)presented_drawable.drawableID, submitted_frame);
+            gfx_ios_diag_log("First SM64 drawable presentation callback has presentedTime=0; Apple reports the drawable as unpresented or dropped drawable=%p frame=%u", (void *)presented_drawable, submitted_frame);
         }
     }];
 #endif
@@ -683,7 +684,7 @@ static void gfx_metal_end_frame(void) {
             scheduled_index = ++scheduled_command_count;
         }
         if (scheduled_index <= 3 || scheduled_index % 120 == 0) {
-            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawableID=%llu status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (unsigned long long)submitted_drawable_id, (long)scheduled.status, metal_view.presentsWithTransaction);
+            gfx_ios_diag_log("Metal command buffer scheduled count=%llu frame=%u drawable=%p status=%ld presentsWithTransaction=%d", (unsigned long long)scheduled_index, submitted_frame, (void *)submitted_drawable_identity, (long)scheduled.status, metal_view.presentsWithTransaction);
         }
     }];
     // Register presentation observation before scheduling the drawable. This
@@ -700,7 +701,7 @@ static void gfx_metal_end_frame(void) {
                 completion_index = ++completed_drawable_count;
             }
             if (completion_index <= 3 || completion_index % 120 == 0) {
-                gfx_ios_diag_log("Metal GPU command completion count=%llu frame=%u status=%ld drawableID=%llu drawable=%.0fx%.0f", (unsigned long long)completion_index, submitted_frame, (long)completed.status, (unsigned long long)submitted_drawable_id, drawable_width, drawable_height);
+                gfx_ios_diag_log("Metal GPU command completion count=%llu frame=%u status=%ld drawable=%p size=%.0fx%.0f", (unsigned long long)completion_index, submitted_frame, (long)completed.status, (void *)submitted_drawable_identity, drawable_width, drawable_height);
             }
             if (!logged_first_completed_frame) {
                 logged_first_completed_frame = true;
