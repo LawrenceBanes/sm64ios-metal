@@ -29,13 +29,13 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile ios/asset_bundle.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/patch_sdl2_ios27_orientation.py
+          python3 -m py_compile ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/patch_sdl2_ios27_orientation.py
           bash -n ios/build_sdl2_ios.sh
           python3 ios/test_scene_lifecycle.py
           python3 ios/test_ios_diagnostics.py
           python3 ios/test_ios_scene_startup.py
           python3 ios/test_ios_landscape_geometry.py
-          (cd ios && python3 -m unittest -v test_ipa_validation.py)
+          (cd ios && python3 -m unittest -v test_asset_checksum.py test_ipa_validation.py)
 
   ios-arm64-ipa:
     if: github.repository == 'LawrenceBanes/sm64ios-metal' && github.event.repository.private == true
@@ -109,7 +109,7 @@ jobs:
               --pattern 'sm64-assets.tar.gz' \
               --pattern 'sm64-assets.sha256' \
               --dir "$RUNNER_TEMP"
-            ASSET_BUNDLE_SHA256=$(cat "$RUNNER_TEMP/sm64-assets.sha256")
+            ASSET_BUNDLE_SHA256=$(python3 ios/asset_checksum.py "$RUNNER_TEMP/sm64-assets.sha256" sm64-assets.tar.gz)
           else
             curl --fail --silent --show-error --location --retry 3 "$ASSET_BUNDLE_URL" -o "$RUNNER_TEMP/sm64-assets.tar.gz"
           fi
