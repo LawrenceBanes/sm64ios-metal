@@ -24,6 +24,7 @@
 
 #define METAL_SHADER_CAP 128
 #define METAL_TEXTURE_CAP 8192
+#define METAL_PIPELINE_STATE_CAP 48
 
 struct MetalProgram {
     uint32_t shader_id;
@@ -31,7 +32,7 @@ struct MetalProgram {
     id<MTLFunction> vertex;
     id<MTLFunction> fragment;
     struct CCFeatures features;
-    id<MTLRenderPipelineState> pipelines[16];
+    id<MTLRenderPipelineState> pipelines[METAL_PIPELINE_STATE_CAP];
 };
 
 struct MetalTexture {
@@ -58,6 +59,28 @@ static MTKView *metal_view;
 static id<MTLTexture> metal_depth_texture;
 static NSUInteger metal_depth_width;
 static NSUInteger metal_depth_height;
+static NSUInteger metal_depth_samples = 1;
+static id<MTLTexture> metal_color_target;
+static id<MTLTexture> metal_multisample_color;
+static id<MTLTexture> metal_resolve_texture;
+static NSUInteger metal_target_width;
+static NSUInteger metal_target_height;
+static NSUInteger metal_target_samples;
+static id<MTLRenderPipelineState> metal_present_pipeline;
+static id<MTLSamplerState> metal_present_sampler;
+static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u };
+static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
+static struct GfxMetalPerformanceStats metal_performance_stats;
+static double metal_last_frame_start_time;
+static bool metal_logged_gpu_timing;
+static bool metal_logged_gpu_timing_unavailable;
+static uint64_t metal_frame_draw_calls;
+static uint64_t metal_frame_triangles;
+static NSUInteger metal_active_sample_count = 1;
+static NSUInteger metal_active_render_width;
+static NSUInteger metal_active_render_height;
+static bool metal_frame_uses_offscreen;
+static bool metal_offscreen_runtime_failed;
 static id<MTLCommandBuffer> metal_command;
 static id<MTLRenderCommandEncoder> metal_encoder;
 static id<CAMetalDrawable> metal_drawable;
@@ -86,6 +109,7 @@ static uint32_t logged_draw_warnings;
 static struct MetalTexture *bound_textures[2];
 static struct MetalTexture *current_texture;
 static id<MTLSamplerState> metal_samplers[2];
+static NSUInteger sampler_anisotropy[2] = { 1, 1 };
 static bool sampler_linear[2];
 static uint32_t sampler_cms[2];
 static uint32_t sampler_cmt[2];
@@ -109,11 +133,10 @@ static bool gfx_metal_diagnostics_enabled(void) {
            gfx_ios_render_diagnostic_mode() != GFX_IOS_RENDER_NORMAL;
 }
 
-static id<MTLTexture> gfx_metal_depth_for_drawable(id<CAMetalDrawable> drawable) {
-    id<MTLTexture> color_texture = drawable.texture;
-    NSUInteger width = color_texture.width;
-    NSUInteger height = color_texture.height;
-    if (metal_depth_texture && metal_depth_width == width && metal_depth_height == height)
+static id<MTLTexture> gfx_metal_depth_for_size(NSUInteger width, NSUInteger height,
+                                               NSUInteger sample_count) {
+    if (metal_depth_texture && metal_depth_width == width && metal_depth_height == height &&
+        metal_depth_samples == sample_count)
         return metal_depth_texture;
 
     [metal_depth_texture release];
@@ -123,6 +146,8 @@ static id<MTLTexture> gfx_metal_depth_for_drawable(id<CAMetalDrawable> drawable)
                                                                                           width:width
                                                                                          height:height
                                                                                       mipmapped:NO];
+    descriptor.textureType = sample_count > 1 ? MTLTextureType2DMultisample : MTLTextureType2D;
+    descriptor.sampleCount = sample_count;
     descriptor.storageMode = MTLStorageModePrivate;
     descriptor.usage = MTLTextureUsageRenderTarget;
     metal_depth_texture = [metal_device newTextureWithDescriptor:descriptor];
@@ -132,9 +157,118 @@ static id<MTLTexture> gfx_metal_depth_for_drawable(id<CAMetalDrawable> drawable)
     }
     metal_depth_width = width;
     metal_depth_height = height;
+    metal_depth_samples = sample_count;
     metal_depth_texture.label = @"SM64 game depth";
-    gfx_ios_diag_log("Metal depth texture ready size=%lux%lu format=Depth32Float", (unsigned long)width, (unsigned long)height);
+    gfx_ios_diag_log("Metal depth texture ready size=%lux%lu samples=%lu format=Depth32Float", (unsigned long)width, (unsigned long)height, (unsigned long)sample_count);
     return metal_depth_texture;
+}
+
+static void gfx_metal_apply_sampler_parameters(int sampler, bool linear,
+                                               uint32_t cms, uint32_t cmt);
+
+static void gfx_metal_release_render_targets(void) {
+    [metal_color_target release]; metal_color_target = nil;
+    [metal_multisample_color release]; metal_multisample_color = nil;
+    [metal_resolve_texture release]; metal_resolve_texture = nil;
+    [metal_depth_texture release]; metal_depth_texture = nil;
+    metal_depth_width = metal_depth_height = 0;
+    metal_depth_samples = 1;
+    metal_target_width = metal_target_height = metal_target_samples = 0;
+}
+
+static void gfx_metal_refresh_capabilities(void) {
+    if (!metal_device) return;
+    metal_capabilities.sample_count_2 = [metal_device supportsTextureSampleCount:2];
+    metal_capabilities.sample_count_4 = [metal_device supportsTextureSampleCount:4];
+    metal_capabilities.max_anisotropy = 1;
+    static const NSUInteger levels[] = { 16, 8, 4, 2, 1 };
+    for (NSUInteger i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i) {
+        MTLSamplerDescriptor *descriptor = [[[MTLSamplerDescriptor alloc] init] autorelease];
+        descriptor.minFilter = MTLSamplerMinMagFilterLinear;
+        descriptor.magFilter = MTLSamplerMinMagFilterLinear;
+        descriptor.sAddressMode = MTLSamplerAddressModeRepeat;
+        descriptor.tAddressMode = MTLSamplerAddressModeRepeat;
+        descriptor.maxAnisotropy = levels[i];
+        id<MTLSamplerState> sampler = [metal_device newSamplerStateWithDescriptor:descriptor];
+        if (sampler) {
+            metal_capabilities.max_anisotropy = (uint32_t)levels[i];
+            [sampler release];
+            break;
+        }
+    }
+    gfx_ios_diag_log("Metal capabilities device=%s sampleCounts=(1,%d,%d) samplerMaxAnisotropy=%u", metal_device.name.UTF8String ?: "unknown", metal_capabilities.sample_count_2, metal_capabilities.sample_count_4, metal_capabilities.max_anisotropy);
+}
+
+static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    struct GfxMetalSettings requested = gfx_metal_classic_settings();
+    if ([defaults objectForKey:@"SM64MetalPreset"]) {
+        requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
+        requested = requested.preset == GFX_METAL_PRESET_ENHANCED ?
+                    gfx_metal_enhanced_settings() : gfx_metal_classic_settings();
+    }
+    if ([defaults objectForKey:@"SM64MetalRenderScale"])
+        requested.render_scale_percent = (uint32_t)[defaults integerForKey:@"SM64MetalRenderScale"];
+    if ([defaults objectForKey:@"SM64MetalSampleCount"])
+        requested.sample_count = (uint32_t)[defaults integerForKey:@"SM64MetalSampleCount"];
+    if ([defaults objectForKey:@"SM64MetalAnisotropy"])
+        requested.anisotropy = (uint32_t)[defaults integerForKey:@"SM64MetalAnisotropy"];
+    return gfx_metal_settings_sanitize(requested, metal_capabilities);
+}
+
+static void gfx_metal_persist_settings(struct GfxMetalSettings settings) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:(NSInteger)settings.preset forKey:@"SM64MetalPreset"];
+    [defaults setInteger:(NSInteger)settings.render_scale_percent forKey:@"SM64MetalRenderScale"];
+    [defaults setInteger:(NSInteger)settings.sample_count forKey:@"SM64MetalSampleCount"];
+    [defaults setInteger:(NSInteger)settings.anisotropy forKey:@"SM64MetalAnisotropy"];
+}
+
+struct GfxMetalSettings gfx_metal_get_settings(void) {
+    @synchronized ([NSObject class]) { return metal_settings; }
+}
+
+struct GfxMetalCapabilities gfx_metal_get_capabilities(void) {
+    @synchronized ([NSObject class]) { return metal_capabilities; }
+}
+
+void gfx_metal_apply_settings(struct GfxMetalSettings requested) {
+    struct GfxMetalSettings sanitized = gfx_metal_settings_sanitize(requested, metal_capabilities);
+    @synchronized ([NSObject class]) {
+        bool targets_changed = metal_settings.render_scale_percent != sanitized.render_scale_percent ||
+                               metal_settings.sample_count != sanitized.sample_count;
+        bool changed = metal_settings.preset != sanitized.preset ||
+                       metal_settings.render_scale_percent != sanitized.render_scale_percent ||
+                       metal_settings.sample_count != sanitized.sample_count ||
+                       metal_settings.anisotropy != sanitized.anisotropy;
+        metal_settings = sanitized;
+        if (targets_changed || !gfx_metal_settings_use_offscreen(sanitized))
+            metal_offscreen_runtime_failed = false;
+        metal_performance_stats.preset = sanitized.preset;
+        metal_performance_stats.render_scale_percent = sanitized.render_scale_percent;
+        metal_performance_stats.sample_count = sanitized.sample_count;
+        metal_performance_stats.anisotropy = sanitized.anisotropy;
+        if (targets_changed) gfx_metal_release_render_targets();
+        if (changed) {
+            gfx_ios_diag_log("Metal graphics settings applied preset=%s scale=%u%% samples=%ux anisotropy=%u", sanitized.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", sanitized.render_scale_percent, sanitized.sample_count, sanitized.anisotropy);
+        }
+    }
+    gfx_metal_persist_settings(sanitized);
+    for (int tile = 0; tile < 2; ++tile) {
+        if (metal_device)
+            gfx_metal_apply_sampler_parameters(tile, sampler_linear[tile],
+                                               sampler_cms[tile], sampler_cmt[tile]);
+    }
+}
+
+void gfx_metal_get_performance_stats(struct GfxMetalPerformanceStats *stats) {
+    if (!stats) return;
+    @synchronized ([NSObject class]) { *stats = metal_performance_stats; }
+}
+
+void gfx_metal_set_cpu_frame_time_ms(double milliseconds) {
+    if (milliseconds < 0.0) return;
+    @synchronized ([NSObject class]) { metal_performance_stats.cpu_frame_ms = milliseconds; }
 }
 
 static void gfx_metal_on_resize(void);
@@ -366,7 +500,9 @@ static void gfx_metal_apply_sampler_parameters(int sampler, bool linear,
         sampler_linear[sampler], sampler_cms[sampler], sampler_cmt[sampler]
     };
     struct GfxMetalSamplerState desired = { linear, cms, cmt };
-    if (gfx_metal_sampler_state_matches(sampler_state_valid[sampler], current, desired)) return;
+    NSUInteger requested_anisotropy = linear ? MAX(1u, metal_settings.anisotropy) : 1u;
+    if (gfx_metal_sampler_state_matches(sampler_state_valid[sampler], current, desired) &&
+        sampler_anisotropy[sampler] == requested_anisotropy) return;
 
     MTLSamplerDescriptor *desc = [[[MTLSamplerDescriptor alloc] init] autorelease];
     desc.minFilter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
@@ -377,13 +513,33 @@ static void gfx_metal_apply_sampler_parameters(int sampler, bool linear,
                         (s_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
     desc.tAddressMode = t_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
                         (t_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
-    id<MTLSamplerState> new_sampler = [metal_device newSamplerStateWithDescriptor:desc];
+    static const NSUInteger anisotropy_levels[] = { 16, 8, 4, 2, 1 };
+    id<MTLSamplerState> new_sampler = nil;
+    NSUInteger selected_anisotropy = 1;
+    for (NSUInteger i = 0; i < sizeof(anisotropy_levels) / sizeof(anisotropy_levels[0]); ++i) {
+        NSUInteger level = anisotropy_levels[i];
+        if (level > requested_anisotropy) continue;
+        desc.maxAnisotropy = level;
+        new_sampler = [metal_device newSamplerStateWithDescriptor:desc];
+        if (new_sampler) {
+            selected_anisotropy = level;
+            break;
+        }
+    }
     if (!new_sampler) {
         NSLog(@"Metal sampler creation failed for tile=%d linear=%d address=(%u,%u)", sampler, linear, cms, cmt);
         return;
     }
+    if (linear && selected_anisotropy < requested_anisotropy) {
+        gfx_ios_diag_log("Metal anisotropic sampler fell back requested=%lu active=%lu tile=%d", (unsigned long)requested_anisotropy, (unsigned long)selected_anisotropy, sampler);
+        metal_capabilities.max_anisotropy = (uint32_t)selected_anisotropy;
+        metal_settings.anisotropy = (uint32_t)selected_anisotropy;
+        metal_performance_stats.anisotropy = (uint32_t)selected_anisotropy;
+        gfx_metal_persist_settings(metal_settings);
+    }
     [metal_samplers[sampler] release];
     metal_samplers[sampler] = new_sampler;
+    sampler_anisotropy[sampler] = selected_anisotropy;
     sampler_linear[sampler] = linear;
     sampler_cms[sampler] = cms;
     sampler_cmt[sampler] = cmt;
@@ -447,8 +603,10 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
 }
 
 static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
-    NSUInteger key = gfx_metal_pipeline_state_key(state_depth_test, state_depth_write,
-                                                   state_blend, state_decal);
+    uint32_t state_key = gfx_metal_pipeline_state_key(state_depth_test, state_depth_write,
+                                                       state_blend, state_decal);
+    uint32_t key = gfx_metal_pipeline_cache_index((uint32_t)metal_active_sample_count, state_key);
+    if (key == UINT32_MAX || key >= METAL_PIPELINE_STATE_CAP) return nil;
     if (p->pipelines[key]) return p->pipelines[key];
     struct GfxMetalVertexLayout vertex_layout = {0};
     if (!gfx_metal_get_vertex_layout(&p->features, &vertex_layout)) {
@@ -475,6 +633,7 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     desc.vertexDescriptor = vd;
     desc.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
     desc.depthAttachmentPixelFormat = metal_view.depthStencilPixelFormat;
+    desc.sampleCount = metal_active_sample_count;
     if (state_blend) {
         MTLRenderPipelineColorAttachmentDescriptor *color = desc.colorAttachments[0];
         color.blendingEnabled = YES;
@@ -489,11 +648,11 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     p->pipelines[key] = [metal_device newRenderPipelineStateWithDescriptor:desc error:&error];
     if (!p->pipelines[key]) {
         if (logged_pipeline_failures++ < 16)
-            gfx_ios_diag_log("Metal render pipeline creation failed shader=0x%08x state=0x%lx colorFormat=%lu depthFormat=%lu error=%s", p->shader_id, (unsigned long)key, (unsigned long)metal_view.colorPixelFormat, (unsigned long)metal_view.depthStencilPixelFormat, error.localizedDescription.UTF8String ?: "unknown");
-        NSLog(@"Metal pipeline creation failed shader=0x%08x state=0x%lx: %@",
-              p->shader_id, (unsigned long)key, error.localizedDescription);
+            gfx_ios_diag_log("Metal render pipeline creation failed shader=0x%08x state=0x%x samples=%lu colorFormat=%lu depthFormat=%lu error=%s", p->shader_id, state_key, (unsigned long)metal_active_sample_count, (unsigned long)metal_view.colorPixelFormat, (unsigned long)metal_view.depthStencilPixelFormat, error.localizedDescription.UTF8String ?: "unknown");
+        NSLog(@"Metal pipeline creation failed shader=0x%08x state=0x%x samples=%lu: %@",
+              p->shader_id, state_key, (unsigned long)metal_active_sample_count, error.localizedDescription);
     } else if (logged_pipeline_successes++ < 16) {
-        gfx_ios_diag_log("Metal pipeline created shader=0x%08x state=0x%lx", p->shader_id, (unsigned long)key);
+        gfx_ios_diag_log("Metal pipeline created shader=0x%08x state=0x%x samples=%lu", p->shader_id, state_key, (unsigned long)metal_active_sample_count);
     }
     return p->pipelines[key];
 }
@@ -515,6 +674,10 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
     }
     id<MTLRenderPipelineState> pipeline = pipeline_for(active_program);
     if (!pipeline) {
+        if (metal_frame_uses_offscreen && metal_active_sample_count > 1) {
+            metal_offscreen_runtime_failed = true;
+            gfx_ios_diag_log("Metal enhanced pipeline failed shader=0x%08x samples=%lu; next frame will retry on direct Classic-compatible attachments", active_program->shader_id, (unsigned long)metal_active_sample_count);
+        }
         if (logged_draw_warnings++ < 12)
             gfx_ios_diag_log("Metal triangle draw skipped: no render pipeline shader=0x%08x triangles=%lu", active_program->shader_id, (unsigned long)triangle_count);
         return;
@@ -596,23 +759,28 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
             }
         }
     }
-    NSUInteger width = (NSUInteger)MAX(0, metal_view.drawableSize.width);
-    NSUInteger height = (NSUInteger)MAX(0, metal_view.drawableSize.height);
-    double scale = metal_view.contentScaleFactor;
+    NSUInteger width = metal_active_render_width;
+    NSUInteger height = metal_active_render_height;
+    /* Keep the tested Classic point-to-pixel transform byte-for-byte in
+     * behavior; scaled targets derive independent rounded X/Y ratios. */
+    double scale_x = metal_frame_uses_offscreen && metal_view.bounds.size.width > 0.0 ?
+        (double)width / metal_view.bounds.size.width : metal_view.contentScaleFactor;
+    double scale_y = metal_frame_uses_offscreen && metal_view.bounds.size.height > 0.0 ?
+        (double)height / metal_view.bounds.size.height : metal_view.contentScaleFactor;
     MTLViewport vp = {0, 0, (double)width, (double)height, 0.0, 1.0};
     if (has_viewport) {
-        double x = viewport[0] * scale, y = viewport[1] * scale;
-        double w = viewport[2] * scale, h = viewport[3] * scale;
+        double x = viewport[0] * scale_x, y = viewport[1] * scale_y;
+        double w = viewport[2] * scale_x, h = viewport[3] * scale_y;
         vp = (MTLViewport){x, height - y - h, w, h, 0.0, 1.0};
     }
     [metal_encoder setViewport:vp];
     NSInteger scissor_x = 0, scissor_y = 0;
     NSInteger scissor_width = (NSInteger)width, scissor_height = (NSInteger)height;
     if (has_scissor) {
-        scissor_x = (NSInteger)(scissor[0] * scale);
-        scissor_y = (NSInteger)(height - (scissor[1] + scissor[3]) * scale);
-        scissor_width = (NSInteger)(scissor[2] * scale);
-        scissor_height = (NSInteger)(scissor[3] * scale);
+        scissor_x = (NSInteger)(scissor[0] * scale_x);
+        scissor_y = (NSInteger)(height - (scissor[1] + scissor[3]) * scale_y);
+        scissor_width = (NSInteger)(scissor[2] * scale_x);
+        scissor_height = (NSInteger)(scissor[3] * scale_y);
         scissor_x = MIN(MAX(scissor_x, 0), (NSInteger)width);
         scissor_y = MIN(MAX(scissor_y, 0), (NSInteger)height);
         scissor_width = MIN(scissor_width, (NSInteger)width - scissor_x);
@@ -623,7 +791,7 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         [metal_encoder setScissorRect:sr];
     }
     if (log_next_draw_rects) {
-        gfx_ios_diag_log("Metal post-resume draw rectangles shader=0x%08x hasViewport=%d logicalViewport=(%d,%d %dx%d) effectiveViewport=(%.1f,%.1f %.1fx%.1f) hasScissor=%d logicalScissor=(%d,%d %dx%d) effectiveScissor=(%ld,%ld %ldx%ld) drawable=%lux%lu scale=%.2f", active_program->shader_id, has_viewport, viewport[0], viewport[1], viewport[2], viewport[3], vp.originX, vp.originY, vp.width, vp.height, has_scissor, scissor[0], scissor[1], scissor[2], scissor[3], (long)scissor_x, (long)scissor_y, (long)scissor_width, (long)scissor_height, (unsigned long)width, (unsigned long)height, scale);
+        gfx_ios_diag_log("Metal post-resume draw rectangles shader=0x%08x hasViewport=%d logicalViewport=(%d,%d %dx%d) effectiveViewport=(%.1f,%.1f %.1fx%.1f) hasScissor=%d logicalScissor=(%d,%d %dx%d) effectiveScissor=(%ld,%ld %ldx%ld) drawable=%lux%lu render=%lux%lu scale=(%.3f,%.3f)", active_program->shader_id, has_viewport, viewport[0], viewport[1], viewport[2], viewport[3], vp.originX, vp.originY, vp.width, vp.height, has_scissor, scissor[0], scissor[1], scissor[2], scissor[3], (long)scissor_x, (long)scissor_y, (long)scissor_width, (long)scissor_height, (unsigned long)metal_view.drawableSize.width, (unsigned long)metal_view.drawableSize.height, (unsigned long)width, (unsigned long)height, scale_x, scale_y);
         log_next_draw_rects = false;
     }
     int depth_test_key = state_depth_test ? 1 : 0;
@@ -639,11 +807,153 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
     if (state_decal) [metal_encoder setDepthBias:-1.0 slopeScale:0.0 clamp:0.0];
     else [metal_encoder setDepthBias:0.0 slopeScale:0.0 clamp:0.0];
     [metal_encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:triangle_count * 3];
+    ++metal_frame_draw_calls;
+    metal_frame_triangles += triangle_count;
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.draw_calls = metal_frame_draw_calls;
+        metal_performance_stats.triangles = metal_frame_triangles;
+    }
     if (!logged_first_triangle_draw) {
         logged_first_triangle_draw = true;
-        gfx_ios_diag_log("Metal first game triangle draw encoded shader=0x%08x triangles=%lu vertices=%lu drawable=%.0fx%.0f", active_program->shader_id, (unsigned long)triangle_count, (unsigned long)(triangle_count * 3), metal_view.drawableSize.width, metal_view.drawableSize.height);
+        gfx_ios_diag_log("Metal first game triangle draw encoded shader=0x%08x triangles=%lu vertices=%lu renderTarget=%lux%lu samples=%lu", active_program->shader_id, (unsigned long)triangle_count, (unsigned long)(triangle_count * 3), (unsigned long)metal_active_render_width, (unsigned long)metal_active_render_height, (unsigned long)metal_active_sample_count);
     }
     [buffer release];
+}
+
+static bool gfx_metal_create_present_pipeline(void) {
+    if (metal_present_pipeline && metal_present_sampler) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_present_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    if (!library) {
+        gfx_ios_diag_log("Metal final-pass MSL compilation failed error=%s", error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_present_vertex"];
+    id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_present_fragment"];
+    if (!vertex || !fragment) {
+        gfx_ios_diag_log("Metal final-pass shader functions missing vertex=%d fragment=%d", vertex != nil, fragment != nil);
+        [vertex release]; [fragment release]; [library release];
+        return false;
+    }
+    MTLRenderPipelineDescriptor *descriptor = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
+    descriptor.vertexFunction = vertex;
+    descriptor.fragmentFunction = fragment;
+    descriptor.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
+    descriptor.sampleCount = 1;
+    metal_present_pipeline = [metal_device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    [vertex release]; [fragment release]; [library release];
+    if (!metal_present_pipeline) {
+        gfx_ios_diag_log("Metal final-pass pipeline creation failed format=%lu error=%s", (unsigned long)metal_view.colorPixelFormat, error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    MTLSamplerDescriptor *sampler_descriptor = [[[MTLSamplerDescriptor alloc] init] autorelease];
+    sampler_descriptor.minFilter = MTLSamplerMinMagFilterLinear;
+    sampler_descriptor.magFilter = MTLSamplerMinMagFilterLinear;
+    sampler_descriptor.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    sampler_descriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    metal_present_sampler = [metal_device newSamplerStateWithDescriptor:sampler_descriptor];
+    if (!metal_present_sampler) {
+        gfx_ios_diag_log("Metal final-pass sampler creation failed");
+        [metal_present_pipeline release]; metal_present_pipeline = nil;
+        return false;
+    }
+    gfx_ios_diag_log("Metal final-pass pipeline ready format=BGRA8Unorm sampleCount=1 filter=linear");
+    return true;
+}
+
+static id<MTLTexture> gfx_metal_new_target_texture(NSUInteger width, NSUInteger height,
+                                                   NSUInteger sample_count,
+                                                   MTLPixelFormat pixel_format,
+                                                   MTLTextureUsage usage) {
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:pixel_format
+                                                                                          width:width
+                                                                                         height:height
+                                                                                      mipmapped:NO];
+    descriptor.textureType = sample_count > 1 ? MTLTextureType2DMultisample : MTLTextureType2D;
+    descriptor.sampleCount = sample_count;
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = usage;
+    return [metal_device newTextureWithDescriptor:descriptor];
+}
+
+static void gfx_metal_fallback_to_direct(const char *reason) {
+    struct GfxMetalSettings fallback = metal_settings;
+    fallback.render_scale_percent = 100u;
+    fallback.sample_count = 1u;
+    gfx_ios_diag_log("Metal offscreen rendering fallback reason=%s; active render target is drawable at 100%%/1x", reason ?: "unknown");
+    gfx_metal_apply_settings(fallback);
+}
+
+static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
+    if (!gfx_metal_settings_use_offscreen(metal_settings)) return false;
+    if (!gfx_metal_create_present_pipeline()) {
+        gfx_metal_fallback_to_direct("final pass unavailable");
+        return false;
+    }
+    struct GfxMetalTargetSize size = { 0, 0 };
+    if (!gfx_metal_target_size((uint32_t)drawable.texture.width,
+                               (uint32_t)drawable.texture.height,
+                               metal_settings.render_scale_percent, &size)) {
+        gfx_metal_fallback_to_direct("invalid drawable dimensions or scale");
+        return false;
+    }
+    NSUInteger samples = metal_settings.sample_count;
+    BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
+        metal_target_samples == samples && metal_depth_texture != nil &&
+        (samples > 1 ? (metal_multisample_color && metal_resolve_texture) : metal_color_target != nil);
+    if (target_ready) return true;
+
+    gfx_metal_release_render_targets();
+    if (samples > 1) {
+        metal_multisample_color = gfx_metal_new_target_texture(size.width, size.height, samples,
+            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget);
+        metal_resolve_texture = gfx_metal_new_target_texture(size.width, size.height, 1,
+            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+        if (metal_multisample_color) metal_multisample_color.label = @"SM64 MSAA color";
+        if (metal_resolve_texture) metal_resolve_texture.label = @"SM64 resolved color";
+    } else {
+        metal_color_target = gfx_metal_new_target_texture(size.width, size.height, 1,
+            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+        if (metal_color_target) metal_color_target.label = @"SM64 scaled color";
+    }
+    id<MTLTexture> depth = gfx_metal_depth_for_size(size.width, size.height, samples);
+    if ((samples > 1 && (!metal_multisample_color || !metal_resolve_texture)) ||
+        (samples == 1 && !metal_color_target) || !depth) {
+        gfx_metal_release_render_targets();
+        gfx_metal_fallback_to_direct("offscreen color/depth allocation failed");
+        return false;
+    }
+    metal_target_width = size.width;
+    metal_target_height = size.height;
+    metal_target_samples = samples;
+    gfx_ios_diag_log("Metal offscreen targets ready size=%lux%lu scale=%u%% samples=%lu color=%@ resolve=%@ depth=%@", (unsigned long)size.width, (unsigned long)size.height, metal_settings.render_scale_percent, (unsigned long)samples, samples > 1 ? metal_multisample_color : metal_color_target, samples > 1 ? metal_resolve_texture : nil, depth);
+    return true;
+}
+
+static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
+                                        id<MTLCommandBuffer> command) {
+    id<MTLTexture> source = metal_active_sample_count > 1 ? metal_resolve_texture : metal_color_target;
+    if (!source || !metal_present_pipeline || !metal_present_sampler) {
+        gfx_ios_diag_log("Metal final pass skipped source=%@ pipeline=%@ sampler=%@", source, metal_present_pipeline, metal_present_sampler);
+        return false;
+    }
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = drawable.texture;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+    id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+    if (!encoder) {
+        gfx_ios_diag_log("Metal final pass encoder creation failed drawable=%lux%lu", (unsigned long)drawable.texture.width, (unsigned long)drawable.texture.height);
+        return false;
+    }
+    [encoder setRenderPipelineState:metal_present_pipeline];
+    [encoder setFragmentTexture:source atIndex:0];
+    [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+    return true;
 }
 
 static void gfx_metal_init(void) {
@@ -653,16 +963,28 @@ static void gfx_metal_init(void) {
     if (!metal_queue) metal_queue = [metal_device newCommandQueue];
     if (!metal_queue) { gfx_ios_diag_log("Metal graphics API init failed: command queue unavailable"); NSLog(@"Metal initialization failed: could not create command queue"); return; }
     if (!metal_view) { gfx_ios_diag_log("Metal graphics API init warning: no MTKView was attached before renderer initialization"); NSLog(@"Metal view was not attached before renderer initialization"); }
+    gfx_metal_refresh_capabilities();
+    metal_settings = gfx_metal_read_persisted_settings();
+    metal_performance_stats.preset = metal_settings.preset;
+    metal_performance_stats.render_scale_percent = metal_settings.render_scale_percent;
+    metal_performance_stats.sample_count = metal_settings.sample_count;
+    metal_performance_stats.anisotropy = metal_settings.anisotropy;
+    gfx_metal_persist_settings(metal_settings);
+    gfx_ios_diag_log("Metal startup graphics settings preset=%s scale=%u%% samples=%ux anisotropy=%u", metal_settings.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", metal_settings.render_scale_percent, metal_settings.sample_count, metal_settings.anisotropy);
     texture_count = 0;
     for (int i = 0; i < 2; ++i) {
+        [metal_samplers[i] release];
         MTLSamplerDescriptor *desc = [[[MTLSamplerDescriptor alloc] init] autorelease];
         desc.minFilter = MTLSamplerMinMagFilterNearest;
         desc.magFilter = MTLSamplerMinMagFilterNearest;
         desc.sAddressMode = MTLSamplerAddressModeRepeat;
         desc.tAddressMode = MTLSamplerAddressModeRepeat;
         metal_samplers[i] = [metal_device newSamplerStateWithDescriptor:desc];
+        sampler_anisotropy[i] = 1;
         if (!metal_samplers[i]) gfx_ios_diag_log("Metal default sampler creation failed tile=%d", i);
     }
+    if (gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_create_present_pipeline())
+        gfx_metal_fallback_to_direct("startup final-pass pipeline failed");
     gfx_ios_diag_log("Metal graphics API init completed backend=RAPI_METAL device=%s commandQueue=%@ view=%@", metal_device.name.UTF8String ?: "unknown", metal_queue, metal_view);
 }
 static void gfx_metal_on_resize(void) {
@@ -721,17 +1043,31 @@ static void gfx_metal_start_frame(void) {
     CAMetalLayer *metal_layer = (CAMetalLayer *)metal_view.layer;
     metal_drawable = [metal_layer nextDrawable];
     MTLRenderPassDescriptor *pass = nil;
+    if (metal_offscreen_runtime_failed && gfx_metal_settings_use_offscreen(metal_settings)) {
+        metal_offscreen_runtime_failed = false;
+        gfx_metal_fallback_to_direct("enhanced pipeline or final-pass encoder failed");
+    }
+    metal_frame_uses_offscreen = metal_drawable && gfx_metal_ensure_offscreen_targets(metal_drawable);
     if (metal_drawable) {
-        id<MTLTexture> depth_texture = gfx_metal_depth_for_drawable(metal_drawable);
-        if (depth_texture) {
+        NSUInteger width = metal_frame_uses_offscreen ? metal_target_width : metal_drawable.texture.width;
+        NSUInteger height = metal_frame_uses_offscreen ? metal_target_height : metal_drawable.texture.height;
+        NSUInteger samples = metal_frame_uses_offscreen ? metal_target_samples : 1;
+        id<MTLTexture> depth_texture = gfx_metal_depth_for_size(width, height, samples);
+        id<MTLTexture> color_texture = metal_frame_uses_offscreen ?
+            (samples > 1 ? metal_multisample_color : metal_color_target) : metal_drawable.texture;
+        if (depth_texture && color_texture) {
             pass = [MTLRenderPassDescriptor renderPassDescriptor];
-            pass.colorAttachments[0].texture = metal_drawable.texture;
+            pass.colorAttachments[0].texture = color_texture;
             pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            pass.colorAttachments[0].storeAction = samples > 1 ? MTLStoreActionMultisampleResolve : MTLStoreActionStore;
+            if (samples > 1) pass.colorAttachments[0].resolveTexture = metal_resolve_texture;
             pass.depthAttachment.texture = depth_texture;
             pass.depthAttachment.loadAction = MTLLoadActionClear;
             pass.depthAttachment.storeAction = MTLStoreActionDontCare;
             pass.depthAttachment.clearDepth = 1.0;
+            metal_active_sample_count = samples;
+            metal_active_render_width = width;
+            metal_active_render_height = height;
         }
     }
     if (!metal_drawable || !pass) {
@@ -776,13 +1112,41 @@ static void gfx_metal_start_frame(void) {
         return;
     }
     ++frame_count;
+    metal_frame_draw_calls = 0;
+    metal_frame_triangles = 0;
+    double frame_start_time = CACurrentMediaTime();
+    @synchronized ([NSObject class]) {
+        if (metal_last_frame_start_time > 0.0) {
+            double interval = frame_start_time - metal_last_frame_start_time;
+            if (interval > 0.0) {
+                double fps = 1.0 / interval;
+                metal_performance_stats.estimated_fps = metal_performance_stats.estimated_fps > 0.0 ?
+                    metal_performance_stats.estimated_fps * 0.85 + fps * 0.15 : fps;
+            }
+        }
+        metal_last_frame_start_time = frame_start_time;
+        metal_performance_stats.render_width = (uint32_t)metal_active_render_width;
+        metal_performance_stats.render_height = (uint32_t)metal_active_render_height;
+        metal_performance_stats.draw_calls = 0;
+        metal_performance_stats.triangles = 0;
+        metal_performance_stats.preset = metal_settings.preset;
+        metal_performance_stats.render_scale_percent = metal_settings.render_scale_percent;
+        metal_performance_stats.sample_count = (uint32_t)metal_active_sample_count;
+        metal_performance_stats.anisotropy = metal_settings.anisotropy;
+    }
     if (frame_count <= 3 || frame_count % 120 == 0)
-        gfx_ios_diag_log("Metal game frame encoding started frame=%u drawable=%.0fx%.0f viewVisible=%d alpha=%.2f scene=%@", frame_count, metal_view.drawableSize.width, metal_view.drawableSize.height, !metal_view.hidden && metal_view.window && !metal_view.window.hidden, metal_view.alpha, metal_view.window.windowScene.session.persistentIdentifier);
+        gfx_ios_diag_log("Metal game frame encoding started frame=%u drawable=%.0fx%.0f render=%lux%lu samples=%lu offscreen=%d viewVisible=%d alpha=%.2f scene=%@", frame_count, metal_view.drawableSize.width, metal_view.drawableSize.height, (unsigned long)metal_active_render_width, (unsigned long)metal_active_render_height, (unsigned long)metal_active_sample_count, metal_frame_uses_offscreen, !metal_view.hidden && metal_view.window && !metal_view.window.hidden, metal_view.alpha, metal_view.window.windowScene.session.persistentIdentifier);
     has_viewport = has_scissor = false;
 }
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
+    if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))
+        metal_offscreen_runtime_failed = true;
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.draw_calls = metal_frame_draw_calls;
+        metal_performance_stats.triangles = metal_frame_triangles;
+    }
     id<CAMetalDrawable> submitted_drawable = metal_drawable;
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
@@ -829,6 +1193,22 @@ static void gfx_metal_end_frame(void) {
             gfx_ios_diag_log("Metal GPU command failed frame=%u status=%ld error=%s", submitted_frame, (long)completed.status, completed.error.localizedDescription.UTF8String ?: "unknown");
             NSLog(@"Metal GPU command failed frame=%u: %@", submitted_frame, completed.error.localizedDescription);
         } else {
+            double gpu_start = completed.GPUStartTime;
+            double gpu_end = completed.GPUEndTime;
+            if (gpu_start > 0.0 && gpu_end >= gpu_start) {
+                double gpu_ms = (gpu_end - gpu_start) * 1000.0;
+                @synchronized ([NSObject class]) {
+                    metal_performance_stats.gpu_frame_ms = gpu_ms;
+                    metal_performance_stats.gpu_timing_available = true;
+                }
+                if (!metal_logged_gpu_timing) {
+                    metal_logged_gpu_timing = true;
+                    gfx_ios_diag_log("Metal GPU execution timing available firstFrame=%u elapsed=%.3fms; command-buffer GPU timestamps", submitted_frame, gpu_ms);
+                }
+            } else if (!metal_logged_gpu_timing_unavailable) {
+                metal_logged_gpu_timing_unavailable = true;
+                gfx_ios_diag_log("Metal GPU execution timing unavailable commandBuffer=%p GPUStartTime=%.6f GPUEndTime=%.6f", completed, gpu_start, gpu_end);
+            }
             uint64_t completion_index;
             @synchronized ([NSObject class]) {
                 completion_index = ++completed_drawable_count;
@@ -853,10 +1233,11 @@ static void gfx_metal_end_frame(void) {
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
 static void gfx_metal_shutdown(void) {
     metal_encoder = nil; metal_drawable = nil; metal_command = nil;
-    [metal_depth_texture release]; metal_depth_texture = nil;
-    metal_depth_width = metal_depth_height = 0;
+    gfx_metal_release_render_targets();
+    [metal_present_pipeline release]; metal_present_pipeline = nil;
+    [metal_present_sampler release]; metal_present_sampler = nil;
     for (size_t i = 0; i < program_count; ++i) {
-        for (size_t j = 0; j < 16; ++j) [programs[i].pipelines[j] release];
+        for (size_t j = 0; j < METAL_PIPELINE_STATE_CAP; ++j) [programs[i].pipelines[j] release];
         [programs[i].vertex release]; [programs[i].fragment release]; [programs[i].library release];
     }
     for (size_t i = 0; i < texture_count; ++i) [textures[i].texture release];
@@ -885,6 +1266,15 @@ static void gfx_metal_shutdown(void) {
     sampler_cmt[0] = sampler_cmt[1] = 0;
     sampler_state_valid[0] = sampler_state_valid[1] = false;
     sampler_restore_count = 0;
+    sampler_anisotropy[0] = sampler_anisotropy[1] = 1;
+    metal_active_sample_count = 1;
+    metal_active_render_width = metal_active_render_height = 0;
+    metal_frame_uses_offscreen = false;
+    metal_offscreen_runtime_failed = false;
+    metal_last_frame_start_time = 0.0;
+    metal_logged_gpu_timing = metal_logged_gpu_timing_unavailable = false;
+    metal_frame_draw_calls = metal_frame_triangles = 0;
+    memset(&metal_performance_stats, 0, sizeof(metal_performance_stats));
 }
 
 struct GfxRenderingAPI gfx_metal_api = {

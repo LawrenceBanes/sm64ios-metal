@@ -105,6 +105,7 @@ void send_display_list(struct SPTask *spTask) {
 void produce_one_frame(void) {
     uint64_t frame = ++ios_diagnostic_frame_count;
     double now = CFAbsoluteTimeGetCurrent();
+    double cpu_frame_started = now;
     double tick_interval = ios_diagnostic_previous_tick_time > 0.0 ? now - ios_diagnostic_previous_tick_time : 0.0;
     ios_diagnostic_previous_tick_time = now;
     if (frame <= 3 || frame % 120 == 0)
@@ -140,6 +141,9 @@ void produce_one_frame(void) {
         gfx_end_frame();
         if (frame <= 3 || frame == 30) gfx_ios_diag_log("gfx_end_frame returned frame=%llu audioSamples=%u", (unsigned long long)frame, num_audio_samples);
     }
+#if defined(RAPI_METAL)
+    gfx_metal_set_cpu_frame_time_ms((CFAbsoluteTimeGetCurrent() - cpu_frame_started) * 1000.0);
+#endif
 }
 
 void audio_shutdown(void) {

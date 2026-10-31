@@ -4,6 +4,22 @@
 #include <stdio.h>
 #include <string.h>
 
+const char *gfx_metal_present_shader_source(void) {
+    return
+        "#include <metal_stdlib>\n"
+        "using namespace metal;\n"
+        "struct PresentOut { float4 position [[position]]; float2 uv; };\n"
+        "vertex PresentOut sm64_present_vertex(uint id [[vertex_id]]) {\n"
+        "  PresentOut o;\n"
+        "  o.position = id == 0 ? float4(-1.0, -1.0, 0.0, 1.0) : (id == 1 ? float4(3.0, -1.0, 0.0, 1.0) : float4(-1.0, 3.0, 0.0, 1.0));\n"
+        "  o.uv = id == 0 ? float2(0.0, 1.0) : (id == 1 ? float2(2.0, 1.0) : float2(0.0, -1.0));\n"
+        "  return o;\n"
+        "}\n"
+        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]]) {\n"
+        "  return image.sample(imageSampler, in.uv);\n"
+        "}\n";
+}
+
 struct ShaderWriter {
     char *out;
     size_t size;
