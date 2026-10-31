@@ -501,16 +501,16 @@ static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
     id<CAMetalDrawable> submitted_drawable = metal_drawable;
+    double drawable_width = metal_view.drawableSize.width;
+    double drawable_height = metal_view.drawableSize.height;
     [metal_command presentDrawable:submitted_drawable];
-    [submitted_drawable addPresentedHandler:^(id<CAMetalDrawable> presented_drawable) {
+    [submitted_drawable addPresentedHandler:^(id<MTLDrawable> presented_drawable) {
         if (!logged_first_presented_frame) {
             logged_first_presented_frame = true;
-            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%lux%lu", presented_drawable.presentedTime, (unsigned long)presented_drawable.texture.width, (unsigned long)presented_drawable.texture.height);
+            gfx_ios_diag_log("First SM64 game drawable presented by CoreAnimation presentedTime=%.6f size=%.0fx%.0f", presented_drawable.presentedTime, drawable_width, drawable_height);
         }
     }];
     uint32_t submitted_frame = frame_count;
-    double drawable_width = metal_view.drawableSize.width;
-    double drawable_height = metal_view.drawableSize.height;
     [metal_command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
         if (completed.status == MTLCommandBufferStatusError) {
             gfx_ios_diag_log("Metal GPU command failed frame=%u status=%ld error=%s", submitted_frame, (long)completed.status, completed.error.localizedDescription.UTF8String ?: "unknown");
