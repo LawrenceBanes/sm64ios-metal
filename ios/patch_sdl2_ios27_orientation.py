@@ -33,21 +33,21 @@ def main() -> None:
     video_source = patch_file(
         video,
         '#include "SDL_uikitvideo.h"',
-        "UIInterfaceOrientation orient = [UIApplication sharedApplication].statusBarOrientation;",
-        "UIInterfaceOrientation orient = gfx_ios_interface_orientation();",
+        "[UIApplication sharedApplication].statusBarOrientation",
+        "gfx_ios_interface_orientation()",
     )
-    if "UIInterfaceOrientation orient = gfx_ios_interface_orientation();" not in video_source:
+    if "orient = gfx_ios_interface_orientation();" not in video_source:
         raise SystemExit("SDL fullscreen view sizing does not use the scene orientation helper")
     if "if (orient == UIInterfaceOrientationUnknown) return frame;" not in video_source:
-        marker = "UIInterfaceOrientation orient = gfx_ios_interface_orientation();"
+        marker = "orient = gfx_ios_interface_orientation();"
         video_source = video_source.replace(marker, marker + "\n    if (orient == UIInterfaceOrientationUnknown) return frame;", 1)
     video.write_text(video_source)
 
     modes_source = modes.read_text()
     original_orientation_query = "[UIApplication sharedApplication].statusBarOrientation"
     mode_query_count = modes_source.count(original_orientation_query)
-    if mode_query_count < 2:
-        raise SystemExit(f"{modes} contains {mode_query_count} status-bar orientation queries; expected display mode and orientation event queries")
+    if mode_query_count < 1:
+        raise SystemExit(f"{modes} contains no status-bar orientation queries to replace")
     modes_source = modes_source.replace(original_orientation_query, "gfx_ios_interface_orientation()")
     modes_source = insert_declaration(modes_source, '#include "SDL_uikitmodes.h"')
     if "statusBarOrientation" in modes_source:

@@ -86,7 +86,8 @@ def main() -> None:
         "     * https://forums.developer.apple.com/thread/65337 */",
         "#pragma clang diagnostic push",
         '#pragma clang diagnostic ignored "-Wdeprecated-declarations"',
-        "    UIInterfaceOrientation orient = [UIApplication sharedApplication].statusBarOrientation;",
+        "    UIInterfaceOrientation orient;",
+        "    orient = [UIApplication sharedApplication].statusBarOrientation;",
         "#pragma clang diagnostic pop",
         "    BOOL landscape = UIInterfaceOrientationIsLandscape(orient) ||",
         "                    !(UIKit_GetSupportedOrientations(window) & (UIInterfaceOrientationMaskPortrait | UIInterfaceOrientationMaskPortraitUpsideDown));",
@@ -98,13 +99,13 @@ def main() -> None:
         modes_path = source_root / "SDL_uikitmodes.m"
         source_root.mkdir(parents=True)
         video_path.write_text(fixture_block)
-        modes_path.write_text('#include "SDL_uikitmodes.h"\nreturn UIInterfaceOrientationIsLandscape([UIApplication sharedApplication].statusBarOrientation);\nBOOL isLandscape = UIInterfaceOrientationIsLandscape([UIApplication sharedApplication].statusBarOrientation);\nswitch ([UIApplication sharedApplication].statusBarOrientation)\n')
+        modes_path.write_text('#include "SDL_uikitmodes.h"\nSDL_bool UIKit_IsDisplayLandscape(UIScreen *screen) { return UIInterfaceOrientationIsLandscape([UIApplication sharedApplication].statusBarOrientation); }\nvoid SDL_OnApplicationDidChangeStatusBarOrientation(void) { BOOL isLandscape = UIInterfaceOrientationIsLandscape([UIApplication sharedApplication].statusBarOrientation); switch ([UIApplication sharedApplication].statusBarOrientation) {} }\n')
         subprocess.run(["python3", str(SDL_ORIENTATION_PATCHER), temp], check=True)
         patched_video = video_path.read_text()
         patched_modes = modes_path.read_text()
         require("gfx_ios_interface_orientation()", patched_video, "video sizing patch uses scene orientation helper")
         require("if (orient == UIInterfaceOrientationUnknown) return frame;", patched_video, "patch fixture result preserves unknown orientation")
-        require("return UIInterfaceOrientationIsLandscape(gfx_ios_interface_orientation());", patched_modes, "display mode landscape patch uses scene geometry")
+        require("SDL_bool UIKit_IsDisplayLandscape(UIScreen *screen) { return UIInterfaceOrientationIsLandscape(gfx_ios_interface_orientation()); }", patched_modes, "display mode landscape patch uses scene geometry")
         require("BOOL isLandscape = UIInterfaceOrientationIsLandscape(gfx_ios_interface_orientation());", patched_modes, "display orientation-change patch uses scene geometry")
         require("switch (gfx_ios_interface_orientation())", patched_modes, "display orientation events use scene geometry")
     print("iOS landscape orientation, point/pixel scaling, root/MTK/touch layout, and scene pause checks passed")
