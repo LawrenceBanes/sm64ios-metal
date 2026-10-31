@@ -64,7 +64,7 @@ def main() -> None:
     require("BOOL inside = CGRectContainsPoint(self.hitRect, point)", UIKIT, "diagnostic overlay passes through touches outside its panel")
     require("return inside;", UIKIT, "diagnostic overlay returns false outside its panel hit rectangle")
     require("diagnosticWindow.hidden = YES", UIKIT, "temporary higher-level startup window is hidden before gameplay")
-    require("separate diagnostic UIWindow removed", UIKIT, "temporary diagnostic window removed from gameplay scene")
+    require("separate diagnostic UIWindow root released before containment", UIKIT, "temporary diagnostic window removed from gameplay scene")
     require("UIKit diagnostics overlay hit-test seq=", UIKIT, "diagnostics window/subview touch routing evidence")
     print("UIKit touch routing, transformed hit-test coordinates, controller polling, and simulation/presentation heartbeat checks passed")
 

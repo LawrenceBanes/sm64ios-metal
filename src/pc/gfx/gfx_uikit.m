@@ -334,11 +334,52 @@ static void sm64_diag_create_window(UIWindowScene *scene) {
 static void sm64_diag_attach_to_game_controller(UIViewController *host) {
     SM64DiagnosticsViewController *controller = sm64_diag_controller();
     UIWindow *diagnosticWindow = sm64DiagnosticsWindow;
-    if (!host || !controller || !diagnosticWindow || controller.parentViewController == host) return;
+    if (!host || !controller) return;
+    [controller retain];
 
-    gfx_ios_diag_log("Moving native diagnostics into SDL controller hierarchy host=%s hostWindow=%@ diagnosticWindow=%@", NSStringFromClass(host.class).UTF8String ?: "unknown", host.view.window, diagnosticWindow);
-    [host addChildViewController:controller];
+    if (controller.parentViewController == host) {
+        if (controller.view.superview != host.view) {
+            controller.view.frame = host.view.bounds;
+            controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [host.view addSubview:controller.view];
+        } else {
+            [host.view bringSubviewToFront:controller.view];
+        }
+        if (diagnosticWindow) {
+            diagnosticWindow.hidden = YES;
+            if (diagnosticWindow.rootViewController == controller)
+                diagnosticWindow.rootViewController = nil;
+            [diagnosticWindow release];
+            sm64DiagnosticsWindow = nil;
+        }
+        sm64DiagnosticsEmbeddedInSDL = YES;
+        gfx_ios_diag_log("Native diagnostics already embedded in SDL controller; repeated attachment reused host=%@ window=%@", host, host.view.window);
+        [controller release];
+        return;
+    }
+
+    if (controller.parentViewController) {
+        UIViewController *oldParent = controller.parentViewController;
+        gfx_ios_diag_log("Detaching native diagnostics from prior container=%@ before SDL host=%@", oldParent, host);
+        [controller willMoveToParentViewController:nil];
+        [controller.view removeFromSuperview];
+        [controller removeFromParentViewController];
+    }
+
+    // A window root controller is still owned by UIKit even though its
+    // parentViewController is nil. Release that root relationship before
+    // adopting the retained controller as the SDL container's child.
+    if (diagnosticWindow) {
+        gfx_ios_diag_log("Moving native diagnostics out of diagnostic UIWindow root=%@ into SDL host=%@ window=%@", diagnosticWindow.rootViewController, host, host.view.window);
+        diagnosticWindow.hidden = YES;
+        if (diagnosticWindow.rootViewController == controller) {
+            diagnosticWindow.rootViewController = nil;
+        } else if (diagnosticWindow.rootViewController) {
+            gfx_ios_diag_log("Unexpected diagnostic UIWindow root during migration root=%@ expected=%@", diagnosticWindow.rootViewController, controller);
+        }
+    }
     [controller.view removeFromSuperview];
+    [host addChildViewController:controller];
     controller.view.frame = host.view.bounds;
     controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     controller.view.opaque = NO;
@@ -348,11 +389,12 @@ static void sm64_diag_attach_to_game_controller(UIViewController *host) {
     [host.view setNeedsLayout];
     [host.view layoutIfNeeded];
 
-    diagnosticWindow.hidden = YES;
-    diagnosticWindow.rootViewController = nil;
-    [diagnosticWindow release];
-    sm64DiagnosticsWindow = nil;
-    gfx_ios_diag_log("Native diagnostics embedded as pass-through SDL subview; separate diagnostic UIWindow removed sceneWindows=%lu hostSubviews=%lu", (unsigned long)host.view.window.windowScene.windows.count, (unsigned long)host.view.subviews.count);
+    if (diagnosticWindow) {
+        [diagnosticWindow release];
+        sm64DiagnosticsWindow = nil;
+    }
+    [controller release];
+    gfx_ios_diag_log("Native diagnostics embedded as pass-through SDL subview; separate diagnostic UIWindow root released before containment sceneWindows=%lu hostSubviews=%lu", (unsigned long)host.view.window.windowScene.windows.count, (unsigned long)host.view.subviews.count);
 }
 
 void gfx_ios_diag_log(const char *format, ...) {
