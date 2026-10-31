@@ -9,6 +9,7 @@
 - Added the Enhanced render-target path: capability-checked MSAA, size-matched depth attachments, single-sample resolve, and a generated full-screen presentation shader. Target allocation or final-pass failures fall back to direct drawable rendering. The per-frame `CAMetalLayer.nextDrawable` acquisition and final present/commit remain in place.
 - Added CPU frame duration, smoothed FPS estimate, command-buffer GPU timestamps when valid, per-frame draw/triangle counts, and active resolution/settings in the Graphics panel. GPU timing is explicitly unavailable if the completed command buffer has no timestamps.
 - Local state/shader/source regression checks and `tests/run_linux_checks.sh` pass. Apple SDK compilation, the full IPA build, and A16/A18/M1 device rendering checks are pending. See [`METAL_GRAPHICS_FOUNDATION.md`](METAL_GRAPHICS_FOUNDATION.md) for target lifetime, fallbacks, performance measurement definitions, and the future post-processing/ray-tracing seams.
+- The first pushed validation run exposed a stale presentation source assertion that required every render pass to bind the drawable directly. Updated it to check both the preserved Classic drawable path and the optional Enhanced offscreen path, including the MSAA resolve action. The renderer itself was not changed by this regression-test correction; rerun Apple compilation and IPA packaging before claiming those milestones.
 
 ### Mission 48 — sampler-state mismatch correction (Build 52.1 evidence; device retest pending)
 
