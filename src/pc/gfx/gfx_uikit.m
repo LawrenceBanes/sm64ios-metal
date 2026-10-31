@@ -39,6 +39,7 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
 @property(nonatomic, strong) UIButton *toggleButton;
 @property(nonatomic, strong) MTKView *probeView;
 @property(nonatomic, strong) UIButton *probeCloseButton;
+@property(nonatomic, strong) UIButton *textureCacheButton;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
 @property(nonatomic) CGRect hitRect;
 @property(nonatomic) NSUInteger probeFrameCount;
@@ -51,6 +52,8 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
 - (void)startColorProbe;
 - (void)stopColorProbe;
 - (void)shareLog;
+- (void)updateTextureCacheDiagnosticsButton;
+- (void)toggleTextureCacheDiagnostics;
 @end
 
 @interface SM64DiagnosticsPassthroughView : UIView
@@ -140,9 +143,12 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
         [buttons.heightAnchor constraintEqualToConstant:34]
     ]];
     UIButton *share = [self buttonWithTitle:@"Share log" action:@selector(shareLog)];
-    UIButton *probe = [self buttonWithTitle:@"Metal color test" action:@selector(startColorProbe)];
+    UIButton *probe = [self buttonWithTitle:@"Metal test" action:@selector(startColorProbe)];
+    self.textureCacheButton = [self buttonWithTitle:@"Tex log: OFF" action:@selector(toggleTextureCacheDiagnostics)];
     [buttons addArrangedSubview:share];
     [buttons addArrangedSubview:probe];
+    [buttons addArrangedSubview:self.textureCacheButton];
+    [self updateTextureCacheDiagnosticsButton];
     self.recentStatus = [NSMutableArray array];
     [self appendStatus:@"Native UIKit diagnostic panel ready"];
 }
@@ -202,6 +208,20 @@ static BOOL sm64DiagnosticsEmbeddedInSDL;
     self.collapsed = !self.collapsed;
     [self.view setNeedsLayout];
     [self.view layoutIfNeeded];
+}
+
+- (void)updateTextureCacheDiagnosticsButton {
+    BOOL enabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"SM64TextureCacheDiagnosticsEnabled"];
+    [self.textureCacheButton setTitle:enabled ? @"Tex log: ON" : @"Tex log: OFF" forState:UIControlStateNormal];
+}
+
+- (void)toggleTextureCacheDiagnostics {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL enabled = ![defaults boolForKey:@"SM64TextureCacheDiagnosticsEnabled"];
+    [defaults setBool:enabled forKey:@"SM64TextureCacheDiagnosticsEnabled"];
+    [self updateTextureCacheDiagnosticsButton];
+    gfx_ios_diag_log("Texture-cache diagnostics %s", enabled ? "enabled" : "disabled");
+    [self appendStatus:enabled ? @"Texture cache logging enabled" : @"Texture cache logging disabled"];
 }
 
 - (void)shareLog {
@@ -444,6 +464,14 @@ void gfx_ios_diag_log(const char *format, ...) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [sm64_diag_controller() appendStatus:message];
     });
+}
+
+bool gfx_ios_texture_cache_diagnostics_enabled(void) {
+#if TARGET_OS_IOS
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"SM64TextureCacheDiagnosticsEnabled"];
+#else
+    return false;
+#endif
 }
 
 void gfx_ios_diag_mark_first_game_frame(void) {

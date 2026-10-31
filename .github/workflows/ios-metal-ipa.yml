@@ -1,10 +1,12 @@
 name: Native iOS Metal IPA
 
 on:
+  push:
+    branches: [ios]
   workflow_dispatch:
     inputs:
       asset_bundle_release_tag:
-        description: Temporary private release tag containing sm64-assets.tar.gz and sm64-assets.sha256 (leave empty to use the configured HTTPS URL secrets)
+        description: Temporary private release tag containing sm64-assets.tar.gz and sm64-assets.sha256 (leave empty to use configured HTTPS URL secrets; [build-ipa] pushes use the current draft bundle)
         required: false
         type: string
 
@@ -29,7 +31,7 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/patch_sdl2_ios27_orientation.py
+          python3 -m py_compile ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/patch_sdl2_ios27_orientation.py
           bash -n ios/build_sdl2_ios.sh
           python3 ios/test_scene_lifecycle.py
           python3 ios/test_ios_diagnostics.py
@@ -38,10 +40,14 @@ jobs:
           python3 ios/test_ios_scene_startup.py
           python3 ios/test_ios_landscape_geometry.py
           python3 ios/test_ios_touch_pipeline.py
+          python3 ios/test_texture_cache_reset.py
           (cd ios && python3 -m unittest -v test_asset_checksum.py test_ipa_validation.py)
 
   ios-arm64-ipa:
-    if: github.repository == 'LawrenceBanes/sm64ios-metal' && github.event.repository.private == true
+    if: >-
+      github.repository == 'LawrenceBanes/sm64ios-metal' &&
+      github.event.repository.private == true &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
     runs-on: xcode-27
     timeout-minutes: 90
     permissions:
@@ -86,6 +92,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" && -z "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
+            ASSET_BUNDLE_RELEASE_TAG=sm64-assets-20261031-04
+            echo "ASSET_BUNDLE_RELEASE_TAG=$ASSET_BUNDLE_RELEASE_TAG" >> "$GITHUB_ENV"
+            echo "Using the existing temporary private asset draft for this explicitly marked IPA build."
+          fi
           if [[ -n "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
             [[ "$ASSET_BUNDLE_RELEASE_TAG" =~ ^sm64-assets-[A-Za-z0-9._-]+$ ]] || { echo "Temporary asset release tag must start with sm64-assets-." >&2; exit 1; }
             release_metadata=$(gh release view "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body)

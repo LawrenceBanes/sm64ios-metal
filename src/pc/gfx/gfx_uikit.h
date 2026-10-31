@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include "gfx_ios_diagnostics.h"
 
 #import "../../ios/native_ui_controller.h"
 #if TARGET_OS_IOS
@@ -35,6 +36,7 @@ void gfx_uikit_init(UIViewController *viewControllerPointer);
 UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen);
 UIInterfaceOrientation gfx_ios_interface_orientation(void);
 void gfx_ios_diag_log(const char *format, ...);
+bool gfx_ios_texture_cache_diagnostics_enabled(void);
 void gfx_ios_diag_mark_first_game_frame(void);
 void setup_external_screen();
 void teardown_external_screen();
