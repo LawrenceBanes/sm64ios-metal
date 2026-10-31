@@ -39,6 +39,8 @@ struct MetalTexture {
     int width;
     int height;
     uint32_t generation;
+    bool sampler_state_valid;
+    struct GfxMetalSamplerState sampler_state;
 };
 
 struct MetalFragmentParams {
@@ -87,6 +89,8 @@ static id<MTLSamplerState> metal_samplers[2];
 static bool sampler_linear[2];
 static uint32_t sampler_cms[2];
 static uint32_t sampler_cmt[2];
+static bool sampler_state_valid[2];
+static uint64_t sampler_restore_count;
 static struct MetalProgram *active_program;
 static bool state_depth_test = true;
 static bool state_depth_write = true;
@@ -245,6 +249,9 @@ static void gfx_metal_load_shader(struct ShaderProgram *program) {
     active_program = (struct MetalProgram *)program;
 }
 
+static void gfx_metal_apply_sampler_parameters(int sampler, bool linear,
+                                               uint32_t cms, uint32_t cmt);
+
 static struct MetalProgram *metal_program_for(uint32_t shader_id);
 
 static struct ShaderProgram *gfx_metal_create_and_load_new_shader(uint32_t shader_id) {
@@ -279,6 +286,29 @@ static void gfx_metal_select_texture(int tile, uint32_t texture_id) {
     if (tile < 0 || tile > 1 || texture_id == 0 || texture_id > texture_count) return;
     current_texture = &textures[texture_id - 1];
     bound_textures[tile] = current_texture;
+    /* gfx_pc caches sampler settings with each texture node, while Metal
+     * sampler objects belong to tile slots. A texture-cache hit can therefore
+     * skip set_sampler_parameters even though another texture changed this
+     * slot in the meantime. Restore the selected texture's state here. */
+    if (current_texture->sampler_state_valid) {
+        struct GfxMetalSamplerState current = {
+            sampler_linear[tile], sampler_cms[tile], sampler_cmt[tile]
+        };
+        struct GfxMetalSamplerState desired = current_texture->sampler_state;
+        if (!gfx_metal_sampler_state_matches(sampler_state_valid[tile], current, desired)) {
+            uint64_t restore = ++sampler_restore_count;
+            if (gfx_metal_diagnostics_enabled() && (restore <= 16 || restore % 128 == 0)) {
+                gfx_ios_diag_log("Metal sampler restored on texture bind tile=%d logicalId=%lu previousValid=%d previous=(linear=%d,cms=0x%x,cmt=0x%x) textureState=(linear=%d,cms=0x%x,cmt=0x%x) restoreCount=%llu",
+                                 tile, (unsigned long)texture_id,
+                                 sampler_state_valid[tile], sampler_linear[tile],
+                                 sampler_cms[tile], sampler_cmt[tile],
+                                 desired.linear, desired.cms, desired.cmt,
+                                 (unsigned long long)restore);
+            }
+            gfx_metal_apply_sampler_parameters(tile, desired.linear,
+                                               desired.cms, desired.cmt);
+        }
+    }
 }
 
 static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height) {
@@ -329,24 +359,46 @@ static void gfx_metal_upload_texture(const uint8_t *rgba, int width, int height)
         gfx_ios_diag_log("Metal texture uploaded id=%lu size=%dx%d pixelFormat=RGBA8Unorm totalTextures=%lu", (unsigned long)(t - textures + 1), width, height, (unsigned long)texture_count);
 }
 
-static void gfx_metal_set_sampler_parameters(int sampler, bool linear, uint32_t cms, uint32_t cmt) {
+static void gfx_metal_apply_sampler_parameters(int sampler, bool linear,
+                                               uint32_t cms, uint32_t cmt) {
     if (sampler < 0 || sampler > 1 || !metal_device) return;
+    struct GfxMetalSamplerState current = {
+        sampler_linear[sampler], sampler_cms[sampler], sampler_cmt[sampler]
+    };
+    struct GfxMetalSamplerState desired = { linear, cms, cmt };
+    if (gfx_metal_sampler_state_matches(sampler_state_valid[sampler], current, desired)) return;
+
     MTLSamplerDescriptor *desc = [[[MTLSamplerDescriptor alloc] init] autorelease];
-    [metal_samplers[sampler] release];
-    sampler_linear[sampler] = linear;
     desc.minFilter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     desc.magFilter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     enum GfxSamplerAddressMode s_mode = gfx_metal_sampler_address_mode(cms);
     enum GfxSamplerAddressMode t_mode = gfx_metal_sampler_address_mode(cmt);
-    sampler_cms[sampler] = cms;
-    sampler_cmt[sampler] = cmt;
     desc.sAddressMode = s_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
                         (s_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
     desc.tAddressMode = t_mode == GFX_SAMPLER_CLAMP ? MTLSamplerAddressModeClampToEdge :
                         (t_mode == GFX_SAMPLER_MIRROR ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeRepeat);
-    metal_samplers[sampler] = [metal_device newSamplerStateWithDescriptor:desc];
-    if (!metal_samplers[sampler])
+    id<MTLSamplerState> new_sampler = [metal_device newSamplerStateWithDescriptor:desc];
+    if (!new_sampler) {
         NSLog(@"Metal sampler creation failed for tile=%d linear=%d address=(%u,%u)", sampler, linear, cms, cmt);
+        return;
+    }
+    [metal_samplers[sampler] release];
+    metal_samplers[sampler] = new_sampler;
+    sampler_linear[sampler] = linear;
+    sampler_cms[sampler] = cms;
+    sampler_cmt[sampler] = cmt;
+    sampler_state_valid[sampler] = true;
+}
+
+static void gfx_metal_set_sampler_parameters(int sampler, bool linear, uint32_t cms, uint32_t cmt) {
+    if (sampler < 0 || sampler > 1 || !metal_device) return;
+    if (bound_textures[sampler]) {
+        bound_textures[sampler]->sampler_state.linear = linear;
+        bound_textures[sampler]->sampler_state.cms = cms;
+        bound_textures[sampler]->sampler_state.cmt = cmt;
+        bound_textures[sampler]->sampler_state_valid = true;
+    }
+    gfx_metal_apply_sampler_parameters(sampler, linear, cms, cmt);
 }
 
 static void gfx_metal_set_depth_test(bool enabled) { state_depth_test = enabled; }
@@ -829,6 +881,10 @@ static void gfx_metal_shutdown(void) {
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;
     sampler_linear[0] = sampler_linear[1] = false;
+    sampler_cms[0] = sampler_cms[1] = 0;
+    sampler_cmt[0] = sampler_cmt[1] = 0;
+    sampler_state_valid[0] = sampler_state_valid[1] = false;
+    sampler_restore_count = 0;
 }
 
 struct GfxRenderingAPI gfx_metal_api = {

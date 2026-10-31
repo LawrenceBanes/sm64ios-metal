@@ -16,6 +16,8 @@ def main() -> None:
     uikit = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
     shader = (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text()
     metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
+    metal_state = (ROOT / "src/pc/gfx/gfx_metal_state.c").read_text()
+    metal_state_header = (ROOT / "src/pc/gfx/gfx_metal_state.h").read_text()
     pc = (ROOT / "src/pc/gfx/gfx_pc.c").read_text()
     stub = (ROOT / "tests/metal_backend_diagnostics_stub.m").read_text()
 
@@ -77,6 +79,29 @@ def main() -> None:
         require(token in metal, f"missing bounded Metal snapshot field: {token}")
     require("CAMetalLayer *metal_layer" in metal and "[metal_layer nextDrawable]" in metal,
             "diagnostic changes must preserve per-frame layer drawable acquisition")
+
+    require("struct GfxMetalSamplerState" in metal_state_header and
+            "gfx_metal_sampler_state_matches" in metal_state,
+            "sampler binding must have a host-testable state comparison")
+    select = metal.split("static void gfx_metal_select_texture", 1)[1].split(
+        "static void gfx_metal_upload_texture", 1)[0]
+    require("current_texture->sampler_state_valid" in select and
+            "gfx_metal_apply_sampler_parameters(tile, desired.linear" in select,
+            "texture selection must restore its sampler when the Metal slot differs")
+    set_sampler = metal.split("static void gfx_metal_set_sampler_parameters", 1)[1].split(
+        "static void gfx_metal_set_depth_test", 1)[0]
+    for token in (
+        "bound_textures[sampler]->sampler_state.linear = linear",
+        "bound_textures[sampler]->sampler_state.cms = cms",
+        "bound_textures[sampler]->sampler_state.cmt = cmt",
+        "gfx_metal_apply_sampler_parameters(sampler, linear, cms, cmt)",
+    ):
+        require(token in set_sampler,
+                f"sampler updates must be retained with the selected texture: {token}")
+    shutdown = metal.split("static void gfx_metal_shutdown", 1)[1].split(
+        "struct GfxRenderingAPI gfx_metal_api", 1)[0]
+    require("sampler_state_valid[0] = sampler_state_valid[1] = false" in shutdown,
+            "renderer shutdown must invalidate tile sampler state before a later initialization")
 
     require("gfx_texture_cache_high_water" in pc,
             "source renderer must record texture cache high-water mark")
