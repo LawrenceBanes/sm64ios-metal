@@ -2,6 +2,7 @@
 #define GFX_METAL_VERTEX_LAYOUT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "gfx_cc.h"
@@ -63,6 +64,16 @@ static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features
     layout->attribute_count = count;
     layout->stride = offset;
     return true;
+}
+
+static inline bool gfx_metal_vertex_buffer_size_matches(const struct GfxMetalVertexLayout *layout,
+                                                         size_t float_count,
+                                                         size_t triangle_count) {
+    if (!layout || layout->stride == 0 ||
+        float_count > SIZE_MAX / sizeof(float) ||
+        triangle_count > SIZE_MAX / (3u * layout->stride))
+        return false;
+    return float_count * sizeof(float) == triangle_count * 3u * layout->stride;
 }
 
 #endif

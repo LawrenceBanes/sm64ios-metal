@@ -292,7 +292,7 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     NSUInteger key = gfx_metal_pipeline_state_key(state_depth_test, state_depth_write,
                                                    state_blend, state_decal);
     if (p->pipelines[key]) return p->pipelines[key];
-    struct GfxMetalVertexLayout vertex_layout;
+    struct GfxMetalVertexLayout vertex_layout = {0};
     if (!gfx_metal_get_vertex_layout(&p->features, &vertex_layout)) {
         gfx_ios_diag_log("Metal vertex layout rejected shader=0x%08x inputs=%d", p->shader_id, p->features.num_inputs);
         return nil;
@@ -345,6 +345,13 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
     if (!metal_encoder || !active_program || !data) {
         if (logged_draw_warnings++ < 12)
             gfx_ios_diag_log("Metal triangle draw skipped encoder=%s shader=%s data=%s triangles=%lu", metal_encoder ? "ready" : "nil", active_program ? "selected" : "nil", data ? "ready" : "nil", (unsigned long)triangle_count);
+        return;
+    }
+    struct GfxMetalVertexLayout vertex_layout = {0};
+    if (!gfx_metal_get_vertex_layout(&active_program->features, &vertex_layout) ||
+        !gfx_metal_vertex_buffer_size_matches(&vertex_layout, float_count, triangle_count)) {
+        if (logged_draw_warnings++ < 12)
+            gfx_ios_diag_log("Metal triangle draw skipped: packed vertex buffer does not match shader layout shader=0x%08x floats=%lu triangles=%lu stride=%u", active_program->shader_id, (unsigned long)float_count, (unsigned long)triangle_count, vertex_layout.stride);
         return;
     }
     id<MTLRenderPipelineState> pipeline = pipeline_for(active_program);

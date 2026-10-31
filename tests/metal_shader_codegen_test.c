@@ -33,6 +33,12 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
         }
     }
     assert(expected_offset == layout.stride);
+    assert(layout.stride % sizeof(float) == 0);
+    assert(gfx_metal_vertex_buffer_size_matches(&layout,
+        (size_t)2 * 3 * layout.stride / sizeof(float), 2));
+    assert(!gfx_metal_vertex_buffer_size_matches(&layout,
+        (size_t)2 * 3 * layout.stride / sizeof(float) + 1, 2));
+    assert(!gfx_metal_vertex_buffer_size_matches(&layout, 0, 1));
     while ((p = strstr(p, "[[attribute(")) != NULL) {
         int actual = -1;
         assert(sscanf(p, "[[attribute(%d)", &actual) == 1);
