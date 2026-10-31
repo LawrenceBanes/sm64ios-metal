@@ -36,6 +36,7 @@ def main() -> None:
     require('MTLCommandBufferStatusError', METAL, "GPU command completion errors")
     require('metal_view.frame = host_view.bounds', METAL, "MTKView frame reconciliation after resume")
     require('metal_view.drawableSize = expected_drawable', METAL, "MTKView drawable reconciliation after resume")
+    require('Metal post-resume draw rectangles', METAL, "effective viewport/scissor checkpoint after resume")
     require('SDL foreground window logical size=', SDL, "SDL foreground dimension diagnostic")
     resize_call = SDL.find('if (gfx_metal_api.on_resize) gfx_metal_api.on_resize();', SDL.find('case SDL_APP_DIDENTERFOREGROUND:'))
     unpause = SDL.find('paused_by_menu = false;', SDL.find('case SDL_APP_DIDENTERFOREGROUND:'))

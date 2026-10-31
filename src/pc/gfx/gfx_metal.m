@@ -56,6 +56,7 @@ static size_t texture_count;
 static uint32_t frame_count;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
+static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
 static uint32_t logged_pipeline_failures;
 static uint32_t logged_pipeline_successes;
@@ -398,17 +399,25 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         vp = (MTLViewport){x, height - y - h, w, h, 0.0, 1.0};
     }
     [metal_encoder setViewport:vp];
+    NSInteger scissor_x = 0, scissor_y = 0;
+    NSInteger scissor_width = (NSInteger)width, scissor_height = (NSInteger)height;
     if (has_scissor) {
-        NSInteger sx = (NSInteger)(scissor[0] * scale);
-        NSInteger sy = (NSInteger)(height - (scissor[1] + scissor[3]) * scale);
-        NSInteger sw = (NSInteger)(scissor[2] * scale), sh = (NSInteger)(scissor[3] * scale);
-        sx = MIN(MAX(sx, 0), (NSInteger)width);
-        sy = MIN(MAX(sy, 0), (NSInteger)height);
-        sw = MIN(sw, (NSInteger)width - sx); sh = MIN(sh, (NSInteger)height - sy);
-        if (sw < 0) sw = 0;
-        if (sh < 0) sh = 0;
-        MTLScissorRect sr = {(NSUInteger)sx, (NSUInteger)sy, (NSUInteger)sw, (NSUInteger)sh};
+        scissor_x = (NSInteger)(scissor[0] * scale);
+        scissor_y = (NSInteger)(height - (scissor[1] + scissor[3]) * scale);
+        scissor_width = (NSInteger)(scissor[2] * scale);
+        scissor_height = (NSInteger)(scissor[3] * scale);
+        scissor_x = MIN(MAX(scissor_x, 0), (NSInteger)width);
+        scissor_y = MIN(MAX(scissor_y, 0), (NSInteger)height);
+        scissor_width = MIN(scissor_width, (NSInteger)width - scissor_x);
+        scissor_height = MIN(scissor_height, (NSInteger)height - scissor_y);
+        if (scissor_width < 0) scissor_width = 0;
+        if (scissor_height < 0) scissor_height = 0;
+        MTLScissorRect sr = {(NSUInteger)scissor_x, (NSUInteger)scissor_y, (NSUInteger)scissor_width, (NSUInteger)scissor_height};
         [metal_encoder setScissorRect:sr];
+    }
+    if (log_next_draw_rects) {
+        gfx_ios_diag_log("Metal post-resume draw rectangles shader=0x%08x hasViewport=%d logicalViewport=(%d,%d %dx%d) effectiveViewport=(%.1f,%.1f %.1fx%.1f) hasScissor=%d logicalScissor=(%d,%d %dx%d) effectiveScissor=(%ld,%ld %ldx%ld) drawable=%lux%lu scale=%.2f", active_program->shader_id, has_viewport, viewport[0], viewport[1], viewport[2], viewport[3], vp.originX, vp.originY, vp.width, vp.height, has_scissor, scissor[0], scissor[1], scissor[2], scissor[3], (long)scissor_x, (long)scissor_y, (long)scissor_width, (long)scissor_height, (unsigned long)width, (unsigned long)height, scale);
+        log_next_draw_rects = false;
     }
     int depth_test_key = state_depth_test ? 1 : 0;
     int depth_write_key = state_depth_write ? 1 : 0;
@@ -447,6 +456,7 @@ static void gfx_metal_init(void) {
 }
 static void gfx_metal_on_resize(void) {
     if (!metal_view) return;
+    log_next_draw_rects = true;
     UIView *host_view = metal_view.superview;
     if (host_view) {
         [host_view setNeedsLayout];
@@ -575,6 +585,7 @@ static void gfx_metal_shutdown(void) {
     logged_draw_warnings = 0;
     logged_first_completed_frame = false;
     logged_first_presented_frame = false;
+    log_next_draw_rects = false;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;
     sampler_linear[0] = sampler_linear[1] = false;
