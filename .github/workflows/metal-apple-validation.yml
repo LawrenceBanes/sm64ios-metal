@@ -33,6 +33,8 @@ jobs:
           tests/run_scene_capture_test.sh
           tests/run_scene_bvh_test.sh
           tests/check_metal_project_wiring.sh
+          python3 ios/test_scene_lifecycle.py
+          python3 ios/test_ios_landscape_geometry.py
       - name: Compile iOS Metal backend and generated MSL
         env:
           METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/metal-apple-validation

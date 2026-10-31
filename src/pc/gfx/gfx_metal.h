@@ -9,6 +9,7 @@ extern struct GfxRenderingAPI gfx_metal_api;
 #import <UIKit/UIKit.h>
 bool gfx_metal_attach_to_view_controller(UIViewController *view_controller);
 bool gfx_metal_surface_is_ready(void);
+void gfx_metal_set_scene_active(bool active);
 #endif
 
 #endif

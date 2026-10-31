@@ -56,10 +56,13 @@ static size_t program_count;
 static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
 static uint32_t frame_count;
+static bool metal_scene_active;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
+static bool logged_first_triangle_draw;
 static bool log_next_draw_rects;
 static uint32_t drawable_unavailable_count;
+static uint32_t inactive_scene_frame_count;
 static uint32_t logged_pipeline_failures;
 static uint32_t logged_pipeline_successes;
 static uint32_t logged_draw_warnings;
@@ -78,6 +81,8 @@ static bool has_viewport;
 static bool has_scissor;
 static id<MTLDepthStencilState> depth_states[2][2];
 
+static void gfx_metal_on_resize(void);
+
 static bool gfx_metal_z_is_from_0_to_1(void) { return true; }
 
 bool gfx_metal_surface_is_ready(void) {
@@ -87,6 +92,23 @@ bool gfx_metal_surface_is_ready(void) {
     }
     CGSize drawable = metal_view.drawableSize;
     return drawable.width > 0.0 && drawable.height > 0.0;
+}
+
+void gfx_metal_set_scene_active(bool active) {
+    bool changed = metal_scene_active != active;
+    metal_scene_active = active;
+    if (changed) {
+        gfx_ios_diag_log("Metal scene render state=%s appState=%ld scene=%@ sceneState=%ld", active ? "active" : "inactive", (long)UIApplication.sharedApplication.applicationState, metal_view.window.windowScene.session.persistentIdentifier, (long)metal_view.window.windowScene.activationState);
+    }
+    if (active && metal_view) {
+        gfx_metal_on_resize();
+    }
+}
+
+static bool gfx_metal_scene_can_render(void) {
+    UIWindowScene *scene = metal_view.window.windowScene;
+    return metal_scene_active && UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
+           scene && scene.activationState == UISceneActivationStateForegroundActive;
 }
 
 bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
@@ -141,7 +163,11 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     [metal_view setNeedsLayout];
     [metal_view layoutIfNeeded];
     CGSize drawable = metal_view.drawableSize;
+    UIWindowScene *scene = metal_view.window.windowScene;
+    metal_scene_active = scene && scene.activationState == UISceneActivationStateForegroundActive &&
+                         UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
     gfx_ios_diag_log("Game Metal MTKView attached to SDL scene window frame=(%.0f,%.0f %.0fx%.0f) drawable=%.0fx%.0f scale=%.2f color=BGRA8Unorm depth=Depth32Float stencil=None parent=%@ window=%@ scene=%@ hidden=%d alpha=%.2f parentSubviewCount=%lu", metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor, metal_view.superview, metal_view.window, metal_view.window.windowScene.session.persistentIdentifier, metal_view.hidden, metal_view.alpha, (unsigned long)view_controller.view.subviews.count);
+    gfx_ios_diag_log("Metal scene geometry attached sceneBounds=(%.0fx%.0f) windowBounds=(%.0fx%.0f) rootBounds=(%.0fx%.0f) MTKViewBounds=(%.0fx%.0f) drawable=(%.0fx%.0f) scale=%.2f", scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, view_controller.view.bounds.size.width, view_controller.view.bounds.size.height, metal_view.bounds.size.width, metal_view.bounds.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor);
     bool ready = gfx_metal_surface_is_ready();
     gfx_ios_diag_log("Game Metal surface readiness=%s drawable=%.0fx%.0f attachedToScene=%d", ready ? "ready" : "not-ready", drawable.width, drawable.height, metal_view.window.windowScene != nil);
     return ready;
@@ -342,6 +368,7 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
 
 static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t triangle_count) {
     if (!triangle_count) return;
+    if (!gfx_metal_scene_can_render()) return;
     if (!metal_encoder || !active_program || !data) {
         if (logged_draw_warnings++ < 12)
             gfx_ios_diag_log("Metal triangle draw skipped encoder=%s shader=%s data=%s triangles=%lu", metal_encoder ? "ready" : "nil", active_program ? "selected" : "nil", data ? "ready" : "nil", (unsigned long)triangle_count);
@@ -442,6 +469,10 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
     if (state_decal) [metal_encoder setDepthBias:-1.0 slopeScale:0.0 clamp:0.0];
     else [metal_encoder setDepthBias:0.0 slopeScale:0.0 clamp:0.0];
     [metal_encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:triangle_count * 3];
+    if (!logged_first_triangle_draw) {
+        logged_first_triangle_draw = true;
+        gfx_ios_diag_log("Metal first game triangle draw encoded shader=0x%08x triangles=%lu vertices=%lu drawable=%.0fx%.0f", active_program->shader_id, (unsigned long)triangle_count, (unsigned long)(triangle_count * 3), metal_view.drawableSize.width, metal_view.drawableSize.height);
+    }
     [buffer release];
 }
 
@@ -501,6 +532,12 @@ static void gfx_metal_start_frame(void) {
         if (drawable_unavailable_count++ < 4) gfx_ios_diag_log("Metal frame start unavailable view=%@ queue=%@", metal_view, metal_queue);
         return;
     }
+    if (!gfx_metal_scene_can_render()) {
+        if (inactive_scene_frame_count++ < 3)
+            gfx_ios_diag_log("Metal frame withheld while UIKit scene is inactive sceneActive=%d appState=%ld sceneState=%ld", metal_scene_active, (long)UIApplication.sharedApplication.applicationState, (long)metal_view.window.windowScene.activationState);
+        return;
+    }
+    inactive_scene_frame_count = 0;
     if (!gfx_metal_surface_is_ready()) {
         uint32_t unavailable = ++drawable_unavailable_count;
         if (unavailable <= 5 || unavailable % 60 == 0)
@@ -597,6 +634,9 @@ static void gfx_metal_shutdown(void) {
     logged_draw_warnings = 0;
     logged_first_completed_frame = false;
     logged_first_presented_frame = false;
+    logged_first_triangle_draw = false;
+    metal_scene_active = false;
+    inactive_scene_frame_count = 0;
     log_next_draw_rects = false;
     memset(bound_textures, 0, sizeof(bound_textures)); current_texture = NULL; active_program = NULL;
     metal_samplers[0] = nil; metal_samplers[1] = nil;

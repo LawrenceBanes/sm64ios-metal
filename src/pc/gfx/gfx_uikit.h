@@ -33,6 +33,7 @@ UIViewController *gameViewController;
 
 void gfx_uikit_init(UIViewController *viewControllerPointer);
 UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen);
+UIInterfaceOrientation gfx_ios_interface_orientation(void);
 void gfx_ios_diag_log(const char *format, ...);
 void gfx_ios_diag_mark_first_game_frame(void);
 void setup_external_screen();

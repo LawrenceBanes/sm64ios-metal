@@ -10,6 +10,7 @@ INFO_PLIST = ROOT / "sm64ios/sm64ios/Info.plist"
 SCENE_SOURCE = ROOT / "src/pc/gfx/gfx_uikit.m"
 GFX_HEADER = ROOT / "src/pc/gfx/gfx_uikit.h"
 SDL_PATCH = ROOT / "ios/patches/SDL2-2.32.10-uikit-scenes.patch"
+SDL_ORIENTATION_PATCHER = ROOT / "ios/patch_sdl2_ios27_orientation.py"
 SDL_BUILDER = ROOT / "ios/build_sdl2_ios.sh"
 
 
@@ -53,6 +54,7 @@ def main() -> None:
             raise SystemExit(f"UIKit host behavior unexpectedly missing: {preserved}")
 
     patch = SDL_PATCH.read_text()
+    orientation_patcher = SDL_ORIENTATION_PATCHER.read_text()
     if "initWithWindowScene:windowScene" not in patch or "gfx_uikit_window_scene_for_screen" not in patch:
         raise SystemExit("SDL2 UIKit patch must create its primary window from the connected scene")
     if "} else\n+#endif\n+        {" not in patch:
@@ -64,6 +66,8 @@ def main() -> None:
         raise SystemExit("pinned SDL2 build must verify its existing external-screen handling")
     if "startSDLMainWhenSceneIsReady" not in patch or "SM64WindowSceneDidConnectNotification" not in patch:
         raise SystemExit("SDL2 must defer its SDL_main call until the application scene connects")
+    if "gfx_ios_interface_orientation()" not in orientation_patcher or "UIInterfaceOrientationUnknown" not in orientation_patcher:
+        raise SystemExit("SDL2 iOS 27 sizing must use scene geometry and preserve the frame when orientation is unknown")
     for startup_check in (
         'selector:@selector(applicationWindowSceneDidConnect:)',
         "if (forwardedMain)",

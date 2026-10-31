@@ -13,6 +13,9 @@
 #if TARGET_OS_IOS
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
+#if defined(RAPI_METAL)
+#import "gfx_metal.h"
+#endif
 #endif
 
 UIViewController *gameViewController;
@@ -26,6 +29,7 @@ static NSString *sm64DiagnosticsPath;
 static NSDateFormatter *sm64DiagnosticsDateFormatter;
 static __weak id sm64DiagnosticsController;
 static BOOL sm64DiagnosticsLaunchMarkerWritten;
+static BOOL sm64OrientationSourceLogged;
 
 @interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate>
 @property(nonatomic, strong) UIView *panel;
@@ -394,10 +398,16 @@ void gfx_ios_diag_mark_first_game_frame(void) {
 
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     gfx_ios_diag_log("UIKit scene became active scene=%@ state=%ld", scene.session.persistentIdentifier, (long)scene.activationState);
+#if defined(RAPI_METAL)
+    gfx_metal_set_scene_active(true);
+#endif
 }
 
 - (void)sceneWillResignActive:(UIScene *)scene {
     gfx_ios_diag_log("UIKit scene will resign active scene=%@ state=%ld", scene.session.persistentIdentifier, (long)scene.activationState);
+#if defined(RAPI_METAL)
+    gfx_metal_set_scene_active(false);
+#endif
 }
 
 - (void)sceneWillEnterForeground:(UIScene *)scene {
@@ -406,6 +416,9 @@ void gfx_ios_diag_mark_first_game_frame(void) {
 
 - (void)sceneDidEnterBackground:(UIScene *)scene {
     gfx_ios_diag_log("UIKit scene entered background scene=%@", scene.session.persistentIdentifier);
+#if defined(RAPI_METAL)
+    gfx_metal_set_scene_active(false);
+#endif
 }
 
 - (void)sceneDidDisconnect:(UIScene *)scene {
@@ -440,6 +453,23 @@ UIWindowScene *gfx_uikit_window_scene_for_screen(UIScreen *screen) {
     }
     gfx_ios_diag_log("SDL UIKit scene lookup found no active scene for screen=%@ connectedScenes=%lu", screen, (unsigned long)UIApplication.sharedApplication.connectedScenes.count);
     return nil;
+}
+
+UIInterfaceOrientation gfx_ios_interface_orientation(void) {
+    if (@available(iOS 27.0, *)) {
+        UIWindowScene *scene = gfx_uikit_window_scene_for_screen(UIScreen.mainScreen);
+        UIInterfaceOrientation orientation = scene ? scene.effectiveGeometry.interfaceOrientation : UIInterfaceOrientationUnknown;
+        if (!sm64OrientationSourceLogged) {
+            sm64OrientationSourceLogged = YES;
+            gfx_ios_diag_log("UIKit orientation source=UIWindowScene.effectiveGeometry orientation=%ld scene=%@ bounds=(%.0fx%.0f)", (long)orientation, scene.session.persistentIdentifier, scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height);
+        }
+        return orientation;
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIInterfaceOrientation orientation = UIApplication.sharedApplication.statusBarOrientation;
+#pragma clang diagnostic pop
+    return orientation;
 }
 #else
 void gfx_ios_diag_log(const char *format, ...) {
@@ -485,6 +515,8 @@ void gfx_uikit_init(UIViewController *viewControllerPointer) {
     }
     UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"Main" bundle:nil];
     tcvc = [[storyboard instantiateViewControllerWithIdentifier:@"TouchControlsViewController"] retain];
+    tcvc.view.frame = gameViewController.view.bounds;
+    tcvc.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     
     if([[UIScreen screens] count] > 1) {
         setup_external_screen();
