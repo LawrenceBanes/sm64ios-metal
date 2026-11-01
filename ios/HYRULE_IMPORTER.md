@@ -1,8 +1,14 @@
 # Hyrule Field importer: first implementation boundary
 
-## Current blocker
+## First real archive pass
 
-No `oot.o2r` file was found under `/home/larry`, `/tmp`, `/mnt/data`, `/mnt`, `/media`, or Downloads. The importer takes the archive path directly, so it can be run as soon as the file is attached or its local path is supplied. No ROM-derived data has been added to this repository.
+The supplied archive is available locally at `/home/larry/Downloads/oot.o2r` (32 MiB; SHA-256 `e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`). It passes ZIP CRC validation and contains 38,390 file entries. The selected `scenes/shared/spot00_scene` prefix contains 591 entries: 445 display lists, 52 textures, 38 arrays, 24 Scene resources, 15 cutscenes, 5 paths, 1 collision header, and 11 headerless/short files.
+
+The canonical Hyrule Field root is `scenes/shared/spot00_scene/spot00_scene`; the folder also contains room and alternate-header Scene resources. Root selection now prefers that canonical path rather than an arbitrary sorted entry. The importer fully parsed all 13 commands in the root and all 24 Scene resources (including room and alternate-header metadata); its scene graph has 74 referenced resources, all present in the archive. The `SetCutscenes` command's payload is a length-prefixed resource path, consistent with Shipwright's [SetCutscenesFactory](https://github.com/HarbourMasters/Shipwright/blob/develop/soh/soh/resource/importer/scenecommand/SetCutscenesFactory.cpp).
+
+The root's CollisionHeader v0 was decoded to 1,162 vertices and 1,579 collision triangles. All 18 root start positions lie over an upward-facing collision triangle within the importer check's vertical range. All collision triangles are nondegenerate, and all 1,579 computed triangle normals agree with the archived collision normals; the declared collision bounds contain the vertices. The output is a collision debug OBJ plus metadata, not the textured visual scene. Conversion output remains in `/tmp/hyrule-field-import`; no archive-derived data was added to Git.
+
+The render blocker is now concrete: the scene references 445 ODLT display-list resources, 52 OTEX textures, and 38 Array resources under the scene prefix. The importer indexes but does not interpret their RDP/GBI command streams, vertex payload indirections, texture encodings/palettes, or material state. Other object banks are separate resource dependencies. Until those are decoded into runtime geometry/materials, the field is not renderable or playable in SM64. Coordinate units remain source OoT units at an explicitly provisional 1:1 scale; collision and spawn geometry agree internally, but scale still needs comparison in the target engine.
 
 ## Resource format findings
 
@@ -22,7 +28,7 @@ python3 tools/hyrule_importer.py /path/to/oot.o2r /tmp/hyrule-field
 
 The tool verifies ZIP CRCs, emits a sorted resource index and versioned `hyrule-world.json`, parses supported scene/collision records, and writes collision metadata/OBJ to the chosen output directory. `--scene-prefix` selects another scene path; `--scale` sets a provisional positive coordinate scale. The current coordinate mapping preserves X/Y/Z (Y-up) with a configurable unit scale. Scale is explicitly marked provisional until compared against in-game dimensions.
 
-The test archive is generated in memory from format fixtures and contains no game data. Eleven host tests validate archive/header/scene/collision parsing, deterministic indexing, present and missing dependency reporting, coordinate scaling, region mapping, path safety, and failure reporting, not the actual `oot.o2r` archive. On a real archive the tool prints actual decoded counts; no archive counts are available yet.
+The test archive is generated in memory from format fixtures and contains no game data. Fourteen host tests validate archive/header/scene/collision parsing, deterministic indexing, present and missing dependency reporting, coordinate scaling, root-scene selection, collision floor queries and winding/bounds checks, region mapping, path safety, and failure reporting. The first real-archive figures above were produced by the same CLI and are kept out of the test fixtures.
 
 ## Hyrule region and streaming state
 

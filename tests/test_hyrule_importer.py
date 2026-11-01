@@ -7,7 +7,8 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.hyrule_importer import (ImportFailure, import_archive, parse_collision, parse_scene,
+from tools.hyrule_importer import (ImportFailure, collision_floor_at, collision_geometry_diagnostics,
+                                  import_archive, parse_collision, parse_scene,
                                   coordinate, read_resource_header, safe_archive_path)
 
 
@@ -59,6 +60,14 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertEqual(scene["dependencies"], ["scenes/shared/spot00_scene/CollisionHeader"])
         self.assertEqual([command["id"] for command in scene["commands"]], [3, 20])
 
+    def test_scene_cutscene_command_records_its_resource_dependency(self):
+        cutscene = "scenes/shared/spot00_scene/Cutscene"
+        encoded = cutscene.encode("utf-8")
+        body = struct.pack(">IiI", 2, 23, len(encoded)) + encoded + struct.pack(">i", 20)
+        parsed = parse_scene(body, ">", "fixture/Scene")
+        self.assertTrue(parsed["fully_decoded"])
+        self.assertEqual(parsed["dependencies"], [cutscene])
+
     def test_unknown_payload_stops_with_precise_diagnostic(self):
         body = struct.pack(">Iii", 2, 3, 1) + b"x" + struct.pack(">i", 2)
         parsed = parse_scene(body, ">", "fixture/Scene")
@@ -72,16 +81,21 @@ class HyruleImporterTests(unittest.TestCase):
             archive_path = root / "oot.o2r"
             prefix = "scenes/shared/spot00_scene"
             with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr(prefix + "/Scene", resource_header(0x4F524F4D) + scene_body())
+                archive.writestr(prefix + "/spot00_scene", resource_header(0x4F524F4D) + scene_body())
+                archive.writestr(prefix + "/spot00_sceneSet_0001",
+                                 resource_header(0x4F524F4D) + scene_body(prefix + "/MissingAlternateCollision"))
                 archive.writestr(prefix + "/CollisionHeader", resource_header(0x4F434F4C) + collision_body())
                 archive.writestr("objects/object_spot00_objects/Texture", b"fixture only")
+                archive.writestr(prefix + "/source-info.bin", b"headerless fixture")
             output = root / "converted"
             result = import_archive(archive_path, output, prefix, 1.5)
             manifest = json.loads((output / "hyrule-world.json").read_text())
             self.assertEqual(manifest["format_version"], 1)
-            self.assertEqual(manifest["archive"]["entry_count"], 3)
+            self.assertEqual(manifest["archive"]["entry_count"], 5)
+            self.assertEqual(result["region"]["scene_resource"], prefix + "/spot00_scene")
             self.assertEqual(result["collision_outputs"][0]["triangles"], 1)
-            self.assertEqual(result["decoded_resource_count"], 2)
+            self.assertEqual(result["decoded_resource_count"], 3)
+            self.assertEqual(result["resource_type_counts"]["headerless-or-short"], 1)
             self.assertEqual(result["dependencies"][0]["status"], "available")
             self.assertEqual(result["region_bounds"], {"min": [-15.0, -1.5, -15.0],
                                                          "max": [15.0, 30.0, 15.0],
@@ -128,6 +142,26 @@ class HyruleImporterTests(unittest.TestCase):
 
     def test_coordinate_scale_preserves_source_axis_order(self):
         self.assertEqual(coordinate([2, -3, 4], 0.25), [0.5, -0.75, 1.0])
+
+    def test_spawn_floor_check_uses_upward_triangle_and_bounds(self):
+        collision = parse_collision(collision_body(vertices=[(0, 0, 0), (0, 0, 10), (10, 0, 0)]),
+                                    ">", "fixture/CollisionHeader")
+        floor = collision_floor_at(collision, 25, 5, 25)
+        self.assertIsNone(floor)
+        floor = collision_floor_at(collision, 2.5, 5, 2.5)
+        self.assertEqual(floor["triangle"], 0)
+        self.assertEqual(floor["floor_y"], 0.0)
+        self.assertEqual(floor["spawn_y_delta"], 5.0)
+        self.assertIsNone(collision_floor_at(collision, 200, 5, 25))
+
+    def test_collision_diagnostics_detect_valid_winding_and_bounds(self):
+        collision = parse_collision(collision_body(vertices=[(0, 0, 0), (0, 0, 10), (10, 0, 0)]),
+                                    ">", "fixture/CollisionHeader")
+        diagnostics = collision_geometry_diagnostics(collision)
+        self.assertEqual(diagnostics["source_normal_aligned_triangles"], 1)
+        self.assertEqual(diagnostics["reversed_winding_triangles"], 0)
+        self.assertEqual(diagnostics["degenerate_triangles"], 0)
+        self.assertTrue(diagnostics["declared_bounds_contain_vertices"])
 
 
 if __name__ == "__main__":

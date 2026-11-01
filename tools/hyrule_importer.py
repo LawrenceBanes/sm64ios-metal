@@ -351,6 +351,11 @@ def parse_scene(body: bytes, endian: str, path: str) -> dict:
                 payload = {"sound": [reader.i8(), reader.i8(), reader.i8()]}
             elif command_id == 22:
                 payload = {"echo": reader.i8()}
+            elif command_id == 23:
+                cutscene_path = reader.string()
+                payload = {"cutscene": cutscene_path}
+                if cutscene_path:
+                    dependencies.add(cutscene_path)
             elif command_id == 24:
                 header_count = reader.count("alternate header", 4096)
                 headers = [reader.string() for _ in range(header_count)]
@@ -382,6 +387,75 @@ def coordinate(point: list[int], scale: float) -> list[float]:
     return [point[0] * scale, point[1] * scale, point[2] * scale]
 
 
+def collision_floor_at(collision: dict, x: float, y: float, z: float,
+                      max_above: float = 50.0, max_below: float = 250.0) -> dict | None:
+    """Return the highest upward-facing collision triangle below a spawn point."""
+    vertices = collision["vertices"]
+    best = None
+    for index, polygon in enumerate(collision["polygons"]):
+        if polygon["normal"][1] <= 0:
+            continue
+        a, b, c = (vertices[i] for i in polygon["vertex_indices"])
+        denominator = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2])
+        if abs(denominator) < 1e-9:
+            continue
+        wa = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / denominator
+        wb = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / denominator
+        wc = 1.0 - wa - wb
+        if min(wa, wb, wc) < -1e-6:
+            continue
+        floor_y = wa * a[1] + wb * b[1] + wc * c[1]
+        if floor_y > y + max_above or floor_y < y - max_below:
+            continue
+        if best is None or floor_y > best["floor_y"]:
+            best = {"triangle": index, "floor_y": floor_y,
+                    "spawn_y_delta": y - floor_y,
+                    "surface_type": polygon["surface_type"],
+                    "normal": polygon["normal"]}
+    return best
+
+
+def collision_geometry_diagnostics(collision: dict) -> dict:
+    vertices = collision["vertices"]
+    degenerate = 0
+    aligned = 0
+    reversed_winding = 0
+    other_normal_mismatch = 0
+    for polygon in collision["polygons"]:
+        a, b, c = (vertices[i] for i in polygon["vertex_indices"])
+        ab = [b[i] - a[i] for i in range(3)]
+        ac = [c[i] - a[i] for i in range(3)]
+        cross = [ab[1] * ac[2] - ab[2] * ac[1],
+                 ab[2] * ac[0] - ab[0] * ac[2],
+                 ab[0] * ac[1] - ab[1] * ac[0]]
+        cross_length = math.sqrt(sum(value * value for value in cross))
+        normal = polygon["normal"]
+        normal_length = math.sqrt(sum(value * value for value in normal))
+        if cross_length == 0.0 or normal_length == 0.0:
+            degenerate += 1
+            continue
+        alignment = sum(cross[i] * normal[i] for i in range(3)) / (cross_length * normal_length)
+        if alignment >= 0.99:
+            aligned += 1
+        elif alignment <= -0.99:
+            reversed_winding += 1
+        else:
+            other_normal_mismatch += 1
+    expected_min = collision["bounds"]["min"]
+    expected_max = collision["bounds"]["max"]
+    if vertices:
+        actual_min = [min(vertex[axis] for vertex in vertices) for axis in range(3)]
+        actual_max = [max(vertex[axis] for vertex in vertices) for axis in range(3)]
+        bounds_contain_vertices = all(expected_min[i] <= actual_min[i] <= actual_max[i] <= expected_max[i]
+                                      for i in range(3))
+    else:
+        bounds_contain_vertices = False
+    return {"triangle_count": len(collision["polygons"]), "degenerate_triangles": degenerate,
+            "source_normal_aligned_triangles": aligned, "reversed_winding_triangles": reversed_winding,
+            "other_normal_mismatches": other_normal_mismatch,
+            "declared_bounds_contain_vertices": bounds_contain_vertices}
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -402,10 +476,11 @@ def write_collision_outputs(output_dir: Path, collision: dict, scale: float, ste
             a, b, c = (index + 1 for index in poly["vertex_indices"])
             obj.write(f"f {a} {b} {c}\n")
     json_path = output_dir / f"{stem}.collision.json"
+    collision = {**collision, "geometry_validation": collision_geometry_diagnostics(collision)}
     json_path.write_text(json.dumps(collision, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return {"obj": obj_path.name, "metadata": json_path.name,
             "vertices": len(collision["vertices"]), "triangles": len(collision["polygons"]),
-            "scale": scale}
+            "scale": scale, "geometry_validation": collision["geometry_validation"]}
 
 
 def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float) -> dict:
@@ -443,7 +518,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         files.sort(key=lambda item: item["path"])
         resources = []
         decoded = {}
-        scene_path = None
+        scene_paths = []
         collision_paths = []
         for path in sorted(selected):
             data = archive.read(index_by_name[path])
@@ -453,15 +528,19 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                 body = data[OTR_HEADER_SIZE:]
                 endian = "<" if header["endian"] == "little" else ">"
                 if header["resource_type"] == "Scene":
-                    scene_path = path
+                    scene_paths.append(path)
                     if header["version"] != 0:
                         record["unsupported_reason"] = f"scene resource version {header['version']} is not supported (need 0)"
                     else:
                         try:
                             parsed = parse_scene(body, endian, path)
                             decoded[path] = parsed
-                            record["decoded"] = "scene-metadata-v1"
+                            record["decoded"] = ("scene-metadata-v1" if parsed["fully_decoded"]
+                                                 else "scene-metadata-partial-v1")
+                            record["decode_status"] = "complete" if parsed["fully_decoded"] else "partial"
                             record["dependencies"] = parsed["dependencies"]
+                            if parsed["unsupported_at"]:
+                                record["unsupported_at"] = parsed["unsupported_at"]
                         except ImportFailure as exc:
                             record["decode_error"] = str(exc)
                 elif header["resource_type"] == "CollisionHeader":
@@ -472,11 +551,23 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                         try:
                             decoded[path] = parse_collision(body, endian, path)
                             record["decoded"] = "collision-header-v0"
+                            record["decode_status"] = "complete"
                         except ImportFailure as exc:
                             record["decode_error"] = str(exc)
             resources.append(record)
 
+        preferred_scene_path = str(PurePosixPath(scene_prefix) / PurePosixPath(scene_prefix).name)
+        scene_path = preferred_scene_path if preferred_scene_path in scene_paths else None
         if scene_path is None:
+            conventional_scene_path = str(PurePosixPath(scene_prefix) / "Scene")
+            if conventional_scene_path in scene_paths:
+                scene_path = conventional_scene_path
+            elif len(scene_paths) == 1:
+                scene_path = scene_paths[0]
+        if scene_path is None:
+            if scene_paths:
+                raise ImportFailure("multiple scene resources found but no canonical root was identified; "
+                                    f"expected {preferred_scene_path!r}, found {len(scene_paths)} candidates")
             raise ImportFailure(f"no OROM scene resource found under {scene_prefix!r}; indexed {len(selected)} files")
         if scene_path not in decoded:
             problem = next((item.get("unsupported_reason") or item.get("decode_error")
@@ -486,12 +577,28 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         output_dir.mkdir(parents=True, exist_ok=True)
         collision_outputs = []
         scene = decoded.get(scene_path)
-        dependency_paths = set(scene["dependencies"] if scene else [])
+        root_dependency_paths = set(scene["dependencies"] if scene else [])
+        scene_dependency_paths = set(root_dependency_paths)
+        scene_nodes = []
+        for candidate in sorted(scene_paths):
+            parsed_scene = decoded.get(candidate)
+            if parsed_scene is None:
+                continue
+            scene_dependency_paths.update(parsed_scene["dependencies"])
+            if candidate == scene_path:
+                role = "root"
+            elif "_room_" in PurePosixPath(candidate).name:
+                role = "room"
+            elif "Set_" in PurePosixPath(candidate).name:
+                role = "alternate-header"
+            else:
+                role = "scene-resource"
+            scene_nodes.append({"path": candidate, "role": role, **parsed_scene})
         for path in collision_paths:
             collision = decoded.get(path)
             if not collision:
                 continue
-            if dependency_paths and path not in dependency_paths:
+            if path not in root_dependency_paths:
                 continue
             stem = "spot00" if len(collision_outputs) == 0 else f"spot00_{len(collision_outputs)}"
             collision_outputs.append({**write_collision_outputs(output_dir, collision, scale, stem),
@@ -500,7 +607,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         # The manifest preserves all resource paths and dependencies. Payloads
         # are emitted only for parsers that have a tested schema.
         dependency_records = []
-        for dependency in sorted(dependency_paths):
+        for dependency in sorted(scene_dependency_paths):
             dependency = safe_archive_path(dependency)
             info = index_by_name.get(dependency)
             if info is None:
@@ -519,10 +626,13 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                 "version": dependency_header.get("version"),
             })
         collision_bounds = []
+        primary_collision = None
         for output_record in collision_outputs:
             parsed = decoded.get(output_record["source_resource"])
             if parsed is not None:
                 collision_bounds.append(parsed["bounds"])
+                if primary_collision is None:
+                    primary_collision = parsed
         region_bounds = None
         if collision_bounds:
             mins = [min(bounds["min"][axis] for bounds in collision_bounds) * scale for axis in range(3)]
@@ -530,8 +640,23 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             region_bounds = {"min": mins, "max": maxs, "source": "collision headers"}
         type_counts = {}
         for item in resources:
-            resource_type = item.get("resource_type", "unknown")
+            resource_type = item.get("resource_type") or item.get("status") or "unknown"
             type_counts[resource_type] = type_counts.get(resource_type, 0) + 1
+        spawn_support = []
+        if scene is not None and primary_collision is not None:
+            for command in scene["commands"]:
+                if command["id"] != 0:
+                    continue
+                for index, entry in enumerate(command["entries"]):
+                    source_position = entry["position"]
+                    position = coordinate(source_position, scale)
+                    floor = collision_floor_at(primary_collision, *source_position)
+                    if floor is not None:
+                        floor["floor_y"] *= scale
+                        floor["spawn_y_delta"] *= scale
+                    spawn_support.append({"index": index, "position": position,
+                                          "status": "supported" if floor else "no-nearby-floor",
+                                          "floor": floor})
         output = {
             "format": FORMAT_NAME,
             "format_version": FORMAT_VERSION,
@@ -546,14 +671,18 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             "resource_index": files,
             "dependencies": dependency_records,
             "scene": scene,
+            "scene_resources": scene_nodes,
             "resources": resources,
             "collision_outputs": collision_outputs,
             "resource_type_counts": dict(sorted(type_counts.items())),
-            "decoded_resource_count": sum(bool(item.get("decoded")) for item in resources),
+            "decoded_resource_count": sum(item.get("decode_status") == "complete" for item in resources),
+            "parsed_resource_count": sum(bool(item.get("decoded")) for item in resources),
+            "resource_type_counts_scope": "resources beneath the selected scene prefix",
             "region_bounds": region_bounds,
+            "spawn_support": spawn_support,
             "rendering": {"status": "not converted", "reason":
-                          "N64 display-list execution, segmented vertex references, textures, and material state "
-                          "need the supplied archive to validate this importer against its generated resource versions"},
+                          "DisplayList, Array/vertex indirections, Texture payloads, and material state are indexed "
+                          "but not decoded, and no runtime scene loader consumes this intermediate format"},
         }
         manifest = output_dir / "hyrule-world.json"
         manifest.write_text(json.dumps(output, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -572,10 +701,12 @@ def main(argv: list[str] | None = None) -> int:
     except (ImportFailure, OSError) as exc:
         print(f"hyrule-importer: error: {exc}", file=sys.stderr)
         return 2
-    decoded = sum(bool(r.get("decoded")) for r in result["resources"])
+    decoded = result["decoded_resource_count"]
+    parsed = result["parsed_resource_count"]
     print(f"Wrote {args.output / 'hyrule-world.json'}")
     print(f"Region: {result['region']['name']}; archive files: {result['archive']['entry_count']}; "
-          f"scene resources decoded: {decoded}; collision meshes: {len(result['collision_outputs'])}")
+          f"resources parsed: {parsed}; fully decoded: {decoded}; "
+          f"collision meshes: {len(result['collision_outputs'])}")
     if not result["scene"]["fully_decoded"]:
         print(f"Scene command decode stopped: {result['scene']['unsupported_at']}", file=sys.stderr)
     print("World rendering/runtime loading is not included in this host importer milestone.")
