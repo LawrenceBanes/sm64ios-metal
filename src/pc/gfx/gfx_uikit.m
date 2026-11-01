@@ -214,7 +214,7 @@ static int sm64RenderDiagnosticMode;
 
 - (void)showGameplayActions {
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
-        message:@"Luigi is a temporary green palette on Mario’s model. Approach Yoshi and tap A to mount; tap Z to dismount. Aim with the camera and fire blue/orange portals from here. The first portal surface is a tinted animated fallback, not a linked world view."
+        message:@"Kart: press L beside it to enter or exit; joystick steers, B accelerates, Z brakes/reverses, and hold A while steering to hop/powerslide. Release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, and Yoshi remains available; the portal surface is an animated fallback, not a linked world view."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
@@ -227,6 +227,12 @@ static int sm64RenderDiagnosticMode;
         mario_ios_request_yoshi_toggle();
         gfx_ios_diag_log("Gameplay menu queued Yoshi mount/dismount request");
         [self appendStatus:@"Yoshi mount request queued; approach Yoshi if it does not mount"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Spawn / reposition kart nearby" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_kart_spawn();
+        gfx_ios_diag_log("Gameplay menu queued kart spawn/reposition request");
+        [self appendStatus:@"Kart spawn request queued; press L next to it to drive"];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Fire blue portal" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;

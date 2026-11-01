@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 53 — free-roaming kart prototype (implementation in progress)
+
+- Studied the MK64 decompilation at commit `58cfcb022e10f83bc3b889d7e97508cae6837098`; the adaptation notes identify the acceleration, steering, drift-charge, hop, and mini-turbo routines, and explain which track/tire/render/camera parts remain MK64-specific. No MK64 source or assets were copied. See [`MK64_KART_REFERENCE.md`](MK64_KART_REFERENCE.md).
+- Added an SM64-independent, tick-stepped kart dynamics module for progressive acceleration, brake/reverse, speed-sensitive steering, air handling, slope/traction input, powerslide slip, drift charge, boost release, hop, and wall-normal response. Ground and airborne actions move through the game's existing four-quarter collision steps.
+- Added an original low-poly iOS-only kart actor near the Castle Grounds entry and a Gameplay-panel spawn/reposition action for other levels. L mounts/dismounts; joystick steers and can throttle, B accelerates, Z brakes/reverses, and A hops/drifts. Mario is attached in a riding pose, and the existing Mario-facing chase camera follows the vehicle. Yoshi/character switching/portals are kept out of the driving state; interruption and out-of-bounds paths release/reset the kart.
+- Added safe floor/wall/headroom checks for spawn/reposition, two-sided floor/wall/ceiling checks before dismount, and a kart-sized collision envelope in the existing four-quarter ground/air step. Mario's usual collision envelope is unchanged. The placeholder uses no MK64 assets; wheel animation, dedicated seated animation, items, racing, and physical-device tuning remain outstanding.
+- Added deterministic acceleration/braking/reverse, steering, slope/traction, drift/boost, airborne, wall response, reset, and mount/dismount-predicate tests plus source integration guards. `tests/run_linux_checks.sh`, project wiring checks, focused Clang syntax checks for the changed game/behavior/level/model C units, and `git diff --check` pass. One unrelated existing warning remains in `mario_actions_airborne.c` (`u16 actionState` compared with `ACT_GROUND_POUND`). Xcode compilation, unsigned IPA packaging, and iPhone gameplay/handling validation are still pending.
+
 ### Mission 52.1 — universal surface portals and failure diagnostics (in progress)
 
 - Device log `SM64Diagnostics(8).log` confirms UIKit queued portal requests and that SM64/Metal kept running, but the previous portal implementation had no consumer/result logs. The source audit found two functional restrictions: the entire portal opening had to fit inside one collision triangle, and collision pass-through was implemented only for walls. The old camera-origin ray could also hit foreground ground/Mario before the center-screen aim target.

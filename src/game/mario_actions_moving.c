@@ -1305,6 +1305,45 @@ s32 act_riding_yoshi_ground(struct MarioState *m) {
     return FALSE;
 }
 
+/* Kart dynamics are independent of the renderer; SM64's existing ground-step
+ * collision remains responsible for ramps, floor contact, and walls. */
+s32 act_ios_kart_ground(struct MarioState *m) {
+    IOSKartEvents events;
+    s32 stepResult;
+    if (!mario_ios_is_driving_kart(m)) {
+        return set_mario_action(m, ACT_WALKING, 0);
+    }
+
+    mario_ios_update_kart(m, TRUE, &events);
+    if (events.hopRequested) {
+        set_mario_action(m, ACT_IOS_KART_AIR, 0);
+        return FALSE;
+    }
+
+    set_mario_animation(m, MARIO_ANIM_RIDING_SHELL);
+    stepResult = perform_ground_step(m);
+    mario_ios_kart_record_ground_position(m, stepResult != GROUND_STEP_LEFT_GROUND);
+    if (stepResult == GROUND_STEP_LEFT_GROUND) {
+        m->vel[1] = -4.0f;
+        set_mario_action(m, ACT_IOS_KART_AIR, 1);
+        return FALSE;
+    }
+    if (stepResult == GROUND_STEP_HIT_WALL) {
+        mario_ios_kart_wall_collision(m);
+    }
+
+    if (mario_ios_kart_boost_active() && (m->actionTimer++ & 3) == 0) {
+        m->particleFlags |= PARTICLE_DUST;
+    }
+    if (m->forwardVel > 1.0f) {
+        play_sound(SOUND_MOVING_TERRAIN_RIDING_SHELL + m->terrainSoundAddend,
+                   m->marioObj->header.gfx.cameraToObject);
+    }
+    adjust_sound_for_speed(m);
+    reset_rumble_timers();
+    return FALSE;
+}
+
 s32 act_crawling(struct MarioState *m) {
     s32 val04;
 
@@ -2043,6 +2082,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
         case ACT_BRAKING:                  cancel = act_braking(m);                  break;
         case ACT_RIDING_SHELL_GROUND:      cancel = act_riding_shell_ground(m);      break;
         case ACT_RIDING_YOSHI_GROUND:      cancel = act_riding_yoshi_ground(m);     break;
+        case ACT_IOS_KART_GROUND:          cancel = act_ios_kart_ground(m);          break;
         case ACT_CRAWLING:                 cancel = act_crawling(m);                 break;
         case ACT_BURNING_GROUND:           cancel = act_burning_ground(m);           break;
         case ACT_DECELERATING:             cancel = act_decelerating(m);             break;

@@ -16,6 +16,10 @@ struct Surface gWaterSurfacePseudoFloor = {
     { 0.0f, 1.0f, 0.0f },  0.0f, NULL,
 };
 
+static s32 mario_step_is_ios_kart(const struct MarioState *m) {
+    return m->action == ACT_IOS_KART_GROUND || m->action == ACT_IOS_KART_AIR;
+}
+
 /**
  * Always returns zero. This may have been intended
  * to be used for the beta trampoline. Its return value
@@ -263,9 +267,13 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
     f32 ceilHeight;
     f32 floorHeight;
     f32 waterLevel;
+    s32 isKart = mario_step_is_ios_kart(m);
+    f32 clearanceHeight = isKart ? 220.0f : 160.0f;
 
-    lowerWall = resolve_and_return_wall_collisions(nextPos, 30.0f, 24.0f);
-    upperWall = resolve_and_return_wall_collisions(nextPos, 60.0f, 50.0f);
+    lowerWall = resolve_and_return_wall_collisions(nextPos, isKart ? 24.0f : 30.0f,
+                                                    isKart ? 62.0f : 24.0f);
+    upperWall = resolve_and_return_wall_collisions(nextPos, isKart ? 180.0f : 60.0f,
+                                                    isKart ? 74.0f : 50.0f);
 
     floorHeight = find_floor(nextPos[0], nextPos[1], nextPos[2], &floor);
     ceilHeight = vec3f_find_ceil(nextPos, floorHeight, &ceil);
@@ -285,7 +293,7 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
     }
 
     if (nextPos[1] > floorHeight + 100.0f) {
-        if (nextPos[1] + 160.0f >= ceilHeight) {
+        if (nextPos[1] + clearanceHeight >= ceilHeight) {
             return GROUND_STEP_HIT_WALL_STOP_QSTEPS;
         }
 
@@ -295,7 +303,7 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
         return GROUND_STEP_LEFT_GROUND;
     }
 
-    if (floorHeight + 160.0f >= ceilHeight) {
+    if (floorHeight + clearanceHeight >= ceilHeight) {
         return GROUND_STEP_HIT_WALL_STOP_QSTEPS;
     }
 
@@ -395,11 +403,14 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
     f32 ceilHeight;
     f32 floorHeight;
     f32 waterLevel;
+    s32 isKart = mario_step_is_ios_kart(m);
+    f32 clearanceHeight = isKart ? 220.0f : 160.0f;
 
     vec3f_copy(nextPos, intendedPos);
 
-    upperWall = resolve_and_return_wall_collisions(nextPos, 150.0f, 50.0f);
-    lowerWall = resolve_and_return_wall_collisions(nextPos, 30.0f, 50.0f);
+    upperWall = resolve_and_return_wall_collisions(nextPos, isKart ? 190.0f : 150.0f,
+                                                    isKart ? 74.0f : 50.0f);
+    lowerWall = resolve_and_return_wall_collisions(nextPos, 30.0f, isKart ? 62.0f : 50.0f);
 
     floorHeight = find_floor(nextPos[0], nextPos[1], nextPos[2], &floor);
     ceilHeight = vec3f_find_ceil(nextPos, floorHeight, &ceil);
@@ -429,7 +440,7 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
 
     //! This check uses f32, but findFloor uses short (overflow jumps)
     if (nextPos[1] <= floorHeight) {
-        if (ceilHeight - floorHeight > 160.0f) {
+        if (ceilHeight - floorHeight > clearanceHeight) {
             m->pos[0] = nextPos[0];
             m->pos[2] = nextPos[2];
             m->floor = floor;
@@ -443,7 +454,7 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
         return AIR_STEP_LANDED;
     }
 
-    if (nextPos[1] + 160.0f > ceilHeight) {
+    if (nextPos[1] + clearanceHeight > ceilHeight) {
         if (m->vel[1] >= 0.0f) {
             m->vel[1] = 0.0f;
 

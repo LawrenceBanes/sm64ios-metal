@@ -15,7 +15,9 @@ python3 "$repo_dir/ios/test_render_diagnostics.py"
 python3 "$repo_dir/ios/test_metal_graphics_foundation.py"
 python3 "$repo_dir/ios/test_hd_texture_overrides.py"
 python3 "$repo_dir/tests/check_ios_gameplay_features.py"
+python3 "$repo_dir/tests/check_ios_kart_integration.py"
 python3 "$repo_dir/tests/check_ios_portal_integration.py"
+CC="$cc" "$repo_dir/tests/run_ios_kart_physics_test.sh"
 portal_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-portal-math.XXXXXX")
 trap 'rm -f "$portal_test_bin"' EXIT HUP INT TERM
 $cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/test_portal_math.c" -lm -o "$portal_test_bin"
@@ -24,6 +26,18 @@ rm -f "$portal_test_bin"
 trap - EXIT HUP INT TERM
 
 common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
+# Compile the gameplay-side iOS kart adapter on Linux so its action, collision,
+# level actor, and behavior integration cannot regress behind source-only checks.
+$cc $common_flags -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
+    "$repo_dir/src/game/ios_kart.c" "$repo_dir/src/game/mario.c" \
+    "$repo_dir/src/game/mario_actions_moving.c" "$repo_dir/src/game/mario_actions_airborne.c" \
+    "$repo_dir/src/game/mario_step.c" "$repo_dir/src/game/obj_behaviors.c" \
+    "$repo_dir/data/behavior_data.c" "$repo_dir/levels/castle_grounds/script.c" \
+    "$repo_dir/actors/group0_geo.c"
+# The original kart model is a separate display-list unit; compile it with the
+# same GBI declarations used by the actor group.
+$cc $common_flags -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
+    -include sm64.h -include geo_commands.h "$repo_dir/actors/ios_kart/model.inc.c"
 # Keep the ordinary SM64 display-list model syntax valid on host builds.
 $cc $common_flags -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
     -include sm64.h -include geo_commands.h "$repo_dir/actors/portal/model.inc.c"

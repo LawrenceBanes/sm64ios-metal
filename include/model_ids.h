@@ -565,6 +565,7 @@
 #define MODEL_TRAJECTORY_MARKER_BALL          0xE1        // bowling_ball_track_geo - duplicate used in SSL Pyramid small sized and as a track ball
 #define MODEL_PORTAL_BLUE                     0xE2        // iOS portal aperture visual
 #define MODEL_PORTAL_ORANGE                   0xE3        // iOS portal aperture visual
+#define MODEL_IOS_KART                        0xE4        // original iOS go-kart placeholder
 
 // Menu Models (overwrites Level Geometry IDs)
 #define MODEL_MAIN_MENU_MARIO_SAVE_BUTTON         MODEL_LEVEL_GEOMETRY_03   // main_menu_geo_0001D0
