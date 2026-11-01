@@ -66,6 +66,34 @@ class HyruleGatewayTests(unittest.TestCase):
         self.assertIn("IOS_HYRULE_WORLD ?= 0", makefile)
         self.assertIn(".ios_hyrule_mode", makefile)
 
+    def test_ios_hyrule_diagnostics_cover_warps_spawn_and_collision_activation(self):
+        area = (ROOT / "src/game/area.c").read_text()
+        level_update = (ROOT / "src/game/level_update.c").read_text()
+        diagnostic_guard = "#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)"
+        self.assertIn(diagnostic_guard, area)
+        self.assertIn(diagnostic_guard, level_update)
+        for event in (
+            "Hyrule collision load begin",
+            "Hyrule collision load complete",
+            "Hyrule collision load failed",
+            "SM64 area activated",
+        ):
+            with self.subTest(event=event):
+                self.assertIn(event, area)
+        for event in (
+            "SM64 level transition begin",
+            "SM64 area transition begin",
+            "Hyrule level initialized",
+            "Hyrule warp spawn",
+            "SM64 warp completed",
+        ):
+            with self.subTest(event=event):
+                self.assertIn(event, level_update)
+        self.assertIn("gNumStaticSurfaces", area)
+        self.assertIn("gNumStaticSurfaceNodes", area)
+        self.assertIn("gMarioState->floor", level_update)
+        self.assertIn("gCurrentArea->camera", level_update)
+
     def test_corridor_has_matching_opt_in_geometry_and_collision(self):
         collision = (ROOT / "levels/castle_grounds/areas/1/collision.inc.c").read_text()
         geometry = (ROOT / "levels/castle_grounds/areas/1/forest_gateway.inc.c").read_text()

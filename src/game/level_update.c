@@ -34,6 +34,15 @@
 #include "pc/pc_main.h"
 #include "pc/cliopts.h"
 #include "pc/configfile.h"
+#ifdef IOS_BUILD
+#include "pc/gfx/gfx_ios_diagnostics.h"
+#endif
+
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+#define IOS_HYRULE_DIAG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define IOS_HYRULE_DIAG(...) ((void)0)
+#endif
 
 #define PLAY_MODE_NORMAL 0
 #define PLAY_MODE_PAUSED 2
@@ -391,11 +400,31 @@ void init_mario_after_warp(void) {
         init_mario();
         set_mario_initial_action(gMarioState, marioSpawnType, sWarpDest.arg);
 
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+        if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
+            struct Surface *floor = gMarioState->floor;
+            IOS_HYRULE_DIAG("Hyrule warp spawn node=%d area=%d spawn=(%d,%d,%d) yaw=%d mario=(%.1f,%.1f,%.1f) spawnType=%u action=0x%08x floor=%s floorType=%d floorHeight=%.1f camera=%p",
+                            sWarpDest.nodeId, sWarpDest.areaIdx,
+                            gMarioSpawnInfo->startPos[0], gMarioSpawnInfo->startPos[1],
+                            gMarioSpawnInfo->startPos[2], gMarioSpawnInfo->startAngle[1],
+                            gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2],
+                            marioSpawnType, gMarioState->action,
+                            floor != NULL ? "hit" : "miss",
+                            floor != NULL ? floor->type : -1,
+                            gMarioState->floorHeight, (void *)gCurrentArea->camera);
+        }
+#endif
+
         gMarioState->interactObj = spawnNode->object;
         gMarioState->usedObj = spawnNode->object;
     }
 
     reset_camera(gCurrentArea->camera);
+    IOS_HYRULE_DIAG("SM64 warp completed level=%d area=%d node=%d mario=(%.1f,%.1f,%.1f) action=0x%08x camera=%p",
+                    gCurrLevelNum, gCurrentArea ? gCurrentArea->index : -1,
+                    sWarpDest.nodeId, gMarioState->pos[0], gMarioState->pos[1],
+                    gMarioState->pos[2], gMarioState->action,
+                    gCurrentArea ? (void *)gCurrentArea->camera : NULL);
     sWarpDest.type = WARP_TYPE_NOT_WARPING;
     sDelayedWarpOp = WARP_OP_NONE;
 
@@ -464,6 +493,9 @@ void init_mario_after_warp(void) {
 void warp_area(void) {
     if (sWarpDest.type != WARP_TYPE_NOT_WARPING) {
         if (sWarpDest.type == WARP_TYPE_CHANGE_AREA) {
+            IOS_HYRULE_DIAG("SM64 area transition begin level=%d sourceArea=%d destinationArea=%d node=%d type=%d",
+                            gCurrLevelNum, gCurrAreaIndex, sWarpDest.areaIdx,
+                            sWarpDest.nodeId, sWarpDest.type);
             level_control_timer(TIMER_CONTROL_HIDE);
             unload_mario_area();
             load_area(sWarpDest.areaIdx);
@@ -475,6 +507,9 @@ void warp_area(void) {
 
 // used for warps between levels
 void warp_level(void) {
+    IOS_HYRULE_DIAG("SM64 level transition begin sourceLevel=%d destinationLevel=%d sourceArea=%d destinationArea=%d node=%d type=%d",
+                    gCurrLevelNum, sWarpDest.levelNum, gCurrAreaIndex,
+                    sWarpDest.areaIdx, sWarpDest.nodeId, sWarpDest.type);
     gCurrLevelNum = sWarpDest.levelNum;
 
     level_control_timer(TIMER_CONTROL_HIDE);
@@ -1191,6 +1226,23 @@ s32 init_level(void) {
 
         if (gCurrentArea != NULL) {
             reset_camera(gCurrentArea->camera);
+
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+            if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
+                struct Surface *floor = gMarioState->floor;
+                IOS_HYRULE_DIAG("Hyrule level initialized level=%d area=%d spawn=(%d,%d,%d) yaw=%d mario=(%.1f,%.1f,%.1f) action=0x%08x floor=%s floorType=%d floorNormal=(%.3f,%.3f,%.3f) floorHeight=%.1f camera=%p",
+                                gCurrLevelNum, gCurrentArea->index,
+                                gMarioSpawnInfo->startPos[0], gMarioSpawnInfo->startPos[1],
+                                gMarioSpawnInfo->startPos[2], gMarioSpawnInfo->startAngle[1],
+                                gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2],
+                                gMarioState->action, floor != NULL ? "hit" : "miss",
+                                floor != NULL ? floor->type : -1,
+                                floor != NULL ? floor->normal.x : 0.0f,
+                                floor != NULL ? floor->normal.y : 0.0f,
+                                floor != NULL ? floor->normal.z : 0.0f,
+                                gMarioState->floorHeight, (void *)gCurrentArea->camera);
+            }
+#endif
 
             if (gCurrDemoInput != NULL) {
                 set_mario_action(gMarioState, ACT_IDLE, 0);

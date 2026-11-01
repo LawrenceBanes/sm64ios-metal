@@ -21,6 +21,15 @@
 #include "engine/geo_layout.h"
 #include "save_file.h"
 #include "level_table.h"
+#ifdef IOS_BUILD
+#include "pc/gfx/gfx_ios_diagnostics.h"
+#endif
+
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+#define IOS_HYRULE_DIAG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define IOS_HYRULE_DIAG(...) ((void)0)
+#endif
 
 #include "gfx_dimensions.h"
 
@@ -235,8 +244,27 @@ void load_area(s32 index) {
         gCurrAreaIndex = gCurrentArea->index;
 
         if (gCurrentArea->terrainData != NULL) {
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+            if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
+                IOS_HYRULE_DIAG("Hyrule collision load begin level=%d area=%d terrain=%p rooms=%p",
+                                gCurrLevelNum, index, (void *)gCurrentArea->terrainData,
+                                (void *)gCurrentArea->surfaceRooms);
+            }
+#endif
             load_area_terrain(index, gCurrentArea->terrainData, gCurrentArea->surfaceRooms,
                               gCurrentArea->macroObjects);
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+            if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
+                IOS_HYRULE_DIAG("Hyrule collision load complete level=%d area=%d staticSurfaces=%d staticNodes=%d",
+                                gCurrLevelNum, index, gNumStaticSurfaces,
+                                gNumStaticSurfaceNodes);
+            }
+#endif
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
+        } else if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
+            IOS_HYRULE_DIAG("Hyrule collision load failed level=%d area=%d reason=terrainData-null",
+                            gCurrLevelNum, index);
+#endif
         }
 
         if (gCurrentArea->objectSpawnInfos != NULL) {
@@ -245,6 +273,9 @@ void load_area(s32 index) {
 
         load_obj_warp_nodes();
         geo_call_global_function_nodes(&gCurrentArea->unk04->node, GEO_CONTEXT_AREA_LOAD);
+        IOS_HYRULE_DIAG("SM64 area activated level=%d area=%d terrain=%p spawnInfos=%p",
+                        gCurrLevelNum, gCurrentArea->index, (void *)gCurrentArea->terrainData,
+                        (void *)gCurrentArea->objectSpawnInfos);
     }
 }
 
