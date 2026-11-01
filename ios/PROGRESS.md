@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 55 — Hyrule Field importer and authentic collision subset (in progress)
+
+- Confirmed Shipwright `.o2r` is a ZIP of typed resources, not a directly renderable scene blob. Added the versioned host-side importer for ZIP indexing, 64-byte OTR headers, Scene v0 commands, CollisionHeader v0, dependency tracking, canonical root selection, deterministic manifests, collision OBJ/metadata, bounds, floor-under-spawn checks, and geometry winding validation. Scene root/room/alternate references resolve against archive paths; unsupported commands report their exact ID/offset.
+- Ran against Larry's local `/home/larry/Downloads/oot.o2r` without copying it into the repository. The archive has 38,390 entries; the selected Hyrule Field prefix has 591 entries (445 display lists, 52 textures, 38 arrays, 24 scenes, 15 cutscenes, 5 paths, 1 collision header, 11 headerless/short files). The canonical root parses all 13 commands; all 24 Scene resources and one CollisionHeader fully decode, with 74/74 scene-graph dependencies found. The authentic field collision has 1,162 vertices and 1,579 triangles; all 18 root start positions have nearby upward-facing ground, triangle normals agree with winding, and declared bounds contain the vertices. The resulting debug OBJ/JSON lives under `/tmp/hyrule-field-import`, not Git.
+- Added the planned 10-region registry and corrected OoT scene-name mapping (`spot01` Kakariko, `spot03` Zora's River). Field-to-Ranch adjacency remains pending measured world coordinates.
+- Rendering remains blocked on implementing the RDP/GBI display-list interpreter, Array/vertex indirections, OTEX texture decode/palettes, materials, and a runtime scene loader. The debug OBJ contains collision geometry only; Hyrule Field is not playable, and no runtime streaming manager or IPA was built. No ROM-derived assets are committed.
+- Validation: `python3 -m py_compile`, all 14 importer tests, JSON validation, real-archive conversion, full `tests/run_linux_checks.sh`, `tests/check_metal_project_wiring.sh`, and `git diff --check` passed. The full suite reports one pre-existing warning in `mario_actions_airborne.c:75` about an out-of-range `u16` comparison. No iOS sources changed; the existing Apple SDK check remains available, but a full Hyrule app build cannot be meaningful until a runtime loader consumes decoded render geometry.
+
 ### Mission 54 — Reality Debugger runtime (in progress)
 
 - Audited CHEATERex's `mario_cheats.c/.h`, menu, `options_menu.c`, `pc/cheats.h`, and README. Its repository has no declared license or license file, so no code was copied. `ios/CHEATEREX_AUDIT.md` maps its feature ideas to local integration points and compatibility limits.

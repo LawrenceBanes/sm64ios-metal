@@ -55,6 +55,8 @@ build/*
 *.mio0
 *.z64
 *.ipa
+*.o2r
+*.otr
 __pycache__/
 *.py[cod]
 *.map
