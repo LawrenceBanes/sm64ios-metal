@@ -24,6 +24,8 @@ group0 = read("actors/group0.c")
 geo = read("actors/ios_kart/geo.inc.c")
 ui = read("src/pc/gfx/gfx_uikit.m")
 physics = read("src/game/ios_kart.c")
+touchscreen = read("src/pc/controller/controller_touchscreen.m")
+touch_axis = read("src/pc/controller/controller_touch_axis.h")
 
 ground = re.search(r"#define ACT_IOS_KART_GROUND\s+(0x[0-9A-Fa-f]+)", sm64)
 air = re.search(r"#define ACT_IOS_KART_AIR\s+(0x[0-9A-Fa-f]+)", sm64)
@@ -67,8 +69,24 @@ assert "ios_kart_can_mount" in physics and "ios_kart_can_dismount" in physics
 assert "ios_kart_velocity" in physics
 assert "ios_kart_wall_collision" in physics
 assert "IOS_KART_DRIFT_CHARGE" in physics and "IOS_KART_BOOST_DURATION" in physics
+assert "ios_kart_map_controller_input" in mario and "ios_kart_slope_acceleration" in mario
+assert "rawStick=(%d,%d)" in mario and "cameraYaw=%d" in mario
+assert "turnTarget = input->steer * turnScale" in physics
+assert "speedSign" not in physics
+assert "input->reverse" in physics and "input->brake" in physics
+assert "driftDirection" in physics and "lateralTarget = -driftSign" in physics
+assert "screenDelta * 127" in touch_axis and "screenDelta * 128" in touch_axis
+assert "touchscreen_axis_from_delta" in touchscreen
+assert "mappedN64=(%d,%d)" in touchscreen
+assert "tilt_body_ground_shell(m, startYaw)" in moving
+assert "MARIO_HAND_OPEN" in moving and "MARIO_HAND_OPEN" in airborne
+assert "geo_ios_kart_wheel_rotation" in behavior_code
+assert "ios_kart_tire_dl" in read("actors/ios_kart/model.inc.c")
+assert "ios_kart_steer_column" in read("actors/ios_kart/model.inc.c")
+assert "oAnimState" in mario and "oAngleVelYaw" in mario
+assert "joystick left/right steers" in ui and "Z only brakes" in ui
 reference = read("ios/MK64_KART_REFERENCE.md")
 assert "58cfcb022e10f83bc3b889d7e97508cae6837098" in reference
 assert "copies no MK64 source" in reference
 
-print("iOS kart action, collision, spawn, mount/dismount, and actor wiring checks passed")
+print("iOS kart controls, collision, spawn, mount/dismount, pose, wheel, and actor wiring checks passed")
