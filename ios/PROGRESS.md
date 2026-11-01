@@ -2,13 +2,13 @@
 
 ## Current state
 
-### Mission 52 — iOS wall portal gun prototype (Apple/device validation pending)
+### Mission 52 — iOS wall portal gun prototype (build 66.1; device testing pending)
 
 - Added independent blue/orange wall-portal placement requests to the native Gameplay action sheet, plus portal-gun enable/disable and reset controls. Placement aims along the active Lakitu camera ray, uses SM64's existing collision raycast, accepts only static near-vertical surfaces, and rejects placements whose full aperture does not fit the hit collision triangle. Replacing one color leaves the other in place.
 - Added ordinary SM64 display-list geometry and global portal actors for visible blue/orange frames. The center is an animated tinted fallback and does **not** display the linked world. The existing Metal renderer/presentation path is unchanged.
 - Crossing a paired aperture transforms Mario's position, velocity, slide vector, facing/input yaw, and camera history through the two wall frames. Mario's original collision mesh is never modified; only the matching wall triangle is skipped for Mario while his capsule fits the active aperture and moves into it. Destination collision correction, floor support, and headroom are checked before committing the traversal. Portals clear when the active area changes, and transit is disabled while mounted on Yoshi.
 - Added renderer-independent portal math tests for wall-to-wall momentum direction/magnitude, position mapping, front-to-back crossing, edge rejection, triangle fit, and exit collision correction, plus source guards for game-thread controls, paired traversal, Yoshi gating, area lifetime, and explicit linked-view fallback status.
-- Local `tests/run_linux_checks.sh` passes. Focused Clang syntax checking passes for the portal/gameplay/behavior/collision translation units, and the portal display-list model syntax check passes. Apple SDK compilation, unsigned IPA packaging, and all device behavior remain pending; especially verify on-device placement success, traversal timing, collision exits, and camera continuity before describing the mechanics as device-tested.
+- `tests/run_linux_checks.sh`, focused Clang syntax checks for the portal/gameplay/behavior/collision translation units, and portal display-list syntax checks pass. Apple SDK compilation and generated MSL validation passed in [run 41274763158](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41274763158). The full arm64 game build, unsigned IPA structure/dependency validation, and private release publication passed in [run 41274763131](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/41274763131). Private test IPA [build 66.1](https://github.com/LawrenceBanes/sm64ios-metal/releases/tag/ios-unsigned-ipa-66-1), SHA-256 `50a274d9e27b90761ffa499ff6c25520cd1a8778aa08c9a7b3db0d7b5b199504`. Compilation and packaging pass; placement, traversal, camera continuity, and fallback appearance still require iPhone testing.
 
 ### Mission 51 — playable character and Yoshi gameplay prototype (Apple/device validation pending)
 
