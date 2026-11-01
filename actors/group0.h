@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+extern const GeoLayout portal_blue_geo[];
+extern const GeoLayout portal_orange_geo[];
+
 // bubble
 extern const GeoLayout bubble_geo[];
 extern const GeoLayout purple_marble_geo[];

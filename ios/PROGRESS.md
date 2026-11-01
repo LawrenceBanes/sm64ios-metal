@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 52 — iOS wall portal gun prototype (Apple/device validation pending)
+
+- Added independent blue/orange wall-portal placement requests to the native Gameplay action sheet, plus portal-gun enable/disable and reset controls. Placement aims along the active Lakitu camera ray, uses SM64's existing collision raycast, accepts only static near-vertical surfaces, and rejects placements whose full aperture does not fit the hit collision triangle. Replacing one color leaves the other in place.
+- Added ordinary SM64 display-list geometry and global portal actors for visible blue/orange frames. The center is an animated tinted fallback and does **not** display the linked world. The existing Metal renderer/presentation path is unchanged.
+- Crossing a paired aperture transforms Mario's position, velocity, slide vector, facing/input yaw, and camera history through the two wall frames. Mario's original collision mesh is never modified; only the matching wall triangle is skipped for Mario while his capsule fits the active aperture and moves into it. Destination collision correction, floor support, and headroom are checked before committing the traversal. Portals clear when the active area changes, and transit is disabled while mounted on Yoshi.
+- Added renderer-independent portal math tests for wall-to-wall momentum direction/magnitude, position mapping, front-to-back crossing, edge rejection, triangle fit, and exit collision correction, plus source guards for game-thread controls, paired traversal, Yoshi gating, area lifetime, and explicit linked-view fallback status.
+- Local `tests/run_linux_checks.sh` passes. Focused Clang syntax checking passes for the portal/gameplay/behavior/collision translation units, and the portal display-list model syntax check passes. Apple SDK compilation, unsigned IPA packaging, and all device behavior remain pending; especially verify on-device placement success, traversal timing, collision exits, and camera continuity before describing the mechanics as device-tested.
+
 ### Mission 51 — playable character and Yoshi gameplay prototype (Apple/device validation pending)
 
 - Added a native UIKit Gameplay action sheet. It queues character/Yoshi requests for the game thread instead of mutating Mario state in a UIKit callback.
