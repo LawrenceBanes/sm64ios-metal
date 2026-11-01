@@ -11,6 +11,7 @@
 #import <objc/runtime.h>
 #import "gfx_uikit.h"
 #include "game/mario.h"
+#include "game/ios_reality.h"
 #if TARGET_OS_IOS
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
@@ -46,6 +47,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *renderModeButton;
 @property(nonatomic, strong) UIButton *graphicsButton;
 @property(nonatomic, strong) UIButton *gameplayButton;
+@property(nonatomic, strong) UIButton *realityButton;
 @property(nonatomic, strong) UIView *graphicsPanel;
 @property(nonatomic, strong) UISegmentedControl *presetControl;
 @property(nonatomic, strong) UISegmentedControl *scaleControl;
@@ -77,6 +79,8 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
 - (void)showGameplayActions;
+- (void)showRealityDebugger;
+- (void)showRealityCategory:(NSInteger)category;
 @end
 
 @interface SM64DiagnosticsPassthroughView : UIView
@@ -185,16 +189,19 @@ static int sm64RenderDiagnosticMode;
     self.renderModeButton = [self buttonWithTitle:@"Mode: Normal" action:@selector(cycleRenderDiagnosticMode)];
     self.graphicsButton = [self buttonWithTitle:@"Graphics" action:@selector(toggleGraphicsSettings)];
     self.gameplayButton = [self buttonWithTitle:@"Gameplay" action:@selector(showGameplayActions)];
+    self.realityButton = [self buttonWithTitle:@"Reality" action:@selector(showRealityDebugger)];
     [buttons addArrangedSubview:share];
     [buttons addArrangedSubview:probe];
     [buttons addArrangedSubview:self.textureCacheButton];
     [buttons addArrangedSubview:self.renderModeButton];
     [buttons addArrangedSubview:self.graphicsButton];
     [buttons addArrangedSubview:self.gameplayButton];
+    [buttons addArrangedSubview:self.realityButton];
     self.renderModeButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     self.textureCacheButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     self.graphicsButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     self.gameplayButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
+    self.realityButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     [self updateTextureCacheDiagnosticsButton];
     [self buildGraphicsSettingsPanel];
     self.recentStatus = [NSMutableArray array];
@@ -262,6 +269,100 @@ static int sm64RenderDiagnosticMode;
     UIPopoverPresentationController *popover = menu.popoverPresentationController;
     popover.sourceView = self.gameplayButton;
     popover.sourceRect = self.gameplayButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
+- (void)showRealityDebugger {
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Reality Debugger"
+        message:@"Live changes apply at the next game update. Conflicting effects are rejected. Experimental entries explain what engine support is still missing."
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray<NSString *> *titles = @[@"Physics", @"World", @"Player", @"Experimental", @"Object Actions"];
+    for (NSInteger category = 0; category < (NSInteger)titles.count; category++) {
+        [menu addAction:[UIAlertAction actionWithTitle:titles[category] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            [self showRealityCategory:category];
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Reset all Reality cheats" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action;
+        ios_reality_request_reset();
+        gfx_ios_diag_log("Reality Debugger reset queued for game thread");
+        [self appendStatus:@"Reality settings reset queued"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = menu.popoverPresentationController;
+    popover.sourceView = self.realityButton;
+    popover.sourceRect = self.realityButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
+- (void)showRealityCategory:(NSInteger)category {
+    const char *categoryName = "Physics";
+    switch (category) {
+        case IOS_REALITY_CATEGORY_WORLD: categoryName = "World"; break;
+        case IOS_REALITY_CATEGORY_PLAYER: categoryName = "Player"; break;
+        case IOS_REALITY_CATEGORY_EXPERIMENTAL: categoryName = "Experimental"; break;
+        case IOS_REALITY_CATEGORY_ACTION: categoryName = "Object Actions"; break;
+        default: break;
+    }
+    NSString *title = [NSString stringWithUTF8String:categoryName];
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:title
+        message:@"Tap a setting for details or to change it. Numeric values are configurable separately."
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSInteger index = 0; index < IOS_REALITY_CHEAT_COUNT; index++) {
+        const IOSRealityCheatDefinition *definition = ios_reality_definition((IOSRealityCheatId)index);
+        if (!definition || definition->category != category) continue;
+        IOSRealityCheatId cheatId = (IOSRealityCheatId)index;
+        NSString *name = [NSString stringWithUTF8String:definition->name];
+        if (!(definition->flags & IOS_REALITY_DEF_SUPPORTED)) {
+            NSString *row = [NSString stringWithFormat:@"%@ — unavailable", name];
+            NSString *reason = [NSString stringWithUTF8String:definition->unavailable_reason ?: "Not implemented"];
+            [menu addAction:[UIAlertAction actionWithTitle:row style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                (void)action;
+                UIAlertController *details = [UIAlertController alertControllerWithTitle:name message:reason preferredStyle:UIAlertControllerStyleAlert];
+                [details addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:details animated:YES completion:nil];
+                gfx_ios_diag_log("Reality Debugger unavailable feature opened id=%d name=%s reason=%s", (int)cheatId, definition->name, definition->unavailable_reason);
+            }]];
+        } else if (definition->flags & IOS_REALITY_DEF_ACTION) {
+            [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                (void)action;
+                ios_reality_request_action(cheatId);
+                gfx_ios_diag_log("Reality Debugger action queued id=%d name=%s", (int)cheatId, definition->name);
+                [self appendStatus:[NSString stringWithFormat:@"%@ queued for the game thread", name]];
+            }]];
+        } else {
+            BOOL enabled = ios_reality_global_is_enabled(cheatId);
+            NSString *row;
+            u8 parameter = ios_reality_global_parameter_index(cheatId);
+            if (definition->parameter_count && definition->parameter_values) {
+                if (parameter >= definition->parameter_count) parameter = definition->default_parameter;
+                row = [NSString stringWithFormat:@"%@  [%@ · %.2gx]", name, enabled ? @"ON" : @"OFF", definition->parameter_values[parameter]];
+            } else {
+                row = [NSString stringWithFormat:@"%@  [%@]", name, enabled ? @"ON" : @"OFF"];
+            }
+            [menu addAction:[UIAlertAction actionWithTitle:row style:enabled ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                (void)action;
+                ios_reality_request_toggle(cheatId);
+                gfx_ios_diag_log("Reality Debugger toggle queued id=%d name=%s current=%d", (int)cheatId, definition->name, enabled);
+                [self appendStatus:[NSString stringWithFormat:@"%@ %@ queued", name, enabled ? @"disable" : @"enable"]];
+            }]];
+            if (definition->parameter_count > 1 && definition->parameter_values) {
+                u8 next = (parameter + 1) % definition->parameter_count;
+                NSString *valueRow = [NSString stringWithFormat:@"%@ value → %.2gx", name, definition->parameter_values[next]];
+                [menu addAction:[UIAlertAction actionWithTitle:valueRow style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                    (void)action;
+                    ios_reality_request_parameter_cycle(cheatId);
+                    gfx_ios_diag_log("Reality Debugger parameter cycle queued id=%d name=%s nextIndex=%u nextValue=%.3f", (int)cheatId, definition->name, next, definition->parameter_values[next]);
+                    [self appendStatus:[NSString stringWithFormat:@"%@ value change queued", name]];
+                }]];
+            }
+        }
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = menu.popoverPresentationController;
+    popover.sourceView = self.realityButton;
+    popover.sourceRect = self.realityButton.bounds;
     [self presentViewController:menu animated:YES completion:nil];
 }
 

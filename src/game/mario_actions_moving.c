@@ -15,6 +15,7 @@
 #include "thread6.h"
 #include "pc/configfile.h"
 #include "pc/cheats.h"
+#include "game/ios_reality.h"
 
 struct LandingAction {
     s16 numFrames;
@@ -338,11 +339,12 @@ void apply_slope_accel(struct MarioState *m) {
 
 s32 apply_landing_accel(struct MarioState *m, f32 frictionFactor) {
     s32 stopped = FALSE;
+    f32 friction = ios_reality_global_policy()->friction_multiplier;
 
     apply_slope_accel(m);
 
     if (!mario_floor_is_slope(m)) {
-        m->forwardVel *= frictionFactor;
+        m->forwardVel *= 1.0f - (1.0f - frictionFactor) * friction;
         if (m->forwardVel * m->forwardVel < 1.0f) {
             mario_set_forward_vel(m, 0.0f);
             stopped = TRUE;
@@ -398,6 +400,7 @@ void update_shell_speed(struct MarioState *m) {
 s32 apply_slope_decel(struct MarioState *m, f32 decelCoef) {
     f32 decel;
     s32 stopped = FALSE;
+    decelCoef *= ios_reality_global_policy()->friction_multiplier;
 
     switch (mario_get_floor_class(m)) {
         case SURFACE_CLASS_VERY_SLIPPERY:
@@ -424,8 +427,9 @@ s32 apply_slope_decel(struct MarioState *m, f32 decelCoef) {
 
 s32 update_decelerating_speed(struct MarioState *m) {
     s32 stopped = FALSE;
+    f32 friction = ios_reality_global_policy()->friction_multiplier;
 
-    if ((m->forwardVel = approach_f32(m->forwardVel, 0.0f, 1.0f, 1.0f)) == 0.0f) {
+    if ((m->forwardVel = approach_f32(m->forwardVel, 0.0f, friction, friction)) == 0.0f) {
         stopped = TRUE;
     }
 

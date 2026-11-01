@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 54 — Reality Debugger runtime (in progress)
+
+- Audited CHEATERex's `mario_cheats.c/.h`, menu, `options_menu.c`, `pc/cheats.h`, and README. Its repository has no declared license or license file, so no code was copied. `ios/CHEATEREX_AUDIT.md` maps its feature ideas to local integration points and compatibility limits.
+- Added a stable-ID cheat registry with categories, defaults/configuration values, support/action flags, dependency/conflict metadata, lifecycle/update callbacks, explicit results, composed per-tick policy, a UIKit-to-game-thread atomic request bridge, bounded action requests, reset behavior, and a versioned pointer-free preset serializer.
+- Integrated Personal Gravity (including reversed direction values), Zero Gravity, Swim Anywhere, Time Stop composed with existing global stop state, enemy freezing, movement speed, jump height, friction, and visual-only Mario size. Goomba/Bob-omb spawning uses a bounded eight-actor tracker, nearby floor validation, area-aware ownership, and explicit cleanup. Gameplay changes are applied on the simulation thread.
+- Added a native `Reality` diagnostics control with Physics, World, Player, Experimental, and Object Actions sections. Advanced World Rotation, Recursive Mario, Possession, Non-Euclidean Castle, and Hover entries report their concrete missing engine/render prerequisites rather than enabling a no-op.
+- Added runtime and wiring regression tests. `tests/run_ios_reality_test.sh`, the Reality integration source check, and `tests/run_linux_checks.sh` pass locally; an existing `mario_actions_airborne.c` tautological comparison warning remains. The Linux host cannot validate UIKit runtime behavior or compile the iOS Objective-C UI against Apple SDKs; Xcode/IPA CI and device testing remain outstanding.
+
 ### Mission 53 — free-roaming kart prototype (Build 71.1 ready for device test)
 
 - Studied MK64 decompilation commit `58cfcb022e10f83bc3b889d7e97508cae6837098`; `MK64_KART_REFERENCE.md` records relevant acceleration, steering, drift-charge, hop, and mini-turbo routines and the pieces too tied to MK64's track/render engine. No MK64 source or copyrighted assets were copied.

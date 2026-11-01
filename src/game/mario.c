@@ -14,6 +14,7 @@
 #include "engine/surface_collision.h"
 #include "engine/surface_load.h"
 #include "game/portal_math.h"
+#include "game/ios_reality.h"
 #include "ios_kart.h"
 #include "surface_terrains.h"
 #include "game_init.h"
@@ -49,11 +50,15 @@
 #define IOS_PORTAL_STATUS(message) gfx_ios_portal_status(message)
 #define IOS_KART_EVENT(...) gfx_ios_diag_log(__VA_ARGS__)
 #define IOS_KART_STATUS(message) gfx_ios_portal_status(message)
+#define IOS_REALITY_EVENT(...) gfx_ios_diag_log(__VA_ARGS__)
+#define IOS_REALITY_STATUS(message) gfx_ios_portal_status(message)
 #else
 #define IOS_PORTAL_EVENT(...) ((void)0)
 #define IOS_PORTAL_STATUS(message) ((void)0)
 #define IOS_KART_EVENT(...) ((void)0)
 #define IOS_KART_STATUS(message) ((void)0)
+#define IOS_REALITY_EVENT(...) ((void)0)
+#define IOS_REALITY_STATUS(message) ((void)0)
 #endif
 #ifdef BETTERCAMERA
 #include "bettercamera.h"
@@ -98,6 +103,14 @@ static Vec3f sIOSKartLastGroundPosition;
 static s16 sIOSKartLastGroundYaw;
 static s32 sIOSKartHasGroundPosition;
 static u32 sIOSKartDiagnosticTicks;
+static struct {
+    struct Object *object;
+    const BehaviorScript *behavior;
+    f32 homeX, homeY, homeZ;
+} sIOSRealitySpawnedObjects[8];
+static struct Area *sIOSRealitySpawnArea;
+static s32 sIOSRealityLoggedResultId = -1;
+static s32 sIOSRealityLoggedResult = -1;
 
 #define IOS_KART_MOUNT_DISTANCE 130.0f
 #define IOS_KART_PI 3.14159265358979323846f
@@ -1183,6 +1196,106 @@ void mario_ios_sync_portal_object(struct Object *obj, s32 portalType) {
     }
 }
 
+static s32 mario_ios_spawn_reality_actor(struct MarioState *m, s32 spawnBobomb) {
+    const BehaviorScript *behavior = segmented_to_virtual(spawnBobomb ? bhvBobomb : bhvGoomba);
+    struct Object *object = NULL;
+    struct Surface *spawnFloor = NULL;
+    f32 spawnX, spawnY, spawnZ;
+    s32 i, freeSlot = -1;
+    f32 forwardX = sins(m->faceAngle[1]);
+    f32 forwardZ = coss(m->faceAngle[1]);
+
+    spawnX = m->pos[0] + forwardX * 180.0f;
+    spawnZ = m->pos[2] + forwardZ * 180.0f;
+    spawnY = find_floor(spawnX, m->floorHeight + 150.0f, spawnZ, &spawnFloor);
+    if (spawnFloor == NULL || spawnY < m->floorHeight - 200.0f || spawnY > m->floorHeight + 200.0f) {
+        IOS_REALITY_STATUS("No safe floor ahead to spawn actor");
+        IOS_REALITY_EVENT("Reality actor spawn rejected: no nearby floor at (%.1f,%.1f) currentFloor=%.1f", spawnX, spawnZ, m->floorHeight);
+        return FALSE;
+    }
+
+    if (sIOSRealitySpawnArea != gCurrentArea) {
+        memset(sIOSRealitySpawnedObjects, 0, sizeof(sIOSRealitySpawnedObjects));
+        sIOSRealitySpawnArea = gCurrentArea;
+    }
+    for (i = 0; i < (s32)(sizeof(sIOSRealitySpawnedObjects) / sizeof(sIOSRealitySpawnedObjects[0])); i++) {
+        struct Object *tracked = sIOSRealitySpawnedObjects[i].object;
+        if (tracked && (!(tracked->activeFlags & ACTIVE_FLAG_ACTIVE)
+                        || tracked->behavior != sIOSRealitySpawnedObjects[i].behavior
+                        || tracked->oHomeX != sIOSRealitySpawnedObjects[i].homeX
+                        || tracked->oHomeY != sIOSRealitySpawnedObjects[i].homeY
+                        || tracked->oHomeZ != sIOSRealitySpawnedObjects[i].homeZ)) {
+            sIOSRealitySpawnedObjects[i].object = NULL;
+            sIOSRealitySpawnedObjects[i].behavior = NULL;
+        }
+        if (sIOSRealitySpawnedObjects[i].object == NULL && freeSlot < 0) freeSlot = i;
+    }
+    if (freeSlot < 0) {
+        IOS_REALITY_STATUS("Reality Debugger spawn limit reached; clear spawned actors first");
+        IOS_REALITY_EVENT("Reality actor spawn rejected: tracked actor limit=%u", (unsigned)(sizeof(sIOSRealitySpawnedObjects) / sizeof(sIOSRealitySpawnedObjects[0])));
+        return FALSE;
+    }
+    object = spawn_object(m->marioObj, spawnBobomb ? MODEL_BLACK_BOBOMB : MODEL_GOOMBA, behavior);
+    if (object == NULL) {
+        IOS_REALITY_STATUS("Reality Debugger could not allocate actor");
+        IOS_REALITY_EVENT("Reality actor spawn rejected: object pool exhausted type=%s", spawnBobomb ? "bob-omb" : "goomba");
+        return FALSE;
+    }
+    object->oPosX = spawnX;
+    object->oPosY = spawnY;
+    object->oPosZ = spawnZ;
+    object->oHomeX = object->oPosX;
+    object->oHomeY = object->oPosY;
+    object->oHomeZ = object->oPosZ;
+    object->oMoveAngleYaw = m->faceAngle[1];
+    object->oFaceAngleYaw = m->faceAngle[1];
+    obj_set_gfx_pos_from_pos(object);
+    sIOSRealitySpawnedObjects[freeSlot].object = object;
+    sIOSRealitySpawnedObjects[freeSlot].behavior = behavior;
+    sIOSRealitySpawnedObjects[freeSlot].homeX = object->oHomeX;
+    sIOSRealitySpawnedObjects[freeSlot].homeY = object->oHomeY;
+    sIOSRealitySpawnedObjects[freeSlot].homeZ = object->oHomeZ;
+    IOS_REALITY_EVENT("Reality actor spawned type=%s object=%p position=(%.1f,%.1f,%.1f) area=%d", spawnBobomb ? "bob-omb" : "goomba", object, object->oPosX, object->oPosY, object->oPosZ, gCurrentArea ? gCurrentArea->index : -1);
+    IOS_REALITY_STATUS(spawnBobomb ? "Bob-omb spawned ahead" : "Goomba spawned ahead");
+    return TRUE;
+}
+
+static void mario_ios_clear_reality_actors(void) {
+    s32 i;
+    if (sIOSRealitySpawnArea != gCurrentArea) {
+        memset(sIOSRealitySpawnedObjects, 0, sizeof(sIOSRealitySpawnedObjects));
+        sIOSRealitySpawnArea = gCurrentArea;
+        IOS_REALITY_EVENT("Reality actor tracking reset after area transition area=%d", gCurrentArea ? gCurrentArea->index : -1);
+        return;
+    }
+    for (i = 0; i < (s32)(sizeof(sIOSRealitySpawnedObjects) / sizeof(sIOSRealitySpawnedObjects[0])); i++) {
+        struct Object *object = sIOSRealitySpawnedObjects[i].object;
+        if (object && (object->activeFlags & ACTIVE_FLAG_ACTIVE)
+            && object->behavior == sIOSRealitySpawnedObjects[i].behavior
+            && object->oHomeX == sIOSRealitySpawnedObjects[i].homeX
+            && object->oHomeY == sIOSRealitySpawnedObjects[i].homeY
+            && object->oHomeZ == sIOSRealitySpawnedObjects[i].homeZ) {
+            mark_obj_for_deletion(object);
+        }
+        sIOSRealitySpawnedObjects[i].object = NULL;
+        sIOSRealitySpawnedObjects[i].behavior = NULL;
+    }
+    IOS_REALITY_EVENT("Reality spawned actors marked for cleanup area=%d", gCurrentArea ? gCurrentArea->index : -1);
+    IOS_REALITY_STATUS("Spawned debugger actors cleared");
+}
+
+static void mario_ios_process_reality_actions(struct MarioState *m) {
+    u32 count;
+    if ((count = ios_reality_take_action_requests(IOS_REALITY_SPAWN_GOOMBA)) != 0) {
+        while (count--) mario_ios_spawn_reality_actor(m, FALSE);
+    }
+    if ((count = ios_reality_take_action_requests(IOS_REALITY_SPAWN_BOBOMB)) != 0) {
+        while (count--) mario_ios_spawn_reality_actor(m, TRUE);
+    }
+    if (ios_reality_take_action_requests(IOS_REALITY_CLEAR_SPAWNED_OBJECTS))
+        mario_ios_clear_reality_actors();
+}
+
 static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
     u32 requests = __atomic_exchange_n(&sIOSGameplayRequests, 0, __ATOMIC_ACQUIRE);
 
@@ -1969,6 +2082,7 @@ static void set_mario_y_vel_based_on_fspeed(struct MarioState *m, f32 initialVel
     if (m->squishTimer != 0 || m->quicksandDepth > 1.0f) {
         m->vel[1] *= 0.5f;
     }
+    m->vel[1] *= ios_reality_global_policy()->jump_multiplier;
 }
 
 /**
@@ -2569,6 +2683,11 @@ void update_mario_geometry_inputs(struct MarioState *m) {
     m->ceilHeight = vec3f_find_ceil(&m->pos[0], m->floorHeight, &m->ceil);
     gasLevel = find_poison_gas_level(m->pos[0], m->pos[2]);
     m->waterLevel = find_water_level(m->pos[0], m->pos[2]);
+    if (ios_reality_global_policy()->swim_anywhere
+        && !mario_ios_is_driving_kart(m) && !mario_ios_is_riding_yoshi(m)
+        && m->waterLevel < m->pos[1] + 64.0f) {
+        m->waterLevel = m->pos[1] + 64.0f;
+    }
 
     if (m->floor) {
         m->floorAngle = atan2s(m->floor->normal.z, m->floor->normal.x);
@@ -2967,6 +3086,11 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         mario_ios_validate_kart_area(gMarioState);
         if (sIOSPortalTraversalCooldown > 0) sIOSPortalTraversalCooldown--;
         update_mario_inputs(gMarioState);
+        {
+            const IOSRealityPolicy *policy = ios_reality_global_policy();
+            if (policy->movement_multiplier != 1.0f && !mario_ios_is_driving_kart(gMarioState))
+                gMarioState->intendedMag *= policy->movement_multiplier;
+        }
         mario_handle_special_floors(gMarioState);
         mario_process_interactions(gMarioState);
 
@@ -2977,7 +3101,26 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             return 0;
         }
 
+        ios_reality_process_requests();
+        {
+            IOSRealityCheatId resultId;
+            IOSRealityResult result = ios_reality_global_last_result(&resultId);
+            if (result != IOS_REALITY_RESULT_OK
+                && ((s32)resultId != sIOSRealityLoggedResultId || (s32)result != sIOSRealityLoggedResult)) {
+                const IOSRealityCheatDefinition *definition = ios_reality_definition(resultId);
+                const char *reason = result == IOS_REALITY_RESULT_CONFLICT ? "conflicts with an enabled cheat"
+                    : result == IOS_REALITY_RESULT_DEPENDENCY ? "required dependency is disabled"
+                    : result == IOS_REALITY_RESULT_UNAVAILABLE ? "feature is not implemented on this build"
+                    : "request is not a toggleable cheat";
+                IOS_REALITY_EVENT("Reality cheat rejected id=%d name=%s reason=%s", (s32)resultId,
+                    definition ? definition->name : "unknown", reason);
+                IOS_REALITY_STATUS(reason);
+            }
+            sIOSRealityLoggedResultId = (s32)resultId;
+            sIOSRealityLoggedResult = (s32)result;
+        }
         mario_ios_apply_gameplay_requests(gMarioState);
+        mario_ios_process_reality_actions(gMarioState);
         mario_ios_process_kart_interaction(gMarioState);
 
         // Damage, death, or another action transition may interrupt the
@@ -3039,6 +3182,12 @@ s32 execute_mario_action(UNUSED struct Object *o) {
 
         sink_mario_in_quicksand(gMarioState);
         squish_mario_model(gMarioState);
+        if (gMarioState->squishTimer == 0) {
+            f32 scale = ios_reality_global_policy()->mario_scale;
+            gMarioState->marioObj->header.gfx.scale[0] *= scale;
+            gMarioState->marioObj->header.gfx.scale[1] *= scale;
+            gMarioState->marioObj->header.gfx.scale[2] *= scale;
+        }
         set_submerged_cam_preset_and_spawn_bubbles(gMarioState);
         update_mario_health(gMarioState);
         update_mario_info_for_cam(gMarioState);
@@ -3086,6 +3235,8 @@ void init_mario(void) {
     struct Object *capObject;
 
     unused80339F10 = 0;
+
+    ios_reality_global_init();
 
     mario_ios_reset_portals();
 

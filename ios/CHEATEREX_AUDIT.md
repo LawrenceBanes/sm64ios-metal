@@ -1,0 +1,25 @@
+# CHEATERex compatibility audit
+
+Reference inspected: [`s4Ys369/CHEATERex`](https://github.com/s4Ys369/CHEATERex), default branch `nightly` (repository last pushed 2021-01-10). The repository API reports no declared license, and the recursive tree has no root `LICENSE`/`COPYING` file. Its README identifies the project as a fork/template but does not grant a reuse license. **No CHEATERex source is copied into this project.** The implementation below uses only feature-level ideas and our existing SM64 primitives.
+
+| Reference file | Observed approach/features | Reusable idea | Incompatible assumption / local adaptation |
+| --- | --- | --- | --- |
+| [`src/game/mario_cheats.c`](https://github.com/s4Ys369/CHEATERex/blob/nightly/src/game/mario_cheats.c) | Large input/update dispatcher; Swim Anywhere, Moon Gravity, Hover, speed/jump changes, enemy/play-as experiments, and direct object spawning. Some branches are action-specific. | Apply effects at explicit update boundaries; expose small value modifiers; use existing behavior/model pairs for spawning. | Monolithic loops and direct writes make combinations/order implicit; platform buttons and model enums are fork-specific. We use a single policy snapshot composed once per SM64 tick and consume UIKit requests on the game thread. |
+| [`src/game/mario_cheats.h`](https://github.com/s4Ys369/CHEATERex/blob/nightly/src/game/mario_cheats.h) | Declares standalone helper hooks and a DynOS-backed Swim Anywhere macro. | Small hook API between menu and gameplay. | `dynos_get_value` is unavailable here and ties state to another subsystem. Our registry has stable IDs, metadata, configuration, support state, and lifecycle callbacks. |
+| [`src/pc/cheats.h`](https://github.com/s4Ys369/CHEATERex/blob/nightly/src/pc/cheats.h) | One global `CheatList` of booleans and numeric menu indices. | Compact state is useful for a small fixed set. | No categories, compatibility declarations, lifecycle, or effect composition. This project already has a legacy `Cheats` struct; the new debugger does not grow or overload it. |
+| [`src/game/cheats_menu.h`](https://github.com/s4Ys369/CHEATERex/blob/nightly/src/game/cheats_menu.h) | Static localized strings and choice arrays for the options menu. | Group options and give value choices readable labels. | Requires the fork's text-generation pipeline and its in-game menu API. The iOS build uses the existing UIKit diagnostics host and submits typed commands to the game thread. |
+| [`src/game/options_menu.c`](https://github.com/s4Ys369/CHEATERex/blob/nightly/src/game/options_menu.c) | `EXT_OPTIONS_MENU`/DynOS guarded submenu graph that binds controls directly to cheat globals. | Category/submenu organization. | Compile-time options and direct UI/game state sharing are unsuitable for a live UIKit overlay. We keep the UI separate from simulation state and route mutations through a bounded command interface. |
+| [`README.md`](https://github.com/s4Ys369/CHEATERex/blob/nightly/README.md) | Lists Time Stop, Swim Anywhere, Moon Gravity, Hover, speed modifiers, object spawning, and playable-enemy experiments. | Feature inventory and control ideas. | Descriptive documentation is not implementation or a license grant. Each ported behavior is re-established against this branch's update, collision, and object lifecycle. |
+
+## Local integration points
+
+- `mario_step.c::apply_gravity` owns Mario's vertical acceleration and terminal velocity; the runtime gravity policy is applied there rather than by rewriting action code.
+- `mario.c::update_mario_geometry_inputs` and the automatic-action transition path derive underwater input/state; Swim Anywhere must alter Mario's effective water surface only for the player.
+- `object_list_processor.c::update_objects` already has a native time-stop mechanism. The cheat contributes its own active reason without clearing cutscene/dialogue time-stop state.
+- `mario_actions_moving.c::apply_slope_decel` and the shared deceleration helpers are the ground-friction extension points. This is distinct from texture/material or renderer state.
+- `mario.c::squish_mario_model` is the existing size presentation hook; movement collision probes remain separate and must be scaled consistently before claiming collision-size support.
+- `mario.c` already marshals native UIKit gameplay commands to the simulation thread. The Reality Debugger uses the same boundary; UIKit never edits `MarioState` or object state directly.
+
+## Experimental feature limits
+
+World Rotation needs a shared transform for render, collision, camera, inputs, moving platforms, and object attachment. Recursive Mario needs a renderer-supported nested view or a carefully bounded clone draw path. Possession needs an explicit player-control/AI handoff and collision contract. Non-Euclidean Castle needs paired collision spaces and safe actor/camera transitions; the current portal code is not a full linked-world renderer. These are not implemented as visual-only toggles. They remain marked unavailable until the matching simulation and rendering paths exist.
