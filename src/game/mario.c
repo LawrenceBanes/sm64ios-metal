@@ -60,6 +60,7 @@ enum {
 #define IOS_PORTAL_PLAYER_RADIUS 35.0f
 #define IOS_PORTAL_PLAYER_HEIGHT 160.0f
 #define IOS_PORTAL_EXIT_OFFSET 72.0f
+#define IOS_PORTAL_GROUND_SNAP_MAX 32.0f
 
 static volatile u32 sIOSGameplayRequests;
 static s32 sTemporaryLuigiPaletteEnabled;
@@ -299,6 +300,16 @@ static s16 mario_ios_transform_yaw(const PortalFrame *from, const PortalFrame *t
     return atan2s(transformed[0], transformed[2]);
 }
 
+static void mario_ios_reject_portal_exit(struct MarioState *m, Vec3f previousPosition) {
+    vec3f_copy(m->pos, previousPosition);
+    m->vel[0] = m->vel[1] = m->vel[2] = 0.0f;
+    mario_set_forward_vel(m, 0.0f);
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    m->marioObj->oPosX = m->pos[0];
+    m->marioObj->oPosY = m->pos[1];
+    m->marioObj->oPosZ = m->pos[2];
+}
+
 static s32 mario_ios_try_portal_traversal(struct MarioState *m, Vec3f previousPosition) {
     s32 sourceIndex;
     s32 destinationIndex;
@@ -342,24 +353,20 @@ static s32 mario_ios_try_portal_traversal(struct MarioState *m, Vec3f previousPo
                                 IOS_PORTAL_PLAYER_RADIUS);
         floorHeight = find_floor(attemptedPosition[0], attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT,
                                  attemptedPosition[2], &floor);
-        ceilHeight = find_ceil(attemptedPosition[0], attemptedPosition[1] + 80.0f,
-                               attemptedPosition[2], &ceil);
         if (!portal_exit_correction_is_safe(requestedPosition, attemptedPosition,
                                             IOS_PORTAL_PLAYER_RADIUS * 2.0f)
-            || floor == NULL
-            || (ceil != NULL && ceilHeight < attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT)
-            || (wasAirborne && floorHeight > attemptedPosition[1])) {
-            vec3f_copy(m->pos, previousPosition);
-            m->vel[0] = m->vel[1] = m->vel[2] = 0.0f;
-            mario_set_forward_vel(m, 0.0f);
-            vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
-            m->marioObj->oPosX = m->pos[0];
-            m->marioObj->oPosY = m->pos[1];
-            m->marioObj->oPosZ = m->pos[2];
+            || !portal_exit_resolve_floor(&attemptedPosition[1], floorHeight,
+                                          floor != NULL, wasAirborne,
+                                          IOS_PORTAL_GROUND_SNAP_MAX)) {
+            mario_ios_reject_portal_exit(m, previousPosition);
             return TRUE;
         }
-        if (!wasAirborne && floorHeight > attemptedPosition[1])
-            attemptedPosition[1] = floorHeight;
+        ceilHeight = find_ceil(attemptedPosition[0], attemptedPosition[1] + 80.0f,
+                               attemptedPosition[2], &ceil);
+        if (ceil != NULL && ceilHeight < attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT) {
+            mario_ios_reject_portal_exit(m, previousPosition);
+            return TRUE;
+        }
         vec3f_copy(transformedPosition, attemptedPosition);
         portal_transform_vector(from, to, m->vel, transformedVelocity);
         {

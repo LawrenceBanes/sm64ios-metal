@@ -38,6 +38,7 @@ assert "velocityToward < -0.5f" in mario
 assert "portal_transform_point(from, to, m->pos" in mario
 assert "portal_transform_vector(from, to, m->vel" in mario
 assert "portal_exit_correction_is_safe(requestedPosition, attemptedPosition" in mario
+assert "portal_exit_resolve_floor(&attemptedPosition[1]" in mario
 assert "pushDistanceSquared" not in mario
 assert "mario_ios_transform_yaw(from, to, m->faceAngle[1])" in mario
 assert "gLakituState.curPos" in mario and "gLakituState.goalPos" in mario

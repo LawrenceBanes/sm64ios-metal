@@ -68,6 +68,21 @@ static inline int portal_exit_correction_is_safe(const float requested[3],
     return dx * dx + dy * dy + dz * dz <= maximumCorrection * maximumCorrection;
 }
 
+/* Keep a grounded exit on a nearby floor without snapping to an unrelated
+ * upper platform. Airborne exits may continue falling, but cannot begin below
+ * the support surface. */
+static inline int portal_exit_resolve_floor(float *feetY, float floorHeight,
+                                            int hasFloor, int airborne,
+                                            float maximumGroundSnap) {
+    if (!hasFloor) return 0;
+    if (airborne) return floorHeight <= *feetY;
+    if (floorHeight > *feetY) {
+        if (floorHeight - *feetY > maximumGroundSnap) return 0;
+        *feetY = floorHeight;
+    }
+    return 1;
+}
+
 /* Returns true only for a front-to-back crossing through the clear part of a
  * rectangular wall aperture. Coordinates use Mario's feet as the Y position. */
 static inline int portal_segment_crosses(const PortalFrame *frame, const float previous[3],

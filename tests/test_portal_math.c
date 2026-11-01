@@ -65,11 +65,24 @@ static void test_exit_collision_correction(void) {
     assert(!portal_exit_correction_is_safe(requested, blockedExit, 70.0f));
 }
 
+static void test_exit_floor_safety(void) {
+    float groundedFeet = 100.0f;
+    float airborneFeet = 100.0f;
+
+    assert(!portal_exit_resolve_floor(&groundedFeet, 160.0f, 0, 0, 32.0f));
+    assert(portal_exit_resolve_floor(&groundedFeet, 120.0f, 1, 0, 32.0f));
+    assert(fabsf(groundedFeet - 120.0f) < 0.001f);
+    assert(!portal_exit_resolve_floor(&groundedFeet, 200.0f, 1, 0, 32.0f));
+    assert(portal_exit_resolve_floor(&airborneFeet, 20.0f, 1, 1, 32.0f));
+    assert(!portal_exit_resolve_floor(&airborneFeet, 120.0f, 1, 1, 32.0f));
+}
+
 int main(void) {
     test_wall_to_wall_momentum();
     test_aperture_crossing_and_edge_rejection();
     test_aperture_must_fit_host_triangle();
     test_exit_collision_correction();
-    puts("Portal frame, momentum, crossing, aperture, and exit-clearance tests passed");
+    test_exit_floor_safety();
+    puts("Portal frame, momentum, crossing, aperture, and exit-safety tests passed");
     return 0;
 }
