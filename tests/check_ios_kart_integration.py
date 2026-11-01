@@ -41,6 +41,9 @@ assert "buttonDown & B_BUTTON" in mario and "buttonDown & Z_TRIG" in mario
 assert "buttonDown & A_BUTTON" in mario
 assert "mario_ios_try_mount_kart" in mario and "mario_ios_dismount_kart" in mario
 assert "ios_kart_can_mount" in mario and "ios_kart_can_dismount" in mario
+assert "#define IOS_KART_MOUNT_DISTANCE 130.0f" in mario
+assert "mario_ios_get_kart_mount_position" in mario
+assert "m->pos[0] = mountPosition[0]" in mario
 assert "spawn_object(m->marioObj, MODEL_IOS_KART, bhvIOSKart)" in mario
 assert "mario_ios_get_kart_spawn_position" in mario and "floor->normal.y < 0.5f" in mario
 assert "mario_ios_find_driver_exit_position" in mario

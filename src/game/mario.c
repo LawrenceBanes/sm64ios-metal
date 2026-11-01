@@ -97,7 +97,7 @@ static Vec3f sIOSKartLastGroundPosition;
 static s16 sIOSKartLastGroundYaw;
 static s32 sIOSKartHasGroundPosition;
 
-#define IOS_KART_MOUNT_DISTANCE 210.0f
+#define IOS_KART_MOUNT_DISTANCE 130.0f
 #define IOS_KART_PI 3.14159265358979323846f
 #define IOS_KART_DRIVER_RENDER_HEIGHT 52.0f
 
@@ -316,8 +316,39 @@ static struct Object *mario_ios_spawn_or_reposition_kart(struct MarioState *m) {
     return kart;
 }
 
+static s32 mario_ios_get_kart_mount_position(struct Object *kart, Vec3f position,
+                                            struct Surface **mountFloor) {
+    struct Surface *floor = NULL;
+    struct Surface *ceil = NULL;
+    f32 floorHeight;
+    f32 originalX = kart->oPosX;
+    f32 originalZ = kart->oPosZ;
+    position[0] = kart->oPosX;
+    position[1] = kart->oPosY;
+    position[2] = kart->oPosZ;
+    floorHeight = find_floor(position[0], position[1] + 220.0f, position[2], &floor);
+    if (floor == NULL || floor->normal.y < 0.5f
+        || fabsf(floorHeight - kart->oPosY) > 100.0f) return FALSE;
+
+    position[1] = floorHeight + 1.0f;
+    f32_find_wall_collision(&position[0], &position[1], &position[2], 62.0f, 24.0f);
+    f32_find_wall_collision(&position[0], &position[1], &position[2], 74.0f, 180.0f);
+    floorHeight = find_floor(position[0], position[1] + 220.0f, position[2], &floor);
+    if (floor == NULL || floor->normal.y < 0.5f
+        || fabsf(floorHeight - kart->oPosY) > 100.0f
+        || sqrtf((position[0] - originalX) * (position[0] - originalX)
+               + (position[2] - originalZ) * (position[2] - originalZ)) > 100.0f) return FALSE;
+
+    position[1] = floorHeight;
+    if (vec3f_find_ceil(position, floorHeight, &ceil) - floorHeight < 220.0f) return FALSE;
+    *mountFloor = floor;
+    return TRUE;
+}
+
 static s32 mario_ios_try_mount_kart(struct MarioState *m) {
     struct Object *kart;
+    Vec3f mountPosition;
+    struct Surface *mountFloor = NULL;
     f32 distance;
     u32 group = m->action & ACT_GROUP_MASK;
     s32 grounded = (group == ACT_GROUP_STATIONARY || group == ACT_GROUP_MOVING)
@@ -332,12 +363,9 @@ static s32 mario_ios_try_mount_kart(struct MarioState *m) {
         IOS_KART_STATUS("No kart here. Use Gameplay menu to spawn one");
         return FALSE;
     }
-    kart = cur_obj_find_nearest_object_with_behavior(bhvIOSKart, &distance);
-    if (kart == NULL) {
-        IOS_KART_EVENT("Kart mount rejected reason=not found");
-        IOS_KART_STATUS("No kart here. Use Gameplay menu to spawn one");
-        return FALSE;
-    }
+    distance = sqrtf((m->pos[0] - kart->oPosX) * (m->pos[0] - kart->oPosX)
+                   + (m->pos[1] - kart->oPosY) * (m->pos[1] - kart->oPosY)
+                   + (m->pos[2] - kart->oPosZ) * (m->pos[2] - kart->oPosZ));
     if (!ios_kart_can_mount(distance, IOS_KART_MOUNT_DISTANCE, grounded,
                             m->riddenObj != NULL, kart->oAction != 0)) {
         if (distance > IOS_KART_MOUNT_DISTANCE) {
@@ -349,10 +377,25 @@ static s32 mario_ios_try_mount_kart(struct MarioState *m) {
         }
         return FALSE;
     }
+    if (!mario_ios_get_kart_mount_position(kart, mountPosition, &mountFloor)) {
+        IOS_KART_EVENT("Kart mount rejected reason=no safe driver position object=%p", kart);
+        IOS_KART_STATUS("Kart is blocked in; reposition it from Gameplay");
+        return FALSE;
+    }
     sIOSKartObject = kart;
     sIOSKartArea = gCurrentArea;
     m->riddenObj = kart;
     kart->oAction = 1;
+    kart->oPosX = mountPosition[0];
+    kart->oPosY = mountPosition[1];
+    kart->oPosZ = mountPosition[2];
+    m->pos[0] = mountPosition[0];
+    m->pos[1] = mountPosition[1];
+    m->pos[2] = mountPosition[2];
+    m->floor = mountFloor;
+    m->floorHeight = mountPosition[1];
+    m->floorAngle = atan2s(mountFloor->normal.z, mountFloor->normal.x);
+    m->faceAngle[1] = kart->oMoveAngleYaw;
     ios_kart_reset(&sIOSKartState, (f32)m->faceAngle[1] * (IOS_KART_PI / 32768.0f));
     vec3f_copy(sIOSKartLastGroundPosition, m->pos);
     sIOSKartLastGroundYaw = m->faceAngle[1];
