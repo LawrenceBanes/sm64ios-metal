@@ -5082,6 +5082,22 @@ const BehaviorScript bhvYoshi[] = {
     END_LOOP(),
 };
 
+// Separate test mount; the original rooftop/star-reward Yoshi stays unchanged.
+const BehaviorScript bhvRideableYoshi[] = {
+    BEGIN(OBJ_LIST_GENACTOR),
+    OR_INT(oFlags, (OBJ_FLAG_SET_FACE_YAW_TO_MOVE_YAW | OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE)),
+    LOAD_ANIMATIONS(oAnimations, yoshi_seg5_anims_05024100),
+    DROP_TO_FLOOR(),
+    SET_HITBOX(/*Radius*/ 160, /*Height*/ 150),
+    ANIMATE(0),
+    SET_HOME(),
+    CALL_NATIVE(bhv_rideable_yoshi_init),
+    BEGIN_LOOP(),
+        SET_INT(oIntangibleTimer, 0),
+        CALL_NATIVE(bhv_rideable_yoshi_loop),
+    END_LOOP(),
+};
+
 const BehaviorScript bhvKoopa[] = {
     BEGIN(OBJ_LIST_PUSHABLE),
     OR_INT(oFlags, (OBJ_FLAG_COMPUTE_ANGLE_TO_MARIO | OBJ_FLAG_COMPUTE_DIST_TO_MARIO | OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE)),

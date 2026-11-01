@@ -88,6 +88,10 @@ static const LevelScript script_func_local_4[] = {
     OBJECT(/*model*/ MODEL_BUTTERFLY, /*pos*/  5473,  775, -5322, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvButterfly),
     OBJECT(/*model*/ MODEL_BUTTERFLY, /*pos*/ -1504,  326,  3196, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvButterfly),
     OBJECT(/*model*/ MODEL_BUTTERFLY, /*pos*/ -1204,  326,  3296, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvButterfly),
+#if defined(IOS_BUILD)
+    // Test mount is intentionally iOS-only; desktop/stock game remains unchanged.
+    OBJECT(/*model*/ MODEL_YOSHI,     /*pos*/ -1328, 260, 4450, /*angle*/ 0, 180, 0, /*behParam*/ 0x00000000, /*beh*/ bhvRideableYoshi),
+#endif
     OBJECT(/*model*/ MODEL_YOSHI,     /*pos*/     0, 3174, -5625, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvYoshi),
     RETURN(),
 };

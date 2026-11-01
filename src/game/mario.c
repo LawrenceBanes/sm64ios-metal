@@ -42,6 +42,83 @@
 u32 unused80339F10;
 s8 filler80339F1C[20];
 
+enum {
+    IOS_GAMEPLAY_REQUEST_CHARACTER = 1 << 0,
+    IOS_GAMEPLAY_REQUEST_YOSHI = 1 << 1,
+};
+
+static volatile u32 sIOSGameplayRequests;
+static s32 sTemporaryLuigiPaletteEnabled;
+
+void mario_ios_request_character_switch(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_CHARACTER, __ATOMIC_RELAXED);
+}
+
+void mario_ios_request_yoshi_toggle(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_YOSHI, __ATOMIC_RELAXED);
+}
+
+s32 mario_ios_is_riding_yoshi(const struct MarioState *m) {
+    return m != NULL && m->riddenObj != NULL
+        && m->riddenObj->behavior == segmented_to_virtual(bhvRideableYoshi)
+        && (m->action == ACT_RIDING_YOSHI_GROUND || m->action == ACT_RIDING_YOSHI_AIR);
+}
+
+void mario_ios_detach_yoshi(struct MarioState *m) {
+    if (m != NULL && m->riddenObj != NULL
+        && m->riddenObj->behavior == segmented_to_virtual(bhvRideableYoshi)) {
+        m->riddenObj->oAction = 0;
+        m->riddenObj = NULL;
+    }
+}
+
+static struct Object *mario_ios_nearby_yoshi(f32 maxDistance) {
+    struct Object *yoshi;
+    f32 distance;
+
+    yoshi = cur_obj_find_nearest_object_with_behavior(bhvRideableYoshi, &distance);
+    return (yoshi != NULL && distance <= maxDistance) ? yoshi : NULL;
+}
+
+static s32 mario_ios_try_mount_yoshi(struct MarioState *m) {
+    struct Object *yoshi;
+    u32 actionGroup = m->action & ACT_GROUP_MASK;
+
+    if (m->riddenObj != NULL || (actionGroup != ACT_GROUP_STATIONARY && actionGroup != ACT_GROUP_MOVING)
+        || (m->action & (ACT_FLAG_AIR | ACT_FLAG_SWIMMING | ACT_FLAG_METAL_WATER | ACT_FLAG_INTANGIBLE))) {
+        return FALSE;
+    }
+
+    yoshi = mario_ios_nearby_yoshi(240.0f);
+    if (yoshi == NULL) {
+        return FALSE;
+    }
+
+    m->riddenObj = yoshi;
+    yoshi->oAction = 1;
+    mario_set_forward_vel(m, 0.0f);
+    return set_mario_action(m, ACT_RIDING_YOSHI_GROUND, 1);
+}
+
+static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
+    u32 requests = __atomic_exchange_n(&sIOSGameplayRequests, 0, __ATOMIC_ACQUIRE);
+
+    if (requests & IOS_GAMEPLAY_REQUEST_CHARACTER) {
+        sTemporaryLuigiPaletteEnabled = !sTemporaryLuigiPaletteEnabled;
+        mario_set_temporary_luigi_palette(sTemporaryLuigiPaletteEnabled);
+    }
+
+    if (requests & IOS_GAMEPLAY_REQUEST_YOSHI) {
+        if (mario_ios_is_riding_yoshi(m)) {
+            s32 wasAirborne = m->action == ACT_RIDING_YOSHI_AIR;
+            mario_ios_detach_yoshi(m);
+            set_mario_action(m, wasAirborne ? ACT_FREEFALL : ACT_WALKING, 0);
+        } else {
+            mario_ios_try_mount_yoshi(m);
+        }
+    }
+}
+
 /**************************************************
  *                    ANIMATIONS                  *
  **************************************************/
@@ -826,6 +903,13 @@ static u32 set_mario_action_airborne(struct MarioState *m, u32 action, u32 actio
 
         case ACT_RIDING_SHELL_JUMP:
             set_mario_y_vel_based_on_fspeed(m, 42.0f, 0.25f);
+            break;
+
+        case ACT_RIDING_YOSHI_AIR:
+            // actionArg 1 is used for a walk-off fall; 0 is a mounted jump.
+            if (actionArg == 0) {
+                set_mario_y_vel_based_on_fspeed(m, 42.0f, 0.25f);
+            }
             break;
 
         case ACT_JUMP:
@@ -1766,6 +1850,14 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             return 0;
         }
 
+        mario_ios_apply_gameplay_requests(gMarioState);
+
+        // A press close to the dedicated test Yoshi mounts instead of jumping.
+        // The same action is available from the native Gameplay diagnostics menu.
+        if (gMarioState->input & INPUT_A_PRESSED) {
+            mario_ios_try_mount_yoshi(gMarioState);
+        }
+
         // The function can loop through many action shifts in one frame,
         // which can lead to unexpected sub-frame behavior. Could potentially hang
         // if a loop of actions were found, but there has not been a situation found.
@@ -1801,12 +1893,25 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             }
         }
 
+        // Damage, death, cutscenes, and other normal action transitions release
+        // the test mount so the player never keeps a stale object attachment.
+        if (gMarioState->riddenObj != NULL
+            && gMarioState->riddenObj->behavior == segmented_to_virtual(bhvRideableYoshi)
+            && !mario_ios_is_riding_yoshi(gMarioState)) {
+            mario_ios_detach_yoshi(gMarioState);
+        }
+
         sink_mario_in_quicksand(gMarioState);
         squish_mario_model(gMarioState);
         set_submerged_cam_preset_and_spawn_bubbles(gMarioState);
         update_mario_health(gMarioState);
         update_mario_info_for_cam(gMarioState);
         mario_update_hitbox_and_cap_model(gMarioState);
+        if (mario_ios_is_riding_yoshi(gMarioState)) {
+            // Keep collision, floor, and camera coordinates at ground level while
+            // placing Mario visibly on Yoshi's back.
+            gMarioState->marioObj->header.gfx.pos[1] += 82.0f;
+        }
 
         // Both of the wind handling portions play wind audio only in
         // non-Japanese releases.
@@ -1845,6 +1950,7 @@ void init_mario(void) {
     unused80339F10 = 0;
 
     gMarioState->actionTimer = 0;
+    mario_set_temporary_luigi_palette(sTemporaryLuigiPaletteEnabled);
     gMarioState->framesSinceA = 0xFF;
     gMarioState->framesSinceB = 0xFF;
 
