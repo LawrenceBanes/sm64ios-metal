@@ -1,3 +1,6 @@
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
 #define _XOPEN_SOURCE 700
 #include "pc/fs/fs.h"
 
