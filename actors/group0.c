@@ -8,6 +8,7 @@
 // Note: This bin does not use bin IDs, unlike the other segmented bins.
 #include "mario/model.inc.c"
 #include "portal/model.inc.c"
+#include "ios_kart/model.inc.c"
 
 // Temporary Luigi look: reuse Mario's geometry and animations while changing
 // the shared red shirt/cap lighting to green. This is not a separate Luigi model.

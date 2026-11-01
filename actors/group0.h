@@ -5,6 +5,8 @@
 
 extern const GeoLayout portal_blue_geo[];
 extern const GeoLayout portal_orange_geo[];
+extern const GeoLayout ios_kart_geo[];
+extern const Gfx ios_kart_display_list[];
 
 // bubble
 extern const GeoLayout bubble_geo[];

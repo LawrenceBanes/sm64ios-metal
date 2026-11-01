@@ -14,6 +14,7 @@
 #include "engine/surface_collision.h"
 #include "engine/surface_load.h"
 #include "game/portal_math.h"
+#include "ios_kart.h"
 #include "surface_terrains.h"
 #include "game_init.h"
 #include "interaction.h"
@@ -37,6 +38,7 @@
 #include "print.h"
 #include "save_file.h"
 #include "sound_init.h"
+#include "spawn_object.h"
 #include "thread6.h"
 #include "pc/configfile.h"
 #include "pc/cheats.h"
@@ -44,9 +46,13 @@
 #include "pc/gfx/gfx_ios_diagnostics.h"
 #define IOS_PORTAL_EVENT(...) gfx_ios_diag_log(__VA_ARGS__)
 #define IOS_PORTAL_STATUS(message) gfx_ios_portal_status(message)
+#define IOS_KART_EVENT(...) gfx_ios_diag_log(__VA_ARGS__)
+#define IOS_KART_STATUS(message) gfx_ios_portal_status(message)
 #else
 #define IOS_PORTAL_EVENT(...) ((void)0)
 #define IOS_PORTAL_STATUS(message) ((void)0)
+#define IOS_KART_EVENT(...) ((void)0)
+#define IOS_KART_STATUS(message) ((void)0)
 #endif
 #ifdef BETTERCAMERA
 #include "bettercamera.h"
@@ -62,6 +68,7 @@ enum {
     IOS_GAMEPLAY_REQUEST_PORTAL_ORANGE = 1 << 3,
     IOS_GAMEPLAY_REQUEST_PORTAL_ENABLE = 1 << 4,
     IOS_GAMEPLAY_REQUEST_PORTAL_RESET = 1 << 5,
+    IOS_GAMEPLAY_REQUEST_KART_SPAWN = 1 << 6,
 };
 
 #define IOS_PORTAL_HALF_WIDTH 78.0f
@@ -83,6 +90,16 @@ static s32 sIOSPortalGunEnabled = TRUE;
 static s32 sIOSPortalTraversalCooldown;
 static struct Area *sIOSPortalArea;
 static s32 sIOSPortalObjectVisibleLogged[2];
+static IOSKartState sIOSKartState;
+static struct Object *sIOSKartObject;
+static struct Area *sIOSKartArea;
+static Vec3f sIOSKartLastGroundPosition;
+static s16 sIOSKartLastGroundYaw;
+static s32 sIOSKartHasGroundPosition;
+
+#define IOS_KART_MOUNT_DISTANCE 210.0f
+#define IOS_KART_PI 3.14159265358979323846f
+#define IOS_KART_DRIVER_RENDER_HEIGHT 52.0f
 
 static const char *mario_ios_portal_name(s32 portalType) {
     return portalType == MARIO_IOS_PORTAL_BLUE ? "blue" : "orange";
@@ -179,6 +196,389 @@ static s32 mario_ios_try_mount_yoshi(struct MarioState *m) {
     yoshi->oAction = 1;
     mario_set_forward_vel(m, 0.0f);
     return set_mario_action(m, ACT_RIDING_YOSHI_GROUND, 1);
+}
+
+static void mario_ios_validate_kart_area(struct MarioState *m) {
+    if (sIOSKartArea != gCurrentArea) {
+        if (m != NULL && m->riddenObj == sIOSKartObject) m->riddenObj = NULL;
+        sIOSKartObject = NULL;
+        sIOSKartArea = gCurrentArea;
+        ios_kart_reset(&sIOSKartState, 0.0f);
+        sIOSKartHasGroundPosition = FALSE;
+        IOS_KART_EVENT("Kart state cleared on area transition area=%d", gCurrentArea ? gCurrentArea->index : -1);
+    }
+}
+
+static struct Object *mario_ios_find_area_kart(void) {
+    f32 distance;
+    if (sIOSKartArea != gCurrentArea) mario_ios_validate_kart_area(gMarioState);
+    if (sIOSKartObject != NULL) return sIOSKartObject;
+    sIOSKartObject = cur_obj_find_nearest_object_with_behavior(bhvIOSKart, &distance);
+    if (sIOSKartObject != NULL) sIOSKartArea = gCurrentArea;
+    return sIOSKartObject;
+}
+
+s32 mario_ios_is_driving_kart(const struct MarioState *m) {
+    return m != NULL && sIOSKartArea == gCurrentArea && sIOSKartObject != NULL
+        && m->riddenObj == sIOSKartObject
+        && (m->action == ACT_IOS_KART_GROUND || m->action == ACT_IOS_KART_AIR);
+}
+
+void mario_ios_register_kart(struct Object *kart) {
+    if (kart == NULL) return;
+    if (sIOSKartArea != gCurrentArea || sIOSKartObject == NULL) {
+        sIOSKartObject = kart;
+        sIOSKartArea = gCurrentArea;
+        ios_kart_reset(&sIOSKartState, (f32)kart->oMoveAngleYaw * (IOS_KART_PI / 32768.0f));
+        sIOSKartLastGroundPosition[0] = kart->oPosX;
+        sIOSKartLastGroundPosition[1] = kart->oPosY;
+        sIOSKartLastGroundPosition[2] = kart->oPosZ;
+        sIOSKartLastGroundYaw = kart->oMoveAngleYaw;
+        sIOSKartHasGroundPosition = TRUE;
+        IOS_KART_EVENT("Kart actor registered object=%p area=%d position=(%.1f,%.1f,%.1f)", kart,
+                       gCurrentArea ? gCurrentArea->index : -1, kart->oPosX, kart->oPosY, kart->oPosZ);
+    }
+}
+
+static s32 mario_ios_get_kart_spawn_position(struct MarioState *m, Vec3f position) {
+    struct Surface *floor = NULL;
+    struct Surface *ceil = NULL;
+    f32 yaw = (f32)m->faceAngle[1] * (IOS_KART_PI / 32768.0f);
+    f32 x = m->pos[0] + sinf(yaw) * 180.0f;
+    f32 z = m->pos[2] + cosf(yaw) * 180.0f;
+    f32 y = find_floor(x, m->pos[1] + 400.0f, z, &floor);
+    if (floor == NULL || floor->normal.y < 0.5f || y < m->pos[1] - 240.0f || y > m->pos[1] + 180.0f) {
+        IOS_KART_EVENT("Kart placement rejected reason=%s floorHeight=%.1f playerY=%.1f",
+                       floor == NULL ? "no floor" : "unsafe floor or height", y, m->pos[1]);
+        IOS_KART_STATUS("No safe ground nearby for a kart");
+        return FALSE;
+    }
+    y += 1.0f;
+    f32_find_wall_collision(&x, &y, &z, 62.0f, 24.0f);
+    f32_find_wall_collision(&x, &y, &z, 74.0f, 180.0f);
+    y = find_floor(x, y + 220.0f, z, &floor);
+    position[0] = x;
+    position[1] = y;
+    position[2] = z;
+    if (floor == NULL || floor->normal.y < 0.5f
+        || y < m->pos[1] - 240.0f || y > m->pos[1] + 180.0f
+        || sqrtf((x - m->pos[0]) * (x - m->pos[0]) + (z - m->pos[2]) * (z - m->pos[2])) < 125.0f
+        || vec3f_find_ceil(position, y, &ceil) - y < 220.0f) {
+        IOS_KART_EVENT("Kart placement rejected after collision clearance position=(%.1f,%.1f,%.1f)", x, y, z);
+        IOS_KART_STATUS("Nearby space is too tight for the kart");
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void mario_ios_position_kart(struct MarioState *m, struct Object *kart, const Vec3f position) {
+    f32 yaw = (f32)m->faceAngle[1] * (IOS_KART_PI / 32768.0f);
+    kart->oPosX = position[0];
+    kart->oPosY = position[1];
+    kart->oPosZ = position[2];
+    kart->oHomeX = kart->oPosX;
+    kart->oHomeY = kart->oPosY;
+    kart->oHomeZ = kart->oPosZ;
+    kart->oMoveAngleYaw = m->faceAngle[1];
+    kart->oAction = 0;
+    kart->oForwardVel = 0.0f;
+    ios_kart_reset(&sIOSKartState, yaw);
+    sIOSKartLastGroundPosition[0] = kart->oPosX;
+    sIOSKartLastGroundPosition[1] = kart->oPosY;
+    sIOSKartLastGroundPosition[2] = kart->oPosZ;
+    sIOSKartLastGroundYaw = kart->oMoveAngleYaw;
+    sIOSKartHasGroundPosition = TRUE;
+}
+
+void mario_ios_request_kart_spawn(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_KART_SPAWN, __ATOMIC_RELAXED);
+}
+
+static struct Object *mario_ios_spawn_or_reposition_kart(struct MarioState *m) {
+    Vec3f position;
+    if (!mario_ios_get_kart_spawn_position(m, position)) return NULL;
+
+    struct Object *kart = mario_ios_find_area_kart();
+    if (kart == NULL) {
+        kart = spawn_object(m->marioObj, MODEL_IOS_KART, bhvIOSKart);
+        if (kart == NULL) {
+            IOS_KART_EVENT("Kart spawn failed: object pool returned null");
+            IOS_KART_STATUS("Kart could not spawn");
+            return NULL;
+        }
+        sIOSKartObject = kart;
+        sIOSKartArea = gCurrentArea;
+    }
+    mario_ios_position_kart(m, kart, position);
+    IOS_KART_EVENT("Kart spawned/repositioned object=%p area=%d position=(%.1f,%.1f,%.1f); use L to mount", kart,
+                   gCurrentArea ? gCurrentArea->index : -1, kart->oPosX, kart->oPosY, kart->oPosZ);
+    IOS_KART_STATUS("Kart ready nearby. Press L to drive");
+    return kart;
+}
+
+static s32 mario_ios_try_mount_kart(struct MarioState *m) {
+    struct Object *kart;
+    f32 distance;
+    u32 group = m->action & ACT_GROUP_MASK;
+    s32 grounded = (group == ACT_GROUP_STATIONARY || group == ACT_GROUP_MOVING)
+        && !(m->action & (ACT_FLAG_AIR | ACT_FLAG_SWIMMING | ACT_FLAG_METAL_WATER | ACT_FLAG_INTANGIBLE))
+        && m->floor != NULL;
+    if (!grounded || m->riddenObj != NULL) {
+        IOS_KART_STATUS("Land and dismount your current ride first");
+        return FALSE;
+    }
+    kart = mario_ios_find_area_kart();
+    if (kart == NULL) {
+        IOS_KART_STATUS("No kart here. Use Gameplay menu to spawn one");
+        return FALSE;
+    }
+    kart = cur_obj_find_nearest_object_with_behavior(bhvIOSKart, &distance);
+    if (kart == NULL) {
+        IOS_KART_EVENT("Kart mount rejected reason=not found");
+        IOS_KART_STATUS("No kart here. Use Gameplay menu to spawn one");
+        return FALSE;
+    }
+    if (!ios_kart_can_mount(distance, IOS_KART_MOUNT_DISTANCE, grounded,
+                            m->riddenObj != NULL, kart->oAction != 0)) {
+        if (distance > IOS_KART_MOUNT_DISTANCE) {
+            IOS_KART_EVENT("Kart mount rejected reason=too far distance=%.1f", distance);
+            IOS_KART_STATUS("Walk closer to the kart and press L");
+        } else {
+            IOS_KART_EVENT("Kart mount rejected reason=occupied object=%p", kart);
+            IOS_KART_STATUS("That kart is already occupied");
+        }
+        return FALSE;
+    }
+    sIOSKartObject = kart;
+    sIOSKartArea = gCurrentArea;
+    m->riddenObj = kart;
+    kart->oAction = 1;
+    ios_kart_reset(&sIOSKartState, (f32)m->faceAngle[1] * (IOS_KART_PI / 32768.0f));
+    vec3f_copy(sIOSKartLastGroundPosition, m->pos);
+    sIOSKartLastGroundYaw = m->faceAngle[1];
+    sIOSKartHasGroundPosition = TRUE;
+    m->vel[0] = m->vel[1] = m->vel[2] = 0.0f;
+    m->slideVelX = m->slideVelZ = 0.0f;
+    mario_set_forward_vel(m, 0.0f);
+    IOS_KART_EVENT("Kart mounted object=%p distance=%.1f driver=%s position=(%.1f,%.1f,%.1f)", kart, distance,
+                   sTemporaryLuigiPaletteEnabled ? "Luigi" : "Mario", m->pos[0], m->pos[1], m->pos[2]);
+    IOS_KART_STATUS("Driving. Joystick steers; B accelerates; Z brakes/reverses; hold A to drift");
+    return set_mario_action(m, ACT_IOS_KART_GROUND, 1);
+}
+
+static void mario_ios_clear_kart_mount(struct MarioState *m) {
+    struct Object *kart;
+    if (m == NULL || sIOSKartArea != gCurrentArea || m->riddenObj != sIOSKartObject) return;
+    kart = sIOSKartObject;
+    kart->oAction = 0;
+    m->riddenObj = NULL;
+    sIOSKartState.forwardSpeed = 0.0f;
+    sIOSKartState.lateralSpeed = 0.0f;
+    sIOSKartState.yawRateRadians = 0.0f;
+    sIOSKartState.drifting = FALSE;
+    sIOSKartState.boostReady = FALSE;
+    sIOSKartState.driftChargeFrames = 0;
+    sIOSKartState.boostFrames = 0;
+}
+
+static void mario_ios_restore_kart_to_last_ground(void) {
+    if (sIOSKartObject == NULL || !sIOSKartHasGroundPosition) return;
+    sIOSKartObject->oPosX = sIOSKartLastGroundPosition[0];
+    sIOSKartObject->oPosY = sIOSKartLastGroundPosition[1];
+    sIOSKartObject->oPosZ = sIOSKartLastGroundPosition[2];
+    sIOSKartObject->oMoveAngleYaw = sIOSKartLastGroundYaw;
+    sIOSKartObject->oAction = 0;
+}
+
+static void mario_ios_detach_interrupted_kart(struct MarioState *m) {
+    if (m == NULL || sIOSKartObject == NULL || sIOSKartArea != gCurrentArea
+        || m->riddenObj != sIOSKartObject || mario_ios_is_driving_kart(m)) return;
+    if (m->floor == NULL || (m->action & ACT_GROUP_MASK) == ACT_GROUP_AIRBORNE) {
+        mario_ios_restore_kart_to_last_ground();
+    } else {
+        sIOSKartObject->oPosX = m->pos[0];
+        sIOSKartObject->oPosY = m->pos[1];
+        sIOSKartObject->oPosZ = m->pos[2];
+        sIOSKartObject->oMoveAngleYaw = m->faceAngle[1];
+        sIOSKartObject->oAction = 0;
+    }
+    mario_ios_clear_kart_mount(m);
+    IOS_KART_EVENT("Kart mount released after interrupted action action=0x%08x", m->action);
+}
+
+static s32 mario_ios_find_driver_exit_position(struct MarioState *m, Vec3f exitPosition,
+                                              struct Surface **exitFloor) {
+    s32 side;
+    for (side = 1; side >= -1; side -= 2) {
+        struct Surface *floor = NULL;
+        struct Surface *ceil = NULL;
+        Vec3f pos;
+        f32 floorHeight;
+        pos[0] = m->pos[0] + coss(m->faceAngle[1]) * 92.0f * side;
+        pos[1] = m->pos[1];
+        pos[2] = m->pos[2] - sins(m->faceAngle[1]) * 92.0f * side;
+        floorHeight = find_floor(pos[0], pos[1] + 120.0f, pos[2], &floor);
+        if (floor == NULL || floor->normal.y < 0.5f
+            || floorHeight < m->pos[1] - 100.0f || floorHeight > m->pos[1] + 80.0f) continue;
+        pos[1] = floorHeight;
+        if (vec3f_find_ceil(pos, floorHeight, &ceil) - floorHeight < 160.0f) continue;
+        f32_find_wall_collision(&pos[0], &pos[1], &pos[2], 35.0f, 24.0f);
+        floorHeight = find_floor(pos[0], pos[1] + 80.0f, pos[2], &floor);
+        if (floor == NULL || floor->normal.y < 0.5f
+            || floorHeight < m->pos[1] - 100.0f || floorHeight > m->pos[1] + 80.0f) continue;
+        pos[1] = floorHeight;
+        if (vec3f_find_ceil(pos, floorHeight, &ceil) - floorHeight < 160.0f) continue;
+        vec3f_copy(exitPosition, pos);
+        *exitFloor = floor;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void mario_ios_dismount_kart(struct MarioState *m, s32 keepCurrentAction) {
+    Vec3f exitPosition;
+    struct Surface *exitFloor = NULL;
+    if (!mario_ios_is_driving_kart(m)) return;
+    if (!ios_kart_can_dismount(m->action != ACT_IOS_KART_AIR, TRUE)) {
+        IOS_KART_STATUS("Land before exiting the kart");
+        return;
+    }
+    if (!mario_ios_find_driver_exit_position(m, exitPosition, &exitFloor)) {
+        IOS_KART_STATUS("No safe space beside the kart to exit");
+        return;
+    }
+    if (!ios_kart_can_dismount(TRUE, exitFloor != NULL)) return;
+    sIOSKartObject->oPosX = m->pos[0];
+    sIOSKartObject->oPosY = m->pos[1];
+    sIOSKartObject->oPosZ = m->pos[2];
+    sIOSKartObject->oMoveAngleYaw = m->faceAngle[1];
+    mario_ios_kart_record_ground_position(m, TRUE);
+    mario_ios_clear_kart_mount(m);
+    vec3f_copy(m->pos, exitPosition);
+    m->floor = exitFloor;
+    m->floorHeight = m->pos[1];
+    m->floorAngle = atan2s(exitFloor->normal.z, exitFloor->normal.x);
+    mario_set_forward_vel(m, 0.0f);
+    m->marioObj->header.gfx.pos[0] = m->pos[0];
+    m->marioObj->header.gfx.pos[1] = m->pos[1];
+    m->marioObj->header.gfx.pos[2] = m->pos[2];
+    m->faceAngle[0] = 0;
+    m->faceAngle[2] = 0;
+    if (!keepCurrentAction) set_mario_action(m, ACT_WALKING, 0);
+    IOS_KART_EVENT("Kart dismounted position=(%.1f,%.1f,%.1f)", m->pos[0], m->pos[1], m->pos[2]);
+    IOS_KART_STATUS("Kart dismounted");
+}
+
+static void mario_ios_process_kart_interaction(struct MarioState *m) {
+    if (m->controller == NULL || !(m->controller->buttonPressed & L_TRIG)) return;
+    if (mario_ios_is_driving_kart(m)) {
+        mario_ios_dismount_kart(m, FALSE);
+    } else {
+        mario_ios_try_mount_kart(m);
+    }
+}
+
+void mario_ios_update_kart(struct MarioState *m, s32 grounded, IOSKartEvents *events) {
+    IOSKartInput input = {0};
+    f32 stickX = 0.0f, stickY = 0.0f, slopeDot;
+    f32 velocityX, velocityZ;
+    s32 yaw;
+    if (m->controller != NULL) {
+        stickX = m->controller->stickX / 64.0f;
+        stickY = m->controller->stickY / 64.0f;
+        input.throttle = (m->controller->buttonDown & B_BUTTON) ? 1.0f : fmaxf(stickY, 0.0f);
+        input.brake = (m->controller->buttonDown & Z_TRIG) ? 1.0f : fmaxf(-stickY, 0.0f);
+        input.steer = fmaxf(-1.0f, fminf(stickX, 1.0f));
+        input.driftHeld = (m->controller->buttonDown & A_BUTTON) != 0;
+        input.hopPressed = (m->controller->buttonPressed & A_BUTTON) != 0;
+    }
+    input.grounded = grounded;
+    input.traction = mario_floor_is_slippery(m) ? 0.68f : 1.0f;
+    if (grounded && m->floor != NULL) {
+        f32 normalY = fmaxf(m->floor->normal.y, 0.25f);
+        slopeDot = m->floor->normal.x * sinf(sIOSKartState.headingRadians)
+                 + m->floor->normal.z * cosf(sIOSKartState.headingRadians);
+        input.slopeAcceleration = fmaxf(-0.9f, fminf(0.9f, -0.38f * slopeDot / normalY));
+    }
+
+    ios_kart_update(&sIOSKartState, &input, events);
+    yaw = (s32)(sIOSKartState.headingRadians * (32768.0f / IOS_KART_PI));
+    m->faceAngle[1] = (s16)yaw;
+    m->forwardVel = sIOSKartState.forwardSpeed;
+    ios_kart_velocity(&sIOSKartState, &velocityX, &velocityZ);
+    m->vel[0] = m->slideVelX = velocityX;
+    m->vel[2] = m->slideVelZ = velocityZ;
+    if (grounded) m->vel[1] = 0.0f;
+
+    if (events->driftStarted) {
+        IOS_KART_EVENT("Kart powerslide started speed=%.1f steer=%.2f", sIOSKartState.forwardSpeed, input.steer);
+        IOS_KART_STATUS("Powerslide");
+    }
+    if (events->boostReady) {
+        IOS_KART_EVENT("Kart mini-turbo ready charge=%d", sIOSKartState.driftChargeFrames);
+        IOS_KART_STATUS("Mini-turbo ready. Release A to boost");
+    }
+    if (events->boostActivated) {
+        IOS_KART_EVENT("Kart mini-turbo activated speed=%.1f duration=%d", sIOSKartState.forwardSpeed,
+                       sIOSKartState.boostFrames);
+        IOS_KART_STATUS("Mini-turbo!");
+    }
+}
+
+void mario_ios_kart_record_ground_position(struct MarioState *m, s32 grounded) {
+    if (!grounded || m == NULL || sIOSKartObject == NULL || sIOSKartArea != gCurrentArea) return;
+    vec3f_copy(sIOSKartLastGroundPosition, m->pos);
+    sIOSKartLastGroundYaw = m->faceAngle[1];
+    sIOSKartHasGroundPosition = TRUE;
+}
+
+void mario_ios_kart_wall_collision(struct MarioState *m) {
+    f32 velocityX, velocityZ;
+    if (m->wall == NULL) return;
+    ios_kart_wall_collision(&sIOSKartState, m->wall->normal.x, m->wall->normal.z);
+    m->forwardVel = sIOSKartState.forwardSpeed;
+    ios_kart_velocity(&sIOSKartState, &velocityX, &velocityZ);
+    m->vel[0] = m->slideVelX = velocityX;
+    m->vel[2] = m->slideVelZ = velocityZ;
+    IOS_KART_EVENT("Kart wall response normal=(%.2f,%.2f) speed=%.1f", m->wall->normal.x,
+                   m->wall->normal.z, sIOSKartState.forwardSpeed);
+}
+
+s32 mario_ios_kart_boost_active(void) { return sIOSKartState.boostFrames > 0; }
+s32 mario_ios_kart_boost_ready(void) { return sIOSKartState.boostReady; }
+
+void mario_ios_sync_kart_object(struct Object *kart) {
+    struct MarioState *m = gMarioState;
+    f32 pulse = 1.0f;
+    if (kart == NULL) return;
+    if (kart == sIOSKartObject && sIOSKartArea == gCurrentArea && mario_ios_is_driving_kart(m)) {
+        kart->oPosX = m->pos[0];
+        kart->oPosY = m->pos[1];
+        kart->oPosZ = m->pos[2];
+        kart->oMoveAngleYaw = m->faceAngle[1];
+        if (m->floor != NULL && m->floor->normal.y > 0.1f) {
+            f32 sinHeading = sinf(sIOSKartState.headingRadians);
+            f32 cosHeading = cosf(sIOSKartState.headingRadians);
+            f32 forwardSlope = m->floor->normal.x * sinHeading + m->floor->normal.z * cosHeading;
+            f32 sideSlope = m->floor->normal.x * cosHeading - m->floor->normal.z * sinHeading;
+            kart->oMoveAnglePitch = atan2s(-forwardSlope, m->floor->normal.y);
+            kart->oMoveAngleRoll = atan2s(-sideSlope, m->floor->normal.y);
+        } else {
+            kart->oMoveAnglePitch = 0;
+            kart->oMoveAngleRoll = 0;
+        }
+        if (sIOSKartState.drifting) {
+            kart->oMoveAngleRoll -= (s16)(sIOSKartState.yawRateRadians * 4500.0f);
+        }
+        if (sIOSKartState.boostFrames > 0) pulse += 0.04f + 0.02f * sins((s16)(gGlobalTimer * 0x1800));
+        obj_scale(kart, pulse);
+    } else if (kart->oAction == 1) {
+        kart->oAction = 0;
+        obj_scale(kart, 1.0f);
+    }
+    obj_set_gfx_pos_from_pos(kart);
+    obj_set_angle(kart, kart->oMoveAnglePitch, kart->oMoveAngleYaw, kart->oMoveAngleRoll);
+    kart->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
 }
 
 static void mario_ios_portal_triangle_from_surface(const struct Surface *surface,
@@ -364,9 +764,9 @@ static s32 mario_ios_place_portal(s32 portalType) {
         mario_ios_portal_feedback(portalType, "rejected: gun disabled");
         return FALSE;
     }
-    if (mario_ios_is_riding_yoshi(gMarioState)) {
-        IOS_PORTAL_EVENT("Portal placement rejected type=%s reason=mounted on Yoshi", mario_ios_portal_name(portalType));
-        mario_ios_portal_feedback(portalType, "rejected while mounted on Yoshi");
+    if (mario_ios_is_riding_yoshi(gMarioState) || mario_ios_is_driving_kart(gMarioState)) {
+        IOS_PORTAL_EVENT("Portal placement rejected type=%s reason=mounted on a rideable actor", mario_ios_portal_name(portalType));
+        mario_ios_portal_feedback(portalType, "rejected while mounted");
         return FALSE;
     }
 
@@ -472,7 +872,8 @@ s32 mario_ios_portal_surface_passable(const struct Surface *surface, f32 x, f32 
     s32 i;
 
     if (!sIOSPortalGunEnabled || !sIOSPortalValid[0] || !sIOSPortalValid[1]
-        || m == NULL || gCurrentObject != gMarioObject || gCheckingSurfaceCollisionsForCamera)
+        || m == NULL || mario_ios_is_driving_kart(m)
+        || gCurrentObject != gMarioObject || gCheckingSurfaceCollisionsForCamera)
         return FALSE;
 
     mario_ios_validate_portal_area();
@@ -542,7 +943,8 @@ static s32 mario_ios_try_portal_traversal(struct MarioState *m, Vec3f previousPo
 
     mario_ios_validate_portal_area();
     if (!sIOSPortalGunEnabled || !sIOSPortalValid[0] || !sIOSPortalValid[1]
-        || m == NULL || mario_ios_is_riding_yoshi(m) || sIOSPortalTraversalCooldown > 0)
+        || m == NULL || mario_ios_is_riding_yoshi(m) || mario_ios_is_driving_kart(m)
+        || sIOSPortalTraversalCooldown > 0)
         return FALSE;
 
     for (sourceIndex = 0; sourceIndex < 2; sourceIndex++) {
@@ -716,9 +1118,11 @@ static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
         IOS_PORTAL_EVENT("Portal requests consumed by game thread mask=0x%02x action=0x%08x area=%d mario=(%.1f,%.1f,%.1f)", requests, m->action, gCurrentArea ? gCurrentArea->index : -1, m->pos[0], m->pos[1], m->pos[2]);
     }
 
-    if (requests & IOS_GAMEPLAY_REQUEST_CHARACTER) {
+    if ((requests & IOS_GAMEPLAY_REQUEST_CHARACTER) && !mario_ios_is_driving_kart(m)) {
         sTemporaryLuigiPaletteEnabled = !sTemporaryLuigiPaletteEnabled;
         mario_set_temporary_luigi_palette(sTemporaryLuigiPaletteEnabled);
+    } else if (requests & IOS_GAMEPLAY_REQUEST_CHARACTER) {
+        IOS_KART_STATUS("Dismount before switching drivers");
     }
 
     if (requests & IOS_GAMEPLAY_REQUEST_YOSHI) {
@@ -728,6 +1132,14 @@ static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
             set_mario_action(m, wasAirborne ? ACT_FREEFALL : ACT_WALKING, 0);
         } else {
             mario_ios_try_mount_yoshi(m);
+        }
+    }
+
+    if (requests & IOS_GAMEPLAY_REQUEST_KART_SPAWN) {
+        if (mario_ios_is_driving_kart(m)) {
+            IOS_KART_STATUS("Already driving");
+        } else {
+            mario_ios_spawn_or_reposition_kart(m);
         }
     }
 
@@ -1539,6 +1951,12 @@ static u32 set_mario_action_airborne(struct MarioState *m, u32 action, u32 actio
             // actionArg 1 is used for a walk-off fall; 0 is a mounted jump.
             if (actionArg == 0) {
                 set_mario_y_vel_based_on_fspeed(m, 42.0f, 0.25f);
+            }
+            break;
+
+        case ACT_IOS_KART_AIR:
+            if (actionArg == 0) {
+                set_mario_y_vel_based_on_fspeed(m, 32.0f, 0.0f);
             }
             break;
 
@@ -2473,6 +2891,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         gMarioState->marioObj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
         mario_reset_bodystate(gMarioState);
         vec3f_copy(previousPosition, gMarioState->pos);
+        mario_ios_validate_kart_area(gMarioState);
         if (sIOSPortalTraversalCooldown > 0) sIOSPortalTraversalCooldown--;
         update_mario_inputs(gMarioState);
         mario_handle_special_floors(gMarioState);
@@ -2480,10 +2899,18 @@ s32 execute_mario_action(UNUSED struct Object *o) {
 
         // If Mario is OOB, stop executing actions.
         if (gMarioState->floor == NULL) {
+            mario_ios_restore_kart_to_last_ground();
+            mario_ios_clear_kart_mount(gMarioState);
             return 0;
         }
 
         mario_ios_apply_gameplay_requests(gMarioState);
+        mario_ios_process_kart_interaction(gMarioState);
+
+        // Damage, death, or another action transition may interrupt the
+        // vehicle action. Release the attachment but leave the kart at the
+        // collision-resolved position in the level.
+        mario_ios_detach_interrupted_kart(gMarioState);
 
         // A press close to the dedicated test Yoshi mounts instead of jumping.
         // The same action is available from the native Gameplay diagnostics menu.
@@ -2535,6 +2962,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             && !mario_ios_is_riding_yoshi(gMarioState)) {
             mario_ios_detach_yoshi(gMarioState);
         }
+        mario_ios_detach_interrupted_kart(gMarioState);
 
         sink_mario_in_quicksand(gMarioState);
         squish_mario_model(gMarioState);
@@ -2546,6 +2974,8 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             // Keep collision, floor, and camera coordinates at ground level while
             // placing Mario visibly on Yoshi's back.
             gMarioState->marioObj->header.gfx.pos[1] += 82.0f;
+        } else if (mario_ios_is_driving_kart(gMarioState)) {
+            gMarioState->marioObj->header.gfx.pos[1] += IOS_KART_DRIVER_RENDER_HEIGHT;
         }
 
         // Both of the wind handling portions play wind audio only in

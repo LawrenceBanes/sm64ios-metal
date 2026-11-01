@@ -5,6 +5,7 @@
 
 #include "macros.h"
 #include "types.h"
+#include "ios_kart.h"
 
 #define MARIO_IOS_PORTAL_BLUE 0
 #define MARIO_IOS_PORTAL_ORANGE 1
@@ -62,6 +63,15 @@ void mario_ios_request_portal_blue(void);
 void mario_ios_request_portal_orange(void);
 void mario_ios_request_portal_enable_toggle(void);
 void mario_ios_request_portal_reset(void);
+void mario_ios_request_kart_spawn(void);
+s32 mario_ios_is_driving_kart(const struct MarioState *m);
+void mario_ios_register_kart(struct Object *kart);
+void mario_ios_sync_kart_object(struct Object *kart);
+void mario_ios_update_kart(struct MarioState *m, s32 grounded, IOSKartEvents *events);
+void mario_ios_kart_record_ground_position(struct MarioState *m, s32 grounded);
+void mario_ios_kart_wall_collision(struct MarioState *m);
+s32 mario_ios_kart_boost_active(void);
+s32 mario_ios_kart_boost_ready(void);
 s32 mario_ios_is_riding_yoshi(const struct MarioState *m);
 void mario_ios_detach_yoshi(struct MarioState *m);
 void mario_set_temporary_luigi_palette(s32 enabled);

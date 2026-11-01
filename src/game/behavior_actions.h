@@ -556,6 +556,8 @@ void bhv_portal_blue_loop(void);
 void bhv_portal_orange_init(void);
 void bhv_portal_orange_loop(void);
 void bhv_rideable_yoshi_loop(void);
+void bhv_ios_kart_init(void);
+void bhv_ios_kart_loop(void);
 void bhv_volcano_trap_loop(void);
 
 Gfx *geo_move_mario_part_from_parent(s32 run, UNUSED struct GraphNode *node, Mat4 mtx);

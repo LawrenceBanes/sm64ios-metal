@@ -91,6 +91,8 @@ static const LevelScript script_func_local_4[] = {
 #if defined(IOS_BUILD)
     // Test mount is intentionally iOS-only; desktop/stock game remains unchanged.
     OBJECT(/*model*/ MODEL_YOSHI,     /*pos*/ -1328, 260, 4450, /*angle*/ 0, 180, 0, /*behParam*/ 0x00000000, /*beh*/ bhvRideableYoshi),
+    // Original placeholder kart sits near the entry spawn and apart from test Yoshi.
+    OBJECT(/*model*/ MODEL_IOS_KART,  /*pos*/ -1450, 260, 4800, /*angle*/ 0,   0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvIOSKart),
 #endif
     OBJECT(/*model*/ MODEL_YOSHI,     /*pos*/     0, 3174, -5625, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvYoshi),
     RETURN(),

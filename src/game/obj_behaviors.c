@@ -857,3 +857,4 @@ s32 UNUSED debug_sequence_tracker(s16 debugInputSequence[]) {
 #include "behaviors/mips.inc.c"
 #include "behaviors/yoshi.inc.c"
 #include "behaviors/portal.inc.c"
+#include "behaviors/ios_kart.inc.c"

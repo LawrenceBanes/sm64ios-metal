@@ -5098,6 +5098,18 @@ const BehaviorScript bhvRideableYoshi[] = {
     END_LOOP(),
 };
 
+// Original low-poly iOS test vehicle. No MK64 models or assets are included.
+const BehaviorScript bhvIOSKart[] = {
+    BEGIN(OBJ_LIST_GENACTOR),
+    OR_INT(oFlags, (OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE | OBJ_FLAG_ACTIVE_FROM_AFAR)),
+    DROP_TO_FLOOR(),
+    SET_HITBOX(/*Radius*/ 56, /*Height*/ 72),
+    CALL_NATIVE(bhv_ios_kart_init),
+    BEGIN_LOOP(),
+        CALL_NATIVE(bhv_ios_kart_loop),
+    END_LOOP(),
+};
+
 const BehaviorScript bhvKoopa[] = {
     BEGIN(OBJ_LIST_PUSHABLE),
     OR_INT(oFlags, (OBJ_FLAG_COMPUTE_ANGLE_TO_MARIO | OBJ_FLAG_COMPUTE_DIST_TO_MARIO | OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE)),
