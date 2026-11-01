@@ -1,4 +1,5 @@
 #include <PR/ultratypes.h>
+#include <math.h>
 
 #include "sm64.h"
 #include "area.h"
@@ -10,6 +11,9 @@
 #include "engine/graph_node.h"
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
+#include "engine/surface_load.h"
+#include "game/portal_math.h"
+#include "surface_terrains.h"
 #include "game_init.h"
 #include "interaction.h"
 #include "level_table.h"
@@ -45,10 +49,46 @@ s8 filler80339F1C[20];
 enum {
     IOS_GAMEPLAY_REQUEST_CHARACTER = 1 << 0,
     IOS_GAMEPLAY_REQUEST_YOSHI = 1 << 1,
+    IOS_GAMEPLAY_REQUEST_PORTAL_BLUE = 1 << 2,
+    IOS_GAMEPLAY_REQUEST_PORTAL_ORANGE = 1 << 3,
+    IOS_GAMEPLAY_REQUEST_PORTAL_ENABLE = 1 << 4,
+    IOS_GAMEPLAY_REQUEST_PORTAL_RESET = 1 << 5,
 };
+
+#define IOS_PORTAL_HALF_WIDTH 78.0f
+#define IOS_PORTAL_HALF_HEIGHT 180.0f
+#define IOS_PORTAL_PLAYER_RADIUS 35.0f
+#define IOS_PORTAL_PLAYER_HEIGHT 160.0f
+#define IOS_PORTAL_EXIT_OFFSET 72.0f
 
 static volatile u32 sIOSGameplayRequests;
 static s32 sTemporaryLuigiPaletteEnabled;
+static PortalFrame sIOSPortalFrames[2];
+static struct Surface *sIOSPortalSurfaces[2];
+static s32 sIOSPortalValid[2];
+static s32 sIOSPortalGunEnabled = TRUE;
+static s32 sIOSPortalTraversalCooldown;
+static struct Area *sIOSPortalArea;
+
+static void mario_ios_clear_portals(void) {
+    sIOSPortalValid[MARIO_IOS_PORTAL_BLUE] = FALSE;
+    sIOSPortalValid[MARIO_IOS_PORTAL_ORANGE] = FALSE;
+    sIOSPortalSurfaces[MARIO_IOS_PORTAL_BLUE] = NULL;
+    sIOSPortalSurfaces[MARIO_IOS_PORTAL_ORANGE] = NULL;
+    sIOSPortalTraversalCooldown = 0;
+}
+
+static void mario_ios_reset_portals(void) {
+    mario_ios_clear_portals();
+    sIOSPortalArea = gCurrentArea;
+}
+
+static void mario_ios_validate_portal_area(void) {
+    if (sIOSPortalArea != gCurrentArea) {
+        mario_ios_clear_portals();
+        sIOSPortalArea = gCurrentArea;
+    }
+}
 
 void mario_ios_request_character_switch(void) {
     __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_CHARACTER, __ATOMIC_RELAXED);
@@ -56,6 +96,22 @@ void mario_ios_request_character_switch(void) {
 
 void mario_ios_request_yoshi_toggle(void) {
     __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_YOSHI, __ATOMIC_RELAXED);
+}
+
+void mario_ios_request_portal_blue(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_PORTAL_BLUE, __ATOMIC_RELAXED);
+}
+
+void mario_ios_request_portal_orange(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_PORTAL_ORANGE, __ATOMIC_RELAXED);
+}
+
+void mario_ios_request_portal_enable_toggle(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_PORTAL_ENABLE, __ATOMIC_RELAXED);
+}
+
+void mario_ios_request_portal_reset(void) {
+    __atomic_fetch_or(&sIOSGameplayRequests, IOS_GAMEPLAY_REQUEST_PORTAL_RESET, __ATOMIC_RELAXED);
 }
 
 s32 mario_ios_is_riding_yoshi(const struct MarioState *m) {
@@ -100,6 +156,286 @@ static s32 mario_ios_try_mount_yoshi(struct MarioState *m) {
     return set_mario_action(m, ACT_RIDING_YOSHI_GROUND, 1);
 }
 
+static s32 mario_ios_place_portal(s32 portalType) {
+    Vec3f rayOrigin;
+    Vec3f rayDirection;
+    Vec3f hitPosition;
+    Vec3f toSurface;
+    struct Surface *surface = NULL;
+    PortalFrame candidate;
+    f32 directionLength;
+    f32 facing;
+    s16 oldCameraCollisionState;
+    s32 i;
+
+    mario_ios_validate_portal_area();
+    if (!sIOSPortalGunEnabled || mario_ios_is_riding_yoshi(gMarioState)) return FALSE;
+
+    vec3f_copy(rayOrigin, gLakituState.pos);
+    rayDirection[0] = gLakituState.focus[0] - rayOrigin[0];
+    rayDirection[1] = gLakituState.focus[1] - rayOrigin[1];
+    rayDirection[2] = gLakituState.focus[2] - rayOrigin[2];
+    directionLength = sqrtf(rayDirection[0] * rayDirection[0]
+        + rayDirection[1] * rayDirection[1] + rayDirection[2] * rayDirection[2]);
+    if (directionLength < 0.001f) return FALSE;
+    rayDirection[0] *= 5000.0f / directionLength;
+    rayDirection[1] *= 5000.0f / directionLength;
+    rayDirection[2] *= 5000.0f / directionLength;
+
+    oldCameraCollisionState = gCheckingSurfaceCollisionsForCamera;
+    gCheckingSurfaceCollisionsForCamera = FALSE;
+    find_surface_on_ray(rayOrigin, rayDirection, &surface, hitPosition);
+    gCheckingSurfaceCollisionsForCamera = oldCameraCollisionState;
+
+    if (surface == NULL || (surface->flags & SURFACE_FLAG_DYNAMIC)
+        || fabsf(surface->normal.y) > 0.10f) {
+        return FALSE;
+    }
+
+    candidate.position[0] = hitPosition[0];
+    candidate.position[1] = hitPosition[1];
+    candidate.position[2] = hitPosition[2];
+    candidate.normal[0] = surface->normal.x;
+    candidate.normal[1] = 0.0f;
+    candidate.normal[2] = surface->normal.z;
+    directionLength = sqrtf(candidate.normal[0] * candidate.normal[0]
+        + candidate.normal[2] * candidate.normal[2]);
+    if (directionLength < 0.9f) return FALSE;
+    candidate.normal[0] /= directionLength;
+    candidate.normal[2] /= directionLength;
+
+    toSurface[0] = rayOrigin[0] - hitPosition[0];
+    toSurface[1] = rayOrigin[1] - hitPosition[1];
+    toSurface[2] = rayOrigin[2] - hitPosition[2];
+    facing = portal_dot3(toSurface, candidate.normal);
+    if (facing < 0.0f) {
+        candidate.normal[0] = -candidate.normal[0];
+        candidate.normal[2] = -candidate.normal[2];
+    }
+
+    {
+        float a[3] = {surface->vertex1[0], surface->vertex1[1], surface->vertex1[2]};
+        float b[3] = {surface->vertex2[0], surface->vertex2[1], surface->vertex2[2]};
+        float c[3] = {surface->vertex3[0], surface->vertex3[1], surface->vertex3[2]};
+        if (!portal_aperture_fits_triangle(&candidate, a, b, c,
+                                           IOS_PORTAL_HALF_WIDTH, IOS_PORTAL_HALF_HEIGHT)) {
+            return FALSE;
+        }
+    }
+
+    for (i = 0; i < 2; i++) {
+        f32 dx, dy, dz;
+        if (i == portalType || !sIOSPortalValid[i] || sIOSPortalSurfaces[i] != surface) continue;
+        dx = candidate.position[0] - sIOSPortalFrames[i].position[0];
+        dy = candidate.position[1] - sIOSPortalFrames[i].position[1];
+        dz = candidate.position[2] - sIOSPortalFrames[i].position[2];
+        if (dx * dx + dy * dy + dz * dz < 180.0f * 180.0f) return FALSE;
+    }
+
+    sIOSPortalFrames[portalType] = candidate;
+    sIOSPortalSurfaces[portalType] = surface;
+    sIOSPortalValid[portalType] = TRUE;
+    return TRUE;
+}
+
+s32 mario_ios_portal_surface_passable(const struct Surface *surface, f32 x, f32 y,
+                                      f32 z, f32 radius) {
+    struct MarioState *m = gMarioState;
+    f32 point[3];
+    f32 relative[3];
+    f32 right[3];
+    f32 distance;
+    f32 localX;
+    f32 velocityToward;
+    s32 i;
+
+    if (!sIOSPortalGunEnabled || !sIOSPortalValid[0] || !sIOSPortalValid[1]
+        || m == NULL || gCurrentObject != gMarioObject || gCheckingSurfaceCollisionsForCamera)
+        return FALSE;
+
+    mario_ios_validate_portal_area();
+    if (!sIOSPortalValid[0] || !sIOSPortalValid[1]) return FALSE;
+
+    for (i = 0; i < 2; i++) {
+        if (surface != sIOSPortalSurfaces[i]) continue;
+        point[0] = x;
+        point[1] = m->pos[1];
+        point[2] = z;
+        relative[0] = point[0] - sIOSPortalFrames[i].position[0];
+        relative[1] = point[1] - sIOSPortalFrames[i].position[1];
+        relative[2] = point[2] - sIOSPortalFrames[i].position[2];
+        distance = portal_dot3(relative, sIOSPortalFrames[i].normal);
+        portal_right(&sIOSPortalFrames[i], right);
+        localX = portal_dot3(relative, right);
+        if (distance < -radius || distance > radius + 10.0f
+            || localX < -IOS_PORTAL_HALF_WIDTH + IOS_PORTAL_PLAYER_RADIUS
+            || localX > IOS_PORTAL_HALF_WIDTH - IOS_PORTAL_PLAYER_RADIUS
+            || relative[1] < -IOS_PORTAL_HALF_HEIGHT
+            || relative[1] + IOS_PORTAL_PLAYER_HEIGHT > IOS_PORTAL_HALF_HEIGHT)
+            return FALSE;
+
+        velocityToward = m->vel[0] * sIOSPortalFrames[i].normal[0]
+                       + m->vel[2] * sIOSPortalFrames[i].normal[2];
+        if (velocityToward >= -0.5f && m->forwardVel > 0.0f) {
+            velocityToward = (sins(m->faceAngle[1]) * m->forwardVel) * sIOSPortalFrames[i].normal[0]
+                           + (coss(m->faceAngle[1]) * m->forwardVel) * sIOSPortalFrames[i].normal[2];
+        }
+        return velocityToward < -0.5f;
+    }
+    return FALSE;
+}
+
+static void mario_ios_transform_camera_point(const PortalFrame *from, const PortalFrame *to,
+                                              Vec3f point) {
+    Vec3f transformed;
+    portal_transform_point(from, to, point, 0.0f, transformed);
+    vec3f_copy(point, transformed);
+}
+
+static s16 mario_ios_transform_yaw(const PortalFrame *from, const PortalFrame *to, s16 yaw) {
+    Vec3f direction = {sins(yaw), 0.0f, coss(yaw)};
+    Vec3f transformed;
+    portal_transform_vector(from, to, direction, transformed);
+    return atan2s(transformed[0], transformed[2]);
+}
+
+static s32 mario_ios_try_portal_traversal(struct MarioState *m, Vec3f previousPosition) {
+    s32 sourceIndex;
+    s32 destinationIndex;
+    f32 crossingT;
+
+    mario_ios_validate_portal_area();
+    if (!sIOSPortalGunEnabled || !sIOSPortalValid[0] || !sIOSPortalValid[1]
+        || m == NULL || mario_ios_is_riding_yoshi(m) || sIOSPortalTraversalCooldown > 0)
+        return FALSE;
+
+    for (sourceIndex = 0; sourceIndex < 2; sourceIndex++) {
+        float bottom = -IOS_PORTAL_HALF_HEIGHT;
+        float top = IOS_PORTAL_HALF_HEIGHT;
+        PortalFrame *from = &sIOSPortalFrames[sourceIndex];
+        PortalFrame *to;
+        Vec3f transformedPosition;
+        Vec3f transformedVelocity;
+        Vec3f transformedSlide;
+        Vec3f attemptedPosition;
+        Vec3f requestedPosition;
+        s32 wasAirborne = (m->action & ACT_FLAG_AIR) != 0;
+        struct Surface *floor = NULL;
+        struct Surface *ceil = NULL;
+        f32 floorHeight;
+        f32 ceilHeight;
+
+        if (!portal_segment_crosses(from, previousPosition, m->pos,
+                                    IOS_PORTAL_HALF_WIDTH, bottom, top,
+                                    IOS_PORTAL_PLAYER_RADIUS, IOS_PORTAL_PLAYER_HEIGHT,
+                                    &crossingT)) continue;
+
+        destinationIndex = 1 - sourceIndex;
+        to = &sIOSPortalFrames[destinationIndex];
+        portal_transform_point(from, to, m->pos, IOS_PORTAL_EXIT_OFFSET, requestedPosition);
+        vec3f_copy(attemptedPosition, requestedPosition);
+        /* Resolve the destination against unchanged level collision. Small
+         * collision nudges are acceptable; a large correction means the exit
+         * would put Mario inside another wall. */
+        f32_find_wall_collision(&attemptedPosition[0], &attemptedPosition[1],
+                                &attemptedPosition[2], 80.0f,
+                                IOS_PORTAL_PLAYER_RADIUS);
+        floorHeight = find_floor(attemptedPosition[0], attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT,
+                                 attemptedPosition[2], &floor);
+        ceilHeight = find_ceil(attemptedPosition[0], attemptedPosition[1] + 80.0f,
+                               attemptedPosition[2], &ceil);
+        if (!portal_exit_correction_is_safe(requestedPosition, attemptedPosition,
+                                            IOS_PORTAL_PLAYER_RADIUS * 2.0f)
+            || floor == NULL
+            || (ceil != NULL && ceilHeight < attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT)
+            || (wasAirborne && floorHeight > attemptedPosition[1])) {
+            vec3f_copy(m->pos, previousPosition);
+            m->vel[0] = m->vel[1] = m->vel[2] = 0.0f;
+            mario_set_forward_vel(m, 0.0f);
+            vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+            m->marioObj->oPosX = m->pos[0];
+            m->marioObj->oPosY = m->pos[1];
+            m->marioObj->oPosZ = m->pos[2];
+            return TRUE;
+        }
+        if (!wasAirborne && floorHeight > attemptedPosition[1])
+            attemptedPosition[1] = floorHeight;
+        vec3f_copy(transformedPosition, attemptedPosition);
+        portal_transform_vector(from, to, m->vel, transformedVelocity);
+        {
+            Vec3f slide = {m->slideVelX, 0.0f, m->slideVelZ};
+            portal_transform_vector(from, to, slide, transformedSlide);
+        }
+
+        vec3f_copy(m->pos, transformedPosition);
+        if (!wasAirborne && m->pos[1] < floorHeight) m->pos[1] = floorHeight;
+        vec3f_copy(m->vel, transformedVelocity);
+        m->slideVelX = transformedSlide[0];
+        m->slideVelZ = transformedSlide[2];
+        m->faceAngle[1] = mario_ios_transform_yaw(from, to, m->faceAngle[1]);
+        m->intendedYaw = mario_ios_transform_yaw(from, to, m->intendedYaw);
+        m->slideYaw = mario_ios_transform_yaw(from, to, m->slideYaw);
+        m->forwardVel = sins(m->faceAngle[1]) * m->vel[0]
+                      + coss(m->faceAngle[1]) * m->vel[2];
+
+        /* All camera history is transformed in the same frame as Mario to
+         * prevent the normal smoothing state from snapping back across worlds. */
+        mario_ios_transform_camera_point(from, to, gLakituState.pos);
+        mario_ios_transform_camera_point(from, to, gLakituState.focus);
+        mario_ios_transform_camera_point(from, to, gLakituState.curPos);
+        mario_ios_transform_camera_point(from, to, gLakituState.curFocus);
+        mario_ios_transform_camera_point(from, to, gLakituState.goalPos);
+        mario_ios_transform_camera_point(from, to, gLakituState.goalFocus);
+        if (gCamera != NULL) {
+            mario_ios_transform_camera_point(from, to, gCamera->pos);
+            mario_ios_transform_camera_point(from, to, gCamera->focus);
+            gCamera->yaw = atan2s(gCamera->pos[0] - gCamera->focus[0],
+                                  gCamera->pos[2] - gCamera->focus[2]);
+            gCamera->nextYaw = mario_ios_transform_yaw(from, to, gCamera->nextYaw);
+        }
+
+        /* Reuse the safely resolved destination support surfaces. */
+        m->floor = floor;
+        m->floorHeight = floorHeight;
+        m->ceilHeight = find_ceil(m->pos[0], m->pos[1] + 160.0f, m->pos[2], &ceil);
+        m->ceil = ceil;
+        m->wall = NULL;
+
+        vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+        m->marioObj->oPosX = m->pos[0];
+        m->marioObj->oPosY = m->pos[1];
+        m->marioObj->oPosZ = m->pos[2];
+        vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+        sIOSPortalTraversalCooldown = 6;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+void mario_ios_sync_portal_object(struct Object *obj, s32 portalType) {
+    PortalFrame *frame;
+    s16 yaw;
+    f32 pulse;
+
+    if (obj == NULL || portalType < MARIO_IOS_PORTAL_BLUE || portalType > MARIO_IOS_PORTAL_ORANGE)
+        return;
+    if (!sIOSPortalValid[portalType]) {
+        obj->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;
+        return;
+    }
+
+    frame = &sIOSPortalFrames[portalType];
+    yaw = atan2s(frame->normal[0], frame->normal[2]);
+    obj->oPosX = frame->position[0] + frame->normal[0] * 3.0f;
+    obj->oPosY = frame->position[1];
+    obj->oPosZ = frame->position[2] + frame->normal[2] * 3.0f;
+    obj_set_gfx_pos_from_pos(obj);
+    obj_set_angle(obj, 0, yaw, 0);
+    pulse = 1.0f + 0.025f * sins((s16)(gGlobalTimer * 0x0800));
+    obj_scale(obj, pulse);
+    obj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
+}
+
 static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
     u32 requests = __atomic_exchange_n(&sIOSGameplayRequests, 0, __ATOMIC_ACQUIRE);
 
@@ -117,6 +453,16 @@ static void mario_ios_apply_gameplay_requests(struct MarioState *m) {
             mario_ios_try_mount_yoshi(m);
         }
     }
+
+    if (requests & IOS_GAMEPLAY_REQUEST_PORTAL_ENABLE)
+        sIOSPortalGunEnabled = !sIOSPortalGunEnabled;
+    mario_ios_validate_portal_area();
+    if (requests & IOS_GAMEPLAY_REQUEST_PORTAL_RESET)
+        mario_ios_reset_portals();
+    if (requests & IOS_GAMEPLAY_REQUEST_PORTAL_BLUE)
+        mario_ios_place_portal(MARIO_IOS_PORTAL_BLUE);
+    if (requests & IOS_GAMEPLAY_REQUEST_PORTAL_ORANGE)
+        mario_ios_place_portal(MARIO_IOS_PORTAL_ORANGE);
 }
 
 /**************************************************
@@ -1820,6 +2166,7 @@ void func_sh_8025574C(void) {
  */
 s32 execute_mario_action(UNUSED struct Object *o) {
     s32 inLoop = TRUE;
+    Vec3f previousPosition;
     /**
     * Cheat stuff
     */
@@ -1841,6 +2188,8 @@ s32 execute_mario_action(UNUSED struct Object *o) {
     if (gMarioState->action) {
         gMarioState->marioObj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
         mario_reset_bodystate(gMarioState);
+        vec3f_copy(previousPosition, gMarioState->pos);
+        if (sIOSPortalTraversalCooldown > 0) sIOSPortalTraversalCooldown--;
         update_mario_inputs(gMarioState);
         mario_handle_special_floors(gMarioState);
         mario_process_interactions(gMarioState);
@@ -1892,6 +2241,8 @@ s32 execute_mario_action(UNUSED struct Object *o) {
                     break;
             }
         }
+
+        mario_ios_try_portal_traversal(gMarioState, previousPosition);
 
         // Damage, death, cutscenes, and other normal action transitions release
         // the test mount so the player never keeps a stale object attachment.
@@ -1948,6 +2299,8 @@ void init_mario(void) {
     struct Object *capObject;
 
     unused80339F10 = 0;
+
+    mario_ios_reset_portals();
 
     gMarioState->actionTimer = 0;
     mario_set_temporary_luigi_palette(sTemporaryLuigiPaletteEnabled);

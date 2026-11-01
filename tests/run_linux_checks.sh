@@ -15,8 +15,18 @@ python3 "$repo_dir/ios/test_render_diagnostics.py"
 python3 "$repo_dir/ios/test_metal_graphics_foundation.py"
 python3 "$repo_dir/ios/test_hd_texture_overrides.py"
 python3 "$repo_dir/tests/check_ios_gameplay_features.py"
+python3 "$repo_dir/tests/check_ios_portal_integration.py"
+portal_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-portal-math.XXXXXX")
+trap 'rm -f "$portal_test_bin"' EXIT HUP INT TERM
+$cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/test_portal_math.c" -lm -o "$portal_test_bin"
+"$portal_test_bin"
+rm -f "$portal_test_bin"
+trap - EXIT HUP INT TERM
 
 common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
+# Keep the ordinary SM64 display-list model syntax valid on host builds.
+$cc $common_flags -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
+    -include sm64.h -include geo_commands.h "$repo_dir/actors/portal/model.inc.c"
 # shellcheck disable=SC2086
 $cc $common_flags -DRAPI_GL=1 $SDL2_CFLAGS \
     "$repo_dir/src/pc/gfx/gfx_scene_capture.c" "$repo_dir/src/pc/gfx/gfx_scene_bvh.c" \

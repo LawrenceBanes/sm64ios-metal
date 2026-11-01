@@ -197,7 +197,7 @@ static int sm64RenderDiagnosticMode;
 
 - (void)showGameplayActions {
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
-        message:@"Luigi is a temporary green palette on Mario’s model. To ride Yoshi, approach the separate Yoshi on the castle grounds and tap A; tap Z to dismount."
+        message:@"Luigi is a temporary green palette on Mario’s model. Approach Yoshi and tap A to mount; tap Z to dismount. Aim with the camera and fire blue/orange portals from here. The first portal surface is a tinted animated fallback, not a linked world view."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
@@ -210,6 +210,30 @@ static int sm64RenderDiagnosticMode;
         mario_ios_request_yoshi_toggle();
         gfx_ios_diag_log("Gameplay menu queued Yoshi mount/dismount request");
         [self appendStatus:@"Yoshi mount request queued; approach Yoshi if it does not mount"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Fire blue portal" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_portal_blue();
+        gfx_ios_diag_log("Gameplay menu queued blue portal placement");
+        [self appendStatus:@"Blue portal placement queued; aim at a broad static wall"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Fire orange portal" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_portal_orange();
+        gfx_ios_diag_log("Gameplay menu queued orange portal placement");
+        [self appendStatus:@"Orange portal placement queued; aim at another broad static wall"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Toggle portal gun" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_portal_enable_toggle();
+        gfx_ios_diag_log("Gameplay menu queued portal gun enable toggle");
+        [self appendStatus:@"Portal gun toggle queued for game thread"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Reset portals" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_portal_reset();
+        gfx_ios_diag_log("Gameplay menu queued portal reset");
+        [self appendStatus:@"Portal reset queued for game thread"];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = menu.popoverPresentationController;

@@ -6128,3 +6128,21 @@ const BehaviorScript bhvIntroScene[] = {
         CALL_NATIVE(bhv_intro_scene_loop),
     END_LOOP(),
 };
+
+const BehaviorScript bhvPortalBlue[] = {
+    BEGIN(OBJ_LIST_LEVEL),
+    OR_INT(oFlags, (OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE | OBJ_FLAG_ACTIVE_FROM_AFAR)),
+    CALL_NATIVE(bhv_portal_blue_init),
+    BEGIN_LOOP(),
+        CALL_NATIVE(bhv_portal_blue_loop),
+    END_LOOP(),
+};
+
+const BehaviorScript bhvPortalOrange[] = {
+    BEGIN(OBJ_LIST_LEVEL),
+    OR_INT(oFlags, (OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE | OBJ_FLAG_ACTIVE_FROM_AFAR)),
+    CALL_NATIVE(bhv_portal_orange_init),
+    BEGIN_LOOP(),
+        CALL_NATIVE(bhv_portal_orange_loop),
+    END_LOOP(),
+};

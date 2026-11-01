@@ -51,6 +51,14 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
             continue;
         }
 
+        /* Portal traversal does not edit the level's collision mesh. It only
+         * omits the matching static wall triangle from Mario's wall push while
+         * his collision capsule is entirely inside the paired aperture. */
+        if (gCurrentObject == gMarioObject
+            && mario_ios_portal_surface_passable(surf, x, y, z, radius)) {
+            continue;
+        }
+
         px = x;
         pz = z;
 

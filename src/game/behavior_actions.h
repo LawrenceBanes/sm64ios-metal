@@ -551,6 +551,10 @@ void bhv_intro_scene_loop(void);
 void bhv_dust_smoke_loop(void);
 void bhv_yoshi_loop(void);
 void bhv_rideable_yoshi_init(void);
+void bhv_portal_blue_init(void);
+void bhv_portal_blue_loop(void);
+void bhv_portal_orange_init(void);
+void bhv_portal_orange_loop(void);
 void bhv_rideable_yoshi_loop(void);
 void bhv_volcano_trap_loop(void);
 

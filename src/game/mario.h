@@ -6,6 +6,9 @@
 #include "macros.h"
 #include "types.h"
 
+#define MARIO_IOS_PORTAL_BLUE 0
+#define MARIO_IOS_PORTAL_ORANGE 1
+
 s32 is_anim_at_end(struct MarioState *m);
 s32 is_anim_past_end(struct MarioState *m);
 s16 set_mario_animation(struct MarioState *m, s32 targetAnimID);
@@ -55,8 +58,15 @@ void init_mario_from_save_file(void);
 // the game thread applies them during execute_mario_action.
 void mario_ios_request_character_switch(void);
 void mario_ios_request_yoshi_toggle(void);
+void mario_ios_request_portal_blue(void);
+void mario_ios_request_portal_orange(void);
+void mario_ios_request_portal_enable_toggle(void);
+void mario_ios_request_portal_reset(void);
 s32 mario_ios_is_riding_yoshi(const struct MarioState *m);
 void mario_ios_detach_yoshi(struct MarioState *m);
 void mario_set_temporary_luigi_palette(s32 enabled);
+s32 mario_ios_portal_surface_passable(const struct Surface *surface, f32 x, f32 y, f32 z,
+                                      f32 radius);
+void mario_ios_sync_portal_object(struct Object *obj, s32 portalType);
 
 #endif // MARIO_H

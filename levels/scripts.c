@@ -170,6 +170,10 @@ static const LevelScript script_exec_ ## folder [] = { \
 #undef DEFINE_LEVEL
 
 const LevelScript script_func_global_1[] = {
+#if defined(IOS_BUILD)
+    LOAD_MODEL_FROM_GEO(MODEL_PORTAL_BLUE,            portal_blue_geo),
+    LOAD_MODEL_FROM_GEO(MODEL_PORTAL_ORANGE,          portal_orange_geo),
+#endif
     LOAD_MODEL_FROM_GEO(MODEL_BLUE_COIN_SWITCH,        blue_coin_switch_geo),
     LOAD_MODEL_FROM_GEO(MODEL_AMP,                     amp_geo),
     LOAD_MODEL_FROM_GEO(MODEL_PURPLE_SWITCH,           purple_switch_geo),
@@ -193,6 +197,10 @@ const LevelScript script_func_global_1[] = {
     LOAD_MODEL_FROM_GEO(MODEL_FLYGUY,                  flyguy_geo),
     LOAD_MODEL_FROM_GEO(MODEL_CHUCKYA,                 chuckya_geo),
     LOAD_MODEL_FROM_GEO(MODEL_TRAJECTORY_MARKER_BALL,      bowling_ball_track_geo),
+#if defined(IOS_BUILD)
+    OBJECT(MODEL_PORTAL_BLUE,   0, 0, 0, 0, 0, 0, 0, bhvPortalBlue),
+    OBJECT(MODEL_PORTAL_ORANGE, 0, 0, 0, 0, 0, 0, 0, bhvPortalOrange),
+#endif
     RETURN(),
 };
 
