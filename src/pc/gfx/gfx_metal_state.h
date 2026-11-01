@@ -27,6 +27,7 @@ struct GfxMetalSettings {
     uint32_t render_scale_percent;
     uint32_t sample_count;
     uint32_t anisotropy;
+    bool hd_textures;
 };
 
 struct GfxMetalCapabilities {

@@ -2,6 +2,15 @@
 
 ## Current state
 
+### Mission 50 — optional RENDER96 HD texture replacements (CI/device validation pending)
+
+- Enabled canonical external texture identities in the iOS IPA build. Original PNGs remain in the private app's bundled `res/base.zip`; the public RENDER96 pack itself is not copied into Git or the IPA because the upstream collection mixes assets with different provenance.
+- Added a lazy `Documents/hd_textures/gfx/<canonical texture path>.png` override lookup for iOS Metal. Enhanced mode enables it by default; Classic ignores it. Missing/invalid replacements fall back to the bundled original. Switching presets invalidates the two active texture bindings so the next frame uses the selected variant.
+- Kept the existing source UV transform and Metal sampler behavior. Replacement dimensions must preserve the original texture aspect ratio and cannot be smaller than the original. Paths reject traversal; PNG input, dimensions, and per-texture size are bounded. HD base-level texture residency is capped at 256 MiB, after which original textures are used.
+- Disabled eager texture precaching on iOS so the app reads only textures used by the current game. Added portable regressions for canonical paths, traversal, dimensions, aspect ratio, byte-budget limits, preset defaults, and Classic fallback behavior, plus source checks for the external-data IPA path and bundled original fallback.
+- Five official upstream sample PNGs were inspected: Goomba face/body, Mario mustache, Bob-omb Battlefield texture `0`, and Castle interior texture `1` all match canonical names and upscale 32×32 originals to 512×512 RGBA. Install instructions are in [`RENDER96_TEXTURE_COMPATIBILITY.md`](RENDER96_TEXTURE_COMPATIBILITY.md).
+- Validation so far: `tests/run_linux_checks.sh`, project wiring checks, texture override/state regressions, Python compilation, and shell syntax checks pass. Apple SDK validation, private asset-based IPA build, and IPA structure validation remain pending. No visual change is claimed until the user installs the official pack into Documents, enables Enhanced, and checks the device.
+
 ### Mission 49 — configurable Metal renderer foundation (implementation in progress)
 
 - Tagged the visually confirmed Build 53.1 source tree as `ios-classic-53.1-device-confirmed`. Classic remains the default direct-to-drawable mode at native scale, 1x samples, and 1x anisotropy.

@@ -39,7 +39,7 @@ int main(void) {
     struct GfxMetalSettings classic = gfx_metal_classic_settings();
     assert(classic.preset == GFX_METAL_PRESET_CLASSIC);
     assert(classic.render_scale_percent == 100 && classic.sample_count == 1 &&
-           classic.anisotropy == 1);
+           classic.anisotropy == 1 && !classic.hd_textures);
     assert(!gfx_metal_settings_use_offscreen(classic));
 
     struct GfxMetalCapabilities a16_like = { true, true, 16 };
@@ -47,7 +47,7 @@ int main(void) {
         gfx_metal_enhanced_settings(), a16_like);
     assert(enhanced.preset == GFX_METAL_PRESET_ENHANCED);
     assert(enhanced.render_scale_percent == 100 && enhanced.sample_count == 4 &&
-           enhanced.anisotropy == 8);
+           enhanced.anisotropy == 8 && enhanced.hd_textures);
     assert(gfx_metal_settings_use_offscreen(enhanced));
 
     struct GfxMetalCapabilities no_4x = { true, false, 4 };
@@ -58,10 +58,14 @@ int main(void) {
     assert(enhanced.sample_count == 1 && enhanced.anisotropy == 1);
     assert(!gfx_metal_settings_use_offscreen(enhanced));
 
-    struct GfxMetalSettings custom = { GFX_METAL_PRESET_ENHANCED, 75, 4, 16 };
+    struct GfxMetalSettings custom = { GFX_METAL_PRESET_ENHANCED, 75, 4, 16, true };
     custom = gfx_metal_settings_sanitize(custom, no_4x);
     assert(custom.render_scale_percent == 75 && custom.sample_count == 2 &&
-           custom.anisotropy == 4);
+           custom.anisotropy == 4 && custom.hd_textures);
+    custom.preset = GFX_METAL_PRESET_CLASSIC;
+    custom.hd_textures = true;
+    custom = gfx_metal_settings_sanitize(custom, a16_like);
+    assert(!custom.hd_textures);
     struct GfxMetalTargetSize target = { 0, 0 };
     assert(gfx_metal_target_size(2796, 1290, 75, &target));
     assert(target.width == 2097 && target.height == 968);

@@ -116,6 +116,9 @@ int64_t fs_size(fs_file_t *file);
 bool fs_eof(fs_file_t *file);
 
 void *fs_load_file(const char *vpath, uint64_t *outsize);
+/* Load only from the writable user directory; unlike fs_load_file this never
+ * falls back to bundled/read-only game data. The path must be relative. */
+void *fs_load_write_file(const char *relative_path, uint64_t max_size, uint64_t *outsize);
 const char *fs_readline(fs_file_t *file, char *dst, uint64_t size);
 
 // tries to find the first file with the filename that starts with `prefix`

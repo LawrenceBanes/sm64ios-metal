@@ -6,7 +6,7 @@ The Xcode project has an iOS `sm64ios` application target. Its first build phase
 
 `extract_assets.py` reads `assets.json`, opens `baserom.us.z64`, verifies its SHA-1 against `sm64.us.sha1`, and extracts the mapped graphics, animation/demo, and audio inputs. The user supplied a legally obtained USA ROM at `/home/larry/Downloads/Super Mario 64 (USA).z64`. Its checksum validation passed. The USA build uses 1,538 files from the asset map; 502 additional entries are for other regional versions and are not required in the USA handoff. The staged `baserom.us.z64`, extracted assets, and `.assets-local.txt` are gitignored and remain local; ROMs and extracted Nintendo assets must never be committed or included in public CI artifacts.
 
-The normal build defaults to `EXTERNAL_DATA=0`, so extracted content is compiled into generated game resources. `EXTERNAL_DATA=1` instead puts the generated sound/texture resources in the app bundle's `res` data pack; it still requires extracted assets. Neither mode removes the need for the ROM during the first build.
+The normal Makefile default is `EXTERNAL_DATA=0`, so extracted content is compiled into generated game resources. The iOS IPA workflow explicitly builds with `EXTERNAL_DATA=1`: that preserves canonical original texture paths, puts original textures in the app bundle's `res/base.zip`, and enables optional user-installed HD overrides with an original fallback. It still requires extracted assets. Neither mode removes the need for the ROM during the first build.
 
 ## Other build dependencies and signing
 

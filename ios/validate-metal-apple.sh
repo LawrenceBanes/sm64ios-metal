@@ -16,6 +16,7 @@ simulator_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
 common=(-std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 -DRAPI_METAL=1
         -I"$repo_dir/include" -I"$repo_dir/src" -I"$repo_dir")
 sources=("$repo_dir/src/pc/gfx/gfx_metal.m"
+         "$repo_dir/src/pc/gfx/gfx_texture_override.c"
          "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
          "$repo_dir/src/pc/gfx/gfx_metal_state.c"
          "$repo_dir/src/pc/gfx/gfx_cc.c"

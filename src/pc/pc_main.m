@@ -224,6 +224,12 @@ void main_func(void) {
 
     configfile_load(configfile_name());
     gfx_ios_diag_log("Configuration load completed filename=%s window=%dx%d fullscreen=%d", configfile_name(), configWindow.w, configWindow.h, configWindow.fullscreen);
+#if defined(TARGET_OS_IOS) && defined(EXTERNAL_DATA)
+    // External textures are resolved lazily on iOS. In particular, never
+    // precache a user-installed HD pack that can contain thousands of files.
+    configPrecacheRes = false;
+    gfx_ios_diag_log("External texture precache disabled on iOS; textures load lazily with bundled-original fallback");
+#endif
 
     if (gCLIOpts.FullScreen == 1)
         configWindow.fullscreen = true;

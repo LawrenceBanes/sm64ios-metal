@@ -20,8 +20,10 @@ class IpaValidationTests(unittest.TestCase):
         self.assertIn("branches: [ios]", workflow)
         self.assertIn("contains(github.event.head_commit.message, '[build-ipa]')", workflow)
         self.assertIn("ASSET_BUNDLE_RELEASE_TAG=sm64-assets-20261031-04", workflow)
+        self.assertIn("--require-game-textures", workflow)
 
-    def make_app(self, path: Path, cpu_type: int = 0x0100000C, platform: int = 2) -> Path:
+    def make_app(self, path: Path, cpu_type: int = 0x0100000C, platform: int = 2,
+                 include_game_textures: bool = False) -> Path:
         info = {
             "CFBundleExecutable": "sm64ios",
             "CFBundleIdentifier": "com.example.sm64",
@@ -60,6 +62,16 @@ class IpaValidationTests(unittest.TestCase):
         executable.write_bytes(binary)
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         (app / "Assets.car").write_bytes(b"asset catalog fixture")
+        if include_game_textures:
+            resource_dir = app / "res"
+            resource_dir.mkdir()
+            with zipfile.ZipFile(resource_dir / "base.zip", "w") as resource_pack:
+                for name in (
+                    "gfx/actors/goomba/goomba_face.rgba16.png",
+                    "gfx/levels/bob/0.rgba16.png",
+                    "gfx/levels/castle_inside/1.rgba16.png",
+                ):
+                    resource_pack.writestr(name, b"\x89PNG\r\n\x1a\nfixture")
         for storyboard in ("Main", "LaunchScreen"):
             resource = app / "Base.lproj" / f"{storyboard}.storyboardc"
             resource.mkdir(parents=True)
@@ -75,6 +87,21 @@ class IpaValidationTests(unittest.TestCase):
                 mode = ipa.getinfo("Payload/SM64.app/sm64ios").external_attr >> 16
                 self.assertTrue(mode & stat.S_IXUSR)
             validate(str(path), require_system_deps=False)
+
+    def test_requires_original_goomba_castle_and_battlefield_textures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "textures.ipa"
+            app = self.make_app(Path(temp), include_game_textures=True)
+            package_app(app, path)
+            validate(str(path), require_system_deps=False, require_game_textures=True)
+
+    def test_rejects_ipa_without_original_texture_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "no-textures.ipa"
+            app = self.make_app(Path(temp))
+            package_app(app, path)
+            with self.assertRaisesRegex(ValueError, "missing res/base.zip"):
+                validate(str(path), require_system_deps=False, require_game_textures=True)
 
     def test_rejects_non_arm64_executable(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

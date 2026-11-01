@@ -354,6 +354,57 @@ void *fs_load_file(const char *vpath, uint64_t *outsize) {
     return buf;
 }
 
+static bool fs_write_relative_path_is_safe(const char *path) {
+    if (!path || !*path || path[0] == '/' || path[0] == '\\') return false;
+    const char *segment = path;
+    for (const unsigned char *p = (const unsigned char *)path;; ++p) {
+        unsigned char c = *p;
+        if (c == '\\' || c == ':' || (c != '\0' && c < 0x20)) return false;
+        if (c == '/' || c == '\0') {
+            size_t length = (size_t)((const char *)p - segment);
+            if (length == 0 || (length == 1 && segment[0] == '.') ||
+                (length == 2 && segment[0] == '.' && segment[1] == '.')) return false;
+            if (c == '\0') break;
+            segment = (const char *)p + 1;
+        }
+    }
+    return true;
+}
+
+void *fs_load_write_file(const char *relative_path, uint64_t max_size, uint64_t *outsize) {
+    if (!fs_writepath[0] || !fs_write_relative_path_is_safe(relative_path)) return NULL;
+    char path[SYS_MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%s/%s", fs_writepath, relative_path);
+    if (written <= 0 || (size_t)written >= sizeof(path)) return NULL;
+
+    FILE *file = fopen(path, "rb");
+    if (!file) return NULL;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long file_size = ftell(file);
+    if (file_size <= 0 || (uint64_t)file_size > max_size ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    void *buffer = malloc((size_t)file_size);
+    if (!buffer) {
+        fclose(file);
+        return NULL;
+    }
+    size_t bytes_read = fread(buffer, 1, (size_t)file_size, file);
+    bool read_ok = bytes_read == (size_t)file_size && !ferror(file);
+    fclose(file);
+    if (!read_ok) {
+        free(buffer);
+        return NULL;
+    }
+    if (outsize) *outsize = (uint64_t)file_size;
+    return buffer;
+}
+
 const char *fs_get_write_path(const char *vpath) {
     static char path[SYS_MAX_PATH];
     snprintf(path, sizeof(path), "%s/%s", fs_writepath, vpath);

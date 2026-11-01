@@ -68,7 +68,7 @@ static NSUInteger metal_target_height;
 static NSUInteger metal_target_samples;
 static id<MTLRenderPipelineState> metal_present_pipeline;
 static id<MTLSamplerState> metal_present_sampler;
-static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u };
+static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
 static double metal_last_frame_start_time;
@@ -213,6 +213,8 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
         requested.sample_count = (uint32_t)[defaults integerForKey:@"SM64MetalSampleCount"];
     if ([defaults objectForKey:@"SM64MetalAnisotropy"])
         requested.anisotropy = (uint32_t)[defaults integerForKey:@"SM64MetalAnisotropy"];
+    if ([defaults objectForKey:@"SM64MetalHDTextures"])
+        requested.hd_textures = [defaults boolForKey:@"SM64MetalHDTextures"];
     return gfx_metal_settings_sanitize(requested, metal_capabilities);
 }
 
@@ -222,6 +224,13 @@ static void gfx_metal_persist_settings(struct GfxMetalSettings settings) {
     [defaults setInteger:(NSInteger)settings.render_scale_percent forKey:@"SM64MetalRenderScale"];
     [defaults setInteger:(NSInteger)settings.sample_count forKey:@"SM64MetalSampleCount"];
     [defaults setInteger:(NSInteger)settings.anisotropy forKey:@"SM64MetalAnisotropy"];
+    [defaults setBool:settings.hd_textures forKey:@"SM64MetalHDTextures"];
+}
+
+bool gfx_metal_hd_textures_enabled(void) {
+    @synchronized ([NSObject class]) {
+        return metal_settings.preset == GFX_METAL_PRESET_ENHANCED && metal_settings.hd_textures;
+    }
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -240,7 +249,8 @@ void gfx_metal_apply_settings(struct GfxMetalSettings requested) {
         bool changed = metal_settings.preset != sanitized.preset ||
                        metal_settings.render_scale_percent != sanitized.render_scale_percent ||
                        metal_settings.sample_count != sanitized.sample_count ||
-                       metal_settings.anisotropy != sanitized.anisotropy;
+                       metal_settings.anisotropy != sanitized.anisotropy ||
+                       metal_settings.hd_textures != sanitized.hd_textures;
         metal_settings = sanitized;
         if (targets_changed || !gfx_metal_settings_use_offscreen(sanitized))
             metal_offscreen_runtime_failed = false;
@@ -250,7 +260,7 @@ void gfx_metal_apply_settings(struct GfxMetalSettings requested) {
         metal_performance_stats.anisotropy = sanitized.anisotropy;
         if (targets_changed) gfx_metal_release_render_targets();
         if (changed) {
-            gfx_ios_diag_log("Metal graphics settings applied preset=%s scale=%u%% samples=%ux anisotropy=%u", sanitized.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", sanitized.render_scale_percent, sanitized.sample_count, sanitized.anisotropy);
+            gfx_ios_diag_log("Metal graphics settings applied preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", sanitized.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", sanitized.render_scale_percent, sanitized.sample_count, sanitized.anisotropy, sanitized.hd_textures);
         }
     }
     gfx_metal_persist_settings(sanitized);
@@ -970,7 +980,7 @@ static void gfx_metal_init(void) {
     metal_performance_stats.sample_count = metal_settings.sample_count;
     metal_performance_stats.anisotropy = metal_settings.anisotropy;
     gfx_metal_persist_settings(metal_settings);
-    gfx_ios_diag_log("Metal startup graphics settings preset=%s scale=%u%% samples=%ux anisotropy=%u", metal_settings.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", metal_settings.render_scale_percent, metal_settings.sample_count, metal_settings.anisotropy);
+    gfx_ios_diag_log("Metal startup graphics settings preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", metal_settings.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", metal_settings.render_scale_percent, metal_settings.sample_count, metal_settings.anisotropy, metal_settings.hd_textures);
     texture_count = 0;
     for (int i = 0; i < 2; ++i) {
         [metal_samplers[i] release];
