@@ -18,6 +18,8 @@ python3 "$repo_dir/tests/check_ios_gameplay_features.py"
 python3 "$repo_dir/tests/check_ios_kart_integration.py"
 python3 "$repo_dir/tests/check_ios_portal_integration.py"
 CC="$cc" "$repo_dir/tests/run_ios_kart_physics_test.sh"
+CC="$cc" "$repo_dir/tests/run_ios_reality_test.sh"
+python3 "$repo_dir/tests/check_ios_reality_integration.py"
 portal_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-portal-math.XXXXXX")
 trap 'rm -f "$portal_test_bin"' EXIT HUP INT TERM
 $cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/test_portal_math.c" -lm -o "$portal_test_bin"
@@ -31,7 +33,8 @@ common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1
 $cc $common_flags -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
     "$repo_dir/src/game/ios_kart.c" "$repo_dir/src/game/mario.c" \
     "$repo_dir/src/game/mario_actions_moving.c" "$repo_dir/src/game/mario_actions_airborne.c" \
-    "$repo_dir/src/game/mario_step.c" "$repo_dir/src/game/obj_behaviors.c" \
+    "$repo_dir/src/game/mario_step.c" "$repo_dir/src/game/ios_reality.c" \
+    "$repo_dir/src/game/object_list_processor.c" "$repo_dir/src/game/obj_behaviors.c" \
     "$repo_dir/data/behavior_data.c" "$repo_dir/levels/castle_grounds/script.c" \
     "$repo_dir/actors/group0_geo.c"
 # The original kart model is a separate display-list unit; compile it with the

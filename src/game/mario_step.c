@@ -8,6 +8,7 @@
 #include "game_init.h"
 #include "interaction.h"
 #include "mario_step.h"
+#include "game/ios_reality.h"
 
 static s16 sMovingSandSpeeds[] = { 12, 8, 4, 0 };
 
@@ -544,6 +545,38 @@ u32 should_strengthen_gravity_for_jump_ascent(struct MarioState *m) {
 }
 
 void apply_gravity(struct MarioState *m) {
+    const IOSRealityPolicy *policy = ios_reality_global_policy();
+    f32 initialVelY = m->vel[1];
+    if (policy->zero_gravity) return;
+    if (policy->gravity_multiplier < 0.0f && !should_strengthen_gravity_for_jump_ascent(m)) {
+        f32 strength = -policy->gravity_multiplier;
+        f32 acceleration = 4.0f;
+        f32 terminalVelocity = 75.0f;
+        if (m->action == ACT_TWIRLING) {
+            acceleration = m->angleVel[1] > 1024 ? 4096.0f / m->angleVel[1] : 4.0f;
+            terminalVelocity = m->angleVel[1] > 1024 ? 75.0f * 1024.0f / m->angleVel[1] : 75.0f;
+        } else if (m->action == ACT_SHOT_FROM_CANNON) {
+            acceleration = 1.0f;
+        } else if (m->action == ACT_LONG_JUMP || m->action == ACT_SLIDE_KICK
+                   || m->action == ACT_BBH_ENTER_SPIN) {
+            acceleration = 2.0f;
+        } else if (m->action == ACT_LAVA_BOOST || m->action == ACT_FALL_AFTER_STAR_GRAB) {
+            acceleration = 3.2f;
+            terminalVelocity = 65.0f;
+        } else if (m->action == ACT_GETTING_BLOWN) {
+            acceleration = m->unkC4;
+        } else if (m->action & ACT_FLAG_METAL_WATER) {
+            acceleration = 1.6f;
+            terminalVelocity = 16.0f;
+        } else if ((m->flags & MARIO_WING_CAP) && m->vel[1] < 0.0f && (m->input & INPUT_A_DOWN)) {
+            m->marioBodyState->wingFlutter = TRUE;
+            acceleration = 2.0f;
+            terminalVelocity = 37.5f;
+        }
+        m->vel[1] += acceleration * strength;
+        if (m->vel[1] > terminalVelocity) m->vel[1] = terminalVelocity;
+        return;
+    }
     if (m->action == ACT_TWIRLING && m->vel[1] < 0.0f) {
         apply_twirl_gravity(m);
     } else if (m->action == ACT_SHOT_FROM_CANNON) {
@@ -569,6 +602,8 @@ void apply_gravity(struct MarioState *m) {
         }
     } else if (should_strengthen_gravity_for_jump_ascent(m)) {
         m->vel[1] /= 4.0f;
+        /* This is an intentional upward-velocity damping rule, not gravity. */
+        return;
     } else if (m->action & ACT_FLAG_METAL_WATER) {
         m->vel[1] -= 1.6f;
         if (m->vel[1] < -16.0f) {
@@ -588,6 +623,9 @@ void apply_gravity(struct MarioState *m) {
         if (m->vel[1] < -75.0f) {
             m->vel[1] = -75.0f;
         }
+    }
+    if (policy->gravity_multiplier != 1.0f) {
+        m->vel[1] = initialVelY + (m->vel[1] - initialVelY) * policy->gravity_multiplier;
     }
 }
 

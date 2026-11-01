@@ -19,6 +19,11 @@
 #include "platform_displacement.h"
 #include "profiler.h"
 #include "spawn_object.h"
+#include "game/ios_reality.h"
+
+#define IOS_REALITY_ENEMY_INTERACTIONS (INTERACT_DAMAGE | INTERACT_KOOPA | INTERACT_BULLY \
+    | INTERACT_FLAME | INTERACT_MR_BLIZZARD | INTERACT_CLAM_OR_BUBBA | INTERACT_SNUFIT_BULLET \
+    | INTERACT_BOUNCE_TOP | INTERACT_BOUNCE_TOP2)
 
 
 /**
@@ -292,12 +297,17 @@ void bhv_mario_update(void) {
  */
 s32 update_objects_starting_at(struct ObjectNode *objList, struct ObjectNode *firstObj) {
     s32 count = 0;
+    s32 freezeEnemies = ios_reality_global_policy()->freeze_enemies;
 
     while (objList != firstObj) {
         gCurrentObject = (struct Object *) firstObj;
-
-        gCurrentObject->header.gfx.node.flags |= GRAPH_RENDER_HAS_ANIMATION;
-        cur_obj_update();
+        if (freezeEnemies
+            && (gCurrentObject->oInteractType & IOS_REALITY_ENEMY_INTERACTIONS)) {
+            gCurrentObject->header.gfx.node.flags &= ~GRAPH_RENDER_HAS_ANIMATION;
+        } else {
+            gCurrentObject->header.gfx.node.flags |= GRAPH_RENDER_HAS_ANIMATION;
+            cur_obj_update();
+        }
 
         firstObj = firstObj->next;
         count += 1;
@@ -318,6 +328,7 @@ s32 update_objects_starting_at(struct ObjectNode *objList, struct ObjectNode *fi
 s32 update_objects_during_time_stop(struct ObjectNode *objList, struct ObjectNode *firstObj) {
     s32 count = 0;
     s32 unfrozen;
+    s32 freezeEnemies = ios_reality_global_policy()->freeze_enemies;
 
     while (objList != firstObj) {
         gCurrentObject = (struct Object *) firstObj;
@@ -339,6 +350,11 @@ s32 update_objects_during_time_stop(struct ObjectNode *objList, struct ObjectNod
                 & (ACTIVE_FLAG_UNIMPORTANT | ACTIVE_FLAG_INITIATED_TIME_STOP)) {
                 unfrozen = TRUE;
             }
+        }
+
+        if (freezeEnemies
+            && (gCurrentObject->oInteractType & IOS_REALITY_ENEMY_INTERACTIONS)) {
+            unfrozen = FALSE;
         }
 
         // Only update if unfrozen
@@ -676,7 +692,7 @@ void update_objects(UNUSED s32 unused) {
 
     // If time stop was enabled this frame, activate it now so that it will
     // take effect next frame
-    if (gTimeStopState & TIME_STOP_ENABLED) {
+    if ((gTimeStopState & TIME_STOP_ENABLED) || ios_reality_global_policy()->time_stop) {
         gTimeStopState |= TIME_STOP_ACTIVE;
     } else {
         gTimeStopState &= ~TIME_STOP_ACTIVE;

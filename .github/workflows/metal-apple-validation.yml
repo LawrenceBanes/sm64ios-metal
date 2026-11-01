@@ -34,6 +34,8 @@ jobs:
           tests/run_scene_bvh_test.sh
           tests/run_texture_cache_reset_test.sh
           tests/run_texture_override_test.sh
+          tests/run_ios_reality_test.sh
+          python3 tests/check_ios_reality_integration.py
           tests/run_fs_writepath_test.sh
           tests/run_texture_override_test.sh
           tests/check_metal_project_wiring.sh
