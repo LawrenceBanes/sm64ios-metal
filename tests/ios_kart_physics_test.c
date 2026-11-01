@@ -15,11 +15,12 @@ int main(void) {
     IOSKartInput input = {0};
     f32 beforeYaw, vx, vz;
 
-    assert(ios_kart_can_mount(100.0f, 210.0f, 1, 0, 0));
-    assert(!ios_kart_can_mount(211.0f, 210.0f, 1, 0, 0));
-    assert(!ios_kart_can_mount(100.0f, 210.0f, 0, 0, 0));
-    assert(!ios_kart_can_mount(100.0f, 210.0f, 1, 1, 0));
-    assert(!ios_kart_can_mount(100.0f, 210.0f, 1, 0, 1));
+    assert(ios_kart_can_mount(100.0f, 130.0f, 1, 0, 0));
+    assert(ios_kart_can_mount(130.0f, 130.0f, 1, 0, 0));
+    assert(!ios_kart_can_mount(131.0f, 130.0f, 1, 0, 0));
+    assert(!ios_kart_can_mount(100.0f, 130.0f, 0, 0, 0));
+    assert(!ios_kart_can_mount(100.0f, 130.0f, 1, 1, 0));
+    assert(!ios_kart_can_mount(100.0f, 130.0f, 1, 0, 1));
     assert(ios_kart_can_dismount(1, 1));
     assert(!ios_kart_can_dismount(0, 1));
     assert(!ios_kart_can_dismount(1, 0));
