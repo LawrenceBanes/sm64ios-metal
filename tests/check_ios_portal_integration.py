@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source guards for the collision-based iOS wall-portal prototype."""
+"""Source guards for scene-backed, surface-oriented iOS portals."""
 
 from pathlib import Path
 
@@ -14,41 +14,69 @@ mario = read("src/game/mario.c")
 mario_h = read("src/game/mario.h")
 collision = read("src/engine/surface_collision.c")
 ui = read("src/pc/gfx/gfx_uikit.m")
+metal = read("src/pc/gfx/gfx_metal.m")
 scripts = read("levels/scripts.c")
 behavior = read("data/behavior_data.c")
 model = read("actors/portal/model.inc.c")
 math_h = read("include/game/portal_math.h")
 
-# Placement uses a camera-directed collision-world ray, rejects moving/tilted
-# surfaces, and requires the full aperture to fit the host triangle.
+# UIKit only enqueues requests; the game action atomically consumes them and
+# records the consumed mask before raycast or state mutation.
+assert "__atomic_fetch_or(&sIOSGameplayRequests" in mario
+assert "__atomic_exchange_n(&sIOSGameplayRequests, 0, __ATOMIC_ACQUIRE)" in mario
+assert "Portal requests consumed by game thread" in mario
+assert "Gameplay menu queued blue portal placement" in ui
+assert "Gameplay menu queued orange portal placement" in ui
+
+# Aim from the center-of-screen focus point along the true camera forward ray.
+assert "vec3f_copy(rayOrigin, gLakituState.focus)" in mario
+assert "gLakituState.focus[0] - gLakituState.pos[0]" in mario
 assert "find_surface_on_ray(rayOrigin, rayDirection, &surface, hitPosition)" in mario
-assert "surface->flags & SURFACE_FLAG_DYNAMIC" in mario
-assert "fabsf(surface->normal.y) > 0.10f" in mario
-assert "portal_aperture_fits_triangle" in mario
+assert "Portal placement rejected type=%s reason=no collision hit" in mario
+assert "moving-platform anchors are not yet supported" in mario
 
-# Original collision geometry remains present; only Mario's collision query is
-# allowed to pass the exact two portal host triangles within the aperture.
-assert "mario_ios_portal_surface_passable(surf, x, y, z, radius)" in collision
-assert "surface != sIOSPortalSurfaces[i]" in mario
-assert "!sIOSPortalValid[0] || !sIOSPortalValid[1]" in mario
-assert "velocityToward < -0.5f" in mario
+# Placement validates the whole opening against a union of static coplanar or
+# near-coplanar collision triangles, with edge/gap and nearby-obstacle checks.
+assert "mario_ios_portal_aperture_has_support" in mario
+assert "mario_ios_portal_point_has_static_support" in mario
+assert "portal_triangle_matches_frame" in mario
+assert "mario_ios_portal_has_nearby_obstacle" in mario
+assert "collision footprint has an edge or gap" in mario
+assert "portal_aperture_covered_by_triangles" in math_h
+assert "fabsf(surface->normal.y) > 0.10f" not in mario
+assert "portal_aperture_fits_triangle" not in mario
 
-# Traversal transforms position, momentum, facing, and camera history, with a
-# short re-entry cooldown and a hard Yoshi exclusion.
-assert "portal_transform_point(from, to, m->pos" in mario
+# The stored orthonormal surface frame drives model orientation, arbitrary
+# normal traversal, capsule aperture bounds, and momentum transformation.
+assert "portal_frame_set_basis(&candidate, surfaceNormal, preferredUp)" in mario
+assert "angle[0] = atan2s(-frame->normal[1], horizontal)" in mario
+assert "angle[2] = atan2s(-portal_dot3(frame->up, baseRight)" in mario
+assert "portal_capsule_axis_extent(to->normal" in mario
+assert "portal_transform_point(from, to, currentCenter" in mario
 assert "portal_transform_vector(from, to, m->vel" in mario
 assert "portal_exit_correction_is_safe(requestedPosition, attemptedPosition" in mario
 assert "portal_exit_resolve_floor(&attemptedPosition[1]" in mario
-assert "pushDistanceSquared" not in mario
-assert "mario_ios_transform_yaw(from, to, m->faceAngle[1])" in mario
-assert "gLakituState.curPos" in mario and "gLakituState.goalPos" in mario
 assert "sIOSPortalTraversalCooldown = 6" in mario
-assert "mario_ios_is_riding_yoshi(m)" in mario
-assert "sIOSPortalArea != gCurrentArea" in mario
-assert "floor == NULL" in mario and "ceilHeight < attemptedPosition[1] + IOS_PORTAL_PLAYER_HEIGHT" in mario
+assert "velocityToward < -0.5f" in mario
 
-# Native controls expose both placements, enable toggle, and reset, and the
-# UI describes the visual fallback honestly.
+# Mario's collision filter applies to wall, floor, and ceiling partitions; it
+# never changes the level collision data or allows non-Mario actors through.
+assert collision.count("mario_ios_portal_surface_passable(surf, x, y, z,") >= 3
+assert "gCurrentObject == gMarioObject" in collision
+assert "mario_ios_surface_matches_portal(surface, frame)" in mario
+assert "gCheckingSurfaceCollisionsForCamera" in mario
+assert "mario_ios_is_riding_yoshi(m)" in mario
+
+# Each rejection reaches a short-lived native toast; successful actor
+# visibility and actual Metal draws have separate event markers.
+assert "void gfx_ios_portal_status(const char *message)" in read("src/pc/gfx/gfx_ios_diagnostics.h")
+assert "showPortalStatus:" in ui
+assert "Portal actor visible type=%s" in mario
+assert "Metal portal geometry draw encoded type=%s" in metal
+assert "Portal traversal crossing source=%s" in mario
+assert "Portal traversal succeeded source=%s" in mario
+assert "Portal traversal rejected source=%s" in mario
+
 for name in ("blue", "orange", "enable_toggle", "reset"):
     assert f"mario_ios_request_portal_{name}" in mario_h
     assert f"mario_ios_request_portal_{name}" in ui
@@ -58,10 +86,4 @@ assert '#include "behavior_data.h"' in scripts
 assert "bhvPortalBlue" in behavior and "bhvPortalOrange" in behavior
 assert "LAYER_TRANSPARENT" in model
 
-# Unit-testable mapping is the 180-degree portal-through transform, including
-# normal component reversal and an explicit exit clearance offset.
-assert "output[0] = -localX * targetRight[0] - localZ * to->normal[0]" in math_h
-assert "exitOffset * to->normal[0]" in math_h
-assert "startDistance <= 0.0f || endDistance > 0.0f" in math_h
-
-print("iOS portal placement, traversal, control, and fallback source checks passed")
+print("iOS portal request, universal surface placement, traversal, feedback, and render-path checks passed")

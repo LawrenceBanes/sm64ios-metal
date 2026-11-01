@@ -51,9 +51,9 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
             continue;
         }
 
-        /* Portal traversal does not edit the level's collision mesh. It only
-         * omits the matching static wall triangle from Mario's wall push while
-         * his collision capsule is entirely inside the paired aperture. */
+        /* Portal traversal leaves level collision intact. It omits only static
+         * coplanar patch triangles while Mario's capsule fits inside a paired
+         * wall, floor, ceiling, or slope aperture. */
         if (gCurrentObject == gMarioObject
             && mario_ios_portal_surface_passable(surf, x, y, z, radius)) {
             continue;
@@ -244,6 +244,11 @@ static struct Surface *find_ceil_from_list(struct SurfaceNode *surfaceNode, s32 
         surf = surfaceNode->surface;
         surfaceNode = surfaceNode->next;
 
+        if (gCurrentObject == gMarioObject
+            && mario_ios_portal_surface_passable(surf, x, y, z, 35.0f)) {
+            continue;
+        }
+
         x1 = surf->vertex1[0];
         z1 = surf->vertex1[2];
         z2 = surf->vertex2[2];
@@ -417,6 +422,11 @@ static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32
     while (surfaceNode != NULL) {
         surf = surfaceNode->surface;
         surfaceNode = surfaceNode->next;
+
+        if (gCurrentObject == gMarioObject
+            && mario_ios_portal_surface_passable(surf, x, y, z, 35.0f)) {
+            continue;
+        }
 
         x1 = surf->vertex1[0];
         z1 = surf->vertex1[2];

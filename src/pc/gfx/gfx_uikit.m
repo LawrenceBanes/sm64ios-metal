@@ -38,6 +38,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIView *panel;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UILabel *portalStatusLabel;
 @property(nonatomic, strong) UIButton *toggleButton;
 @property(nonatomic, strong) MTKView *probeView;
 @property(nonatomic, strong) UIButton *probeCloseButton;
@@ -58,8 +59,10 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic) BOOL probeAvailabilityLogged;
 @property(nonatomic) BOOL collapsed;
 @property(nonatomic) BOOL graphicsSettingsVisible;
+@property(nonatomic) uint64_t portalStatusGeneration;
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentStatus;
 - (void)appendStatus:(NSString *)status;
+- (void)showPortalStatus:(NSString *)status;
 - (void)collapsePanel;
 - (void)togglePanel;
 - (void)startColorProbe;
@@ -149,6 +152,20 @@ static int sm64RenderDiagnosticMode;
         [self.statusLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:3],
         [self.statusLabel.heightAnchor constraintEqualToConstant:61]
     ]];
+
+    self.portalStatusLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+    self.portalStatusLabel.backgroundColor = [UIColor colorWithWhite:0.03 alpha:0.88];
+    self.portalStatusLabel.textColor = UIColor.whiteColor;
+    self.portalStatusLabel.font = [UIFont boldSystemFontOfSize:15.0];
+    self.portalStatusLabel.textAlignment = NSTextAlignmentCenter;
+    self.portalStatusLabel.numberOfLines = 2;
+    self.portalStatusLabel.layer.cornerRadius = 10.0;
+    self.portalStatusLabel.layer.borderWidth = 1.0;
+    self.portalStatusLabel.layer.borderColor = [UIColor colorWithWhite:0.9 alpha:0.5].CGColor;
+    self.portalStatusLabel.clipsToBounds = YES;
+    self.portalStatusLabel.userInteractionEnabled = NO;
+    self.portalStatusLabel.hidden = YES;
+    [root addSubview:self.portalStatusLabel];
 
     UIStackView *buttons = [[[UIStackView alloc] initWithFrame:CGRectZero] autorelease];
     buttons.axis = UILayoutConstraintAxisHorizontal;
@@ -250,6 +267,9 @@ static int sm64RenderDiagnosticMode;
     CGFloat top = self.view.safeAreaInsets.top + 6.0;
     CGRect frame = CGRectMake(MAX(10.0, (self.view.bounds.size.width - panelWidth) * 0.5), top, panelWidth, panelHeight);
     self.panel.frame = frame;
+    CGFloat toastWidth = MIN(360.0, MAX(220.0, self.view.bounds.size.width - 32.0));
+    self.portalStatusLabel.frame = CGRectMake((self.view.bounds.size.width - toastWidth) * 0.5,
+        top + panelHeight + 8.0, toastWidth, 50.0);
     ((SM64DiagnosticsPassthroughView *)self.view).hitRect = (self.probeView || self.graphicsSettingsVisible) ? self.view.bounds : CGRectInset(frame, -2, -2);
     CGFloat settingsWidth = MIN(520.0, MAX(320.0, self.view.bounds.size.width - 24.0));
     CGFloat settingsHeight = MIN(374.0, MAX(330.0, self.view.bounds.size.height - 20.0));
@@ -343,6 +363,24 @@ static int sm64RenderDiagnosticMode;
     [self.recentStatus addObject:status];
     while (self.recentStatus.count > 5) [self.recentStatus removeObjectAtIndex:0];
     self.statusLabel.text = [self.recentStatus componentsJoinedByString:@"\n"];
+}
+
+- (void)showPortalStatus:(NSString *)status {
+    if (!status.length) return;
+    self.portalStatusGeneration++;
+    uint64_t generation = self.portalStatusGeneration;
+    self.portalStatusLabel.text = status;
+    self.portalStatusLabel.hidden = NO;
+    self.portalStatusLabel.alpha = 1.0;
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+    [self appendStatus:status];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (self.portalStatusGeneration == generation) {
+            self.portalStatusLabel.hidden = YES;
+        }
+    });
 }
 
 - (void)collapsePanel {
@@ -715,6 +753,15 @@ void gfx_ios_diag_log(const char *format, ...) {
     NSLog(@"[SM64-DIAG] %@", message);
     dispatch_async(dispatch_get_main_queue(), ^{
         [sm64_diag_controller() appendStatus:message];
+    });
+}
+
+void gfx_ios_portal_status(const char *message) {
+    if (!message || !message[0]) return;
+    NSString *status = [NSString stringWithUTF8String:message];
+    if (!status.length) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [sm64_diag_controller() showPortalStatus:status];
     });
 }
 

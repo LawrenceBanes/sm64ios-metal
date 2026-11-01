@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 #include "gfx_metal.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
@@ -93,6 +94,7 @@ static bool metal_scene_active;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
 static bool logged_first_triangle_draw;
+static bool logged_portal_draw[2];
 static uint64_t presentation_callback_count;
 static uint64_t displayed_drawable_count;
 static uint64_t completed_drawable_count;
@@ -667,6 +669,38 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     return p->pipelines[key];
 }
 
+static int gfx_metal_batch_has_portal_color(const float *data, size_t float_count,
+                                            size_t triangle_count,
+                                            const struct GfxMetalVertexLayout *layout,
+                                            const struct CCFeatures *features,
+                                            int portalType) {
+    float expected[3];
+    size_t vertexCount = triangle_count * 3u;
+    size_t vertex, base;
+    uint32_t components = features->opt_alpha ? 4u : 3u;
+    if (features->num_inputs < 1 || !layout->attribute_count) return 0;
+    expected[0] = portalType == 0 ? 40.0f / 255.0f : 1.0f;
+    expected[1] = portalType == 0 ? 170.0f / 255.0f : 120.0f / 255.0f;
+    expected[2] = portalType == 0 ? 1.0f : 24.0f / 255.0f;
+    for (vertex = 0; vertex + 2 < vertexCount; vertex += 3) {
+        int allMatch = 1;
+        int k;
+        for (k = 0; k < 3; ++k) {
+            base = vertex * (layout->stride / sizeof(float)) + k * (layout->stride / sizeof(float))
+                 + layout->offset[layout->input_attribute[0]] / sizeof(float);
+            if (base + components > float_count
+                || fabsf(data[base] - expected[0]) > 0.004f
+                || fabsf(data[base + 1] - expected[1]) > 0.004f
+                || fabsf(data[base + 2] - expected[2]) > 0.004f) {
+                allMatch = 0;
+                break;
+            }
+        }
+        if (allMatch) return 1;
+    }
+    return 0;
+}
+
 static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t triangle_count) {
     if (!triangle_count) return;
     if (!gfx_metal_scene_can_render()) return;
@@ -817,6 +851,15 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
     if (state_decal) [metal_encoder setDepthBias:-1.0 slopeScale:0.0 clamp:0.0];
     else [metal_encoder setDepthBias:0.0 slopeScale:0.0 clamp:0.0];
     [metal_encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:triangle_count * 3];
+    for (int portalType = 0; portalType < 2; ++portalType) {
+        if (!logged_portal_draw[portalType]
+            && gfx_metal_batch_has_portal_color(data, float_count, triangle_count,
+                                                &vertex_layout, &active_program->features,
+                                                portalType)) {
+            logged_portal_draw[portalType] = true;
+            gfx_ios_diag_log("Metal portal geometry draw encoded type=%s frame=%u pipeline=%p shader=0x%08x triangles=%lu colorSignature=(%.3f,%.3f,%.3f) depthTest=%d depthWrite=%d blend=%d drawable=%lux%lu", portalType == 0 ? "blue" : "orange", frame_count, pipeline, active_program->shader_id, (unsigned long)triangle_count, portalType == 0 ? 40.0 / 255.0 : 1.0, portalType == 0 ? 170.0 / 255.0 : 120.0 / 255.0, portalType == 0 ? 1.0 : 24.0 / 255.0, state_depth_test, state_depth_write, state_blend, (unsigned long)metal_active_render_width, (unsigned long)metal_active_render_height);
+        }
+    }
     ++metal_frame_draw_calls;
     metal_frame_triangles += triangle_count;
     @synchronized ([NSObject class]) {
