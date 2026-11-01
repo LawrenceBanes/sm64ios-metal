@@ -78,3 +78,38 @@ or actor import remain visible limitations. The next Hyrule milestone is to
 build this opt-in level from the private archive, inspect authentic geometry
 and textures on device, then tune the shared SM64 collision integration based
 on the actual playtest. Region expansion and seamless streaming are deferred.
+
+## Mission 55.1 — Castle forest gateway
+
+When `IOS_HYRULE_WORLD=1` is enabled, Castle Grounds gains a localized route
+along its western wooded edge. It starts at `x=-7420`, joins original Castle
+Grounds collision at `y=260`, and continues to `x=-11100` in a `z=720..2200`
+passage. The authored SM64 trail mesh follows the same collision stations; an
+open timber arch marks the entrance, and the existing Castle Grounds tree
+model is reused along both sides. The default build has the original 490
+collision vertices and no added gateway display list or warp.
+
+The route uses the existing SM64 `Collision`, `Gfx`, `OBJECT`, and
+`bhvFadingWarp` systems. Castle warp node `0x09` leads to Hyrule Field area 1
+node `0x01`; the Hyrule return warp leads back to Castle node `0x09`. The
+importer finds the Hyrule return warp and recovery-kart positions on nearly
+flat collision, checks their height against the selected start, and converts
+OoT's signed binary-angle yaw to the degrees expected by SM64's `MARIO_POS`.
+The Hyrule default spawn remains available when entering the level through the
+existing debug path.
+
+Kart object ownership is area-local in the current engine. A mounted kart is
+not carried through the level load with its momentum and mount state; the
+target level places a new recoverable kart on validated terrain. Luigi's
+selection and Reality Debugger state are process-global in the current code,
+so this gateway does not reinitialize them. The passage reuses existing bird
+chirps and tree models; level music changes only when the normal warp loads
+Hyrule, since the current audio/lighting path has no spatial cross-fade.
+
+The gateway has collision-continuity regressions and opt-in host C syntax
+checks. There is still no Hyrule-enabled iOS build or iPhone test. The full IPA
+workflow accepts a separate optional private draft release tag for the
+supplied `oot.o2r`; see `KOKIRI_FOREST_AUDIT.md` for the input convention and
+the Kokiri follow-up plan. The archive itself is not placed in Actions
+artifacts or IPA release assets; only generated game output is compiled into
+the private IPA.

@@ -31,6 +31,9 @@ static const LevelScript script_func_local_1[] = {
     WARP_NODE(/*id*/ 0x06, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x06, /*flags*/ WARP_NO_CHECKPOINT),
     WARP_NODE(/*id*/ 0x07, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x07, /*flags*/ WARP_NO_CHECKPOINT),
     WARP_NODE(/*id*/ 0x08, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x08, /*flags*/ WARP_NO_CHECKPOINT),
+#if defined(IOS_HYRULE_WORLD)
+    WARP_NODE(/*id*/ 0x09, /*destLevel*/ LEVEL_HYRULE_FIELD, /*destArea*/ 0x01, /*destNode*/ 0x01, /*flags*/ WARP_NO_CHECKPOINT),
+#endif
     OBJECT(/*model*/ MODEL_NONE, /*pos*/  5408,  4500,  3637, /*angle*/ 0, 225, 0, /*behParam*/ 0x000A0000, /*beh*/ bhvAirborneWarp),
     WARP_NODE(/*id*/ 0x0A, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x0A, /*flags*/ WARP_NO_CHECKPOINT),
     OBJECT(/*model*/ MODEL_NONE, /*pos*/ -6901,  2376, -6509, /*angle*/ 0, 230, 0, /*behParam*/ 0x00140000, /*beh*/ bhvAirborneWarp),
@@ -39,6 +42,27 @@ static const LevelScript script_func_local_1[] = {
     WARP_NODE(/*id*/ 0x1E, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x1E, /*flags*/ WARP_NO_CHECKPOINT),
     RETURN(),
 };
+
+#if defined(IOS_HYRULE_WORLD)
+static const LevelScript script_func_local_5[] = {
+    // Reuse the castle's native tree model to make the new path read as a wooded seam.
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -7800, 260,  850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -7800, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -8400, 260,  850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -8400, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9000, 260,  850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9000, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9600, 260,  850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9600, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10200, 260, 850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10200, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10700, 260, 850, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10700, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+    // The source warp doubles as the return spawn; the fade guard prevents an immediate loop.
+    OBJECT(MODEL_NONE, -10850, 260, 1460, 0, 90, 0, 0x28090000, bhvFadingWarp),
+    RETURN(),
+};
+#endif
 
 static const LevelScript script_func_local_2[] = {
     OBJECT(/*model*/ MODEL_NONE,                        /*pos*/ -5812,  100, -5937, /*angle*/ 0,   0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvWaterfallSoundLoop),
@@ -129,6 +153,9 @@ const LevelScript level_castle_grounds_entry[] = {
         JUMP_LINK(script_func_local_2),
         JUMP_LINK(script_func_local_3),
         JUMP_LINK(script_func_local_4),
+#if defined(IOS_HYRULE_WORLD)
+        JUMP_LINK(script_func_local_5),
+#endif
         TERRAIN(/*terrainData*/ castle_grounds_seg7_collision_level),
         MACRO_OBJECTS(/*objList*/ castle_grounds_seg7_macro_objs),
         SET_BACKGROUND_MUSIC(/*settingsPreset*/ 0x0000, /*seq*/ SEQ_SOUND_PLAYER),

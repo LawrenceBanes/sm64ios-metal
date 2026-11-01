@@ -1058,6 +1058,19 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     scaled_spawn = [int(round(value * scale)) for value in spawn_position]
     if any(value < -32768 or value > 32767 for value in scaled_spawn):
         raise ImportFailure("spawn scale produces coordinates outside SM64 MARIO_POS s16 range")
+    extra_spawn_macros = []
+    if spawn is not None:
+        for name, key in (("HYRULE_FIELD_KART", "kart_position"),
+                          ("HYRULE_FIELD_RETURN", "return_position")):
+            position = spawn.get(key)
+            if position is None:
+                continue
+            scaled_position = [int(round(value * scale)) for value in position]
+            if any(value < -32768 or value > 32767 for value in scaled_position):
+                raise ImportFailure(f"{key.replace('_', ' ')} scale produces coordinates outside SM64 s16 range")
+            extra_spawn_macros.extend(
+                f"#define {name}_{axis} {value}\n"
+                for axis, value in zip(("X", "Y", "Z"), scaled_position))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
     spawn_header_path = output_path.with_name("hyrule_field_spawn.h")
@@ -1068,7 +1081,8 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
         f"#define HYRULE_FIELD_SPAWN_Y {scaled_spawn[1]}\n"
         f"#define HYRULE_FIELD_SPAWN_Z {scaled_spawn[2]}\n"
         f"#define HYRULE_FIELD_SPAWN_YAW ((s16){spawn_yaw})\n"
-        "#endif\n", encoding="utf-8")
+        + "".join(extra_spawn_macros)
+        + "#endif\n", encoding="utf-8")
     return {"include": str(output_path), "display_list_count": len(variants),
             "opaque_calls": sum(len(v["opaque"]) for v in by_polygon_lists.values()),
             "translucent_calls": sum(len(v["translucent"]) for v in by_polygon_lists.values()),
@@ -1262,6 +1276,43 @@ def coordinate(point: list[int], scale: float) -> list[float]:
     # The runtime and OoT use X/Y/Z with Y vertical. Keep axes explicit and
     # preserve the source coordinates until scene calibration is device-tested.
     return [point[0] * scale, point[1] * scale, point[2] * scale]
+
+
+def oot_angle_to_sm64_degrees(angle: int) -> int:
+    """Convert OoT's signed 16-bit binary angle to the degree input used by MARIO_POS."""
+    return int(round(angle * 360.0 / 65536.0))
+
+
+def find_nearby_flat_position(collision: dict, origin: list[float], offsets: list[tuple[int, int]]) -> list[float] | None:
+    """Find a nearby, nearly level ground point suitable for an actor or warp node."""
+    for dx, dz in offsets:
+        x = origin[0] + dx
+        z = origin[2] + dz
+        floor = collision_floor_at(collision, x, origin[1] + 150.0, z,
+                                   max_above=200.0, max_below=400.0)
+        if floor is None or floor["normal"][1] < 28672:
+            continue
+        if abs(floor["floor_y"] - origin[1]) > 200.0:
+            continue
+        return [x, floor["floor_y"], z]
+    return None
+
+
+def choose_hyrule_auxiliary_spawns(collision: dict, spawn_position: list[float]) -> tuple[list[float], list[float]]:
+    """Find grounded return-warp and kart positions relative to the selected Hyrule start."""
+    kart_offsets = [(-500, 0), (0, 500), (500, 0), (0, -500),
+                    (-350, 350), (350, 350), (-350, -350), (350, -350),
+                    (-650, 0), (0, 650), (650, 0), (0, -650)]
+    return_offsets = [(800, 0), (0, 800), (-800, 0), (0, -800),
+                      (600, 600), (-600, 600), (600, -600), (-600, -600),
+                      (1000, 0), (0, 1000), (-1000, 0), (0, -1000)]
+    kart_position = find_nearby_flat_position(collision, spawn_position, kart_offsets)
+    return_position = find_nearby_flat_position(collision, spawn_position, return_offsets)
+    if kart_position is None:
+        raise ImportFailure("no nearby flat Hyrule Field floor position is safe for the optional kart")
+    if return_position is None:
+        raise ImportFailure("no nearby flat Hyrule Field floor position is safe for the castle return warp")
+    return kart_position, return_position
 
 
 def collision_floor_at(collision: dict, x: float, y: float, z: float,
@@ -1615,8 +1666,17 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             supported_spawn = next((item for item in spawn_support
                                     if item["status"] == "supported"), None)
             if supported_spawn is not None:
-                selected_spawn = {"position": supported_spawn["position"],
-                                  "yaw": start_entries[supported_spawn["index"]]["rotation"][1]}
+                source_position = start_entries[supported_spawn["index"]]["position"]
+                kart_position, return_position = choose_hyrule_auxiliary_spawns(
+                    primary_collision, source_position)
+                selected_spawn = {
+                    # Keep these in OoT source units; the level-source writer applies --scale once.
+                    "position": source_position,
+                    "yaw": oot_angle_to_sm64_degrees(
+                        start_entries[supported_spawn["index"]]["rotation"][1]),
+                    "kart_position": kart_position,
+                    "return_position": return_position,
+                }
         native_include = output_dir / "render" / "hyrule_field_runtime.inc.c"
         native_summary = emit_native_level_include(
             native_include, room_meshes, decoded, texture_payloads, display_list_bodies,

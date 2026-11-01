@@ -1,7 +1,12 @@
 // 0x0700EAE8 - 0x07010D08
 const Collision castle_grounds_seg7_collision_level[] = {
     COL_INIT(),
+#if defined(IOS_HYRULE_WORLD)
+    // 490 original vertices plus the localized forest-path floor and side walls.
+    COL_VERTEX_INIT(0x1FA),
+#else
     COL_VERTEX_INIT(0x1EA),
+#endif
     COL_VERTEX(-4671, -511, -2545),
     COL_VERTEX(-4686, -511, -3151),
     COL_VERTEX(-4700, 543, -3663),
@@ -492,6 +497,26 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_VERTEX(5087, 452, -2031),
     COL_VERTEX(2314, 447, -162),
     COL_VERTEX(2314, 468, -142),
+#if defined(IOS_HYRULE_WORLD)
+    // Forest gateway floor stations, in low-Z/high-Z pairs, from castle land outward.
+    COL_VERTEX(-7420, 260, 720),
+    COL_VERTEX(-7420, 260, 2200),
+    COL_VERTEX(-8600, 260, 720),
+    COL_VERTEX(-8600, 260, 2200),
+    COL_VERTEX(-9800, 260, 720),
+    COL_VERTEX(-9800, 260, 2200),
+    COL_VERTEX(-11100, 260, 720),
+    COL_VERTEX(-11100, 260, 2200),
+    // Raised side boundaries keep Mario and the kart inside the wooded passage.
+    COL_VERTEX(-7420, 1300, 720),
+    COL_VERTEX(-8600, 1300, 720),
+    COL_VERTEX(-9800, 1300, 720),
+    COL_VERTEX(-11100, 1300, 720),
+    COL_VERTEX(-7420, 1300, 2200),
+    COL_VERTEX(-8600, 1300, 2200),
+    COL_VERTEX(-9800, 1300, 2200),
+    COL_VERTEX(-11100, 1300, 2200),
+#endif
     COL_TRI_INIT(SURFACE_DEFAULT, 336),
     COL_TRI(406, 407, 408),
     COL_TRI(406, 409, 407),
@@ -1381,6 +1406,28 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_TRI(473, 472, 489),
     COL_TRI(469, 473, 489),
     COL_TRI(472, 473, 469),
+#if defined(IOS_HYRULE_WORLD)
+    // Six walkable floor triangles and twelve side-wall triangles.
+    COL_TRI_INIT(SURFACE_DEFAULT, 18),
+    COL_TRI(490, 492, 491),
+    COL_TRI(492, 493, 491),
+    COL_TRI(492, 494, 493),
+    COL_TRI(494, 495, 493),
+    COL_TRI(494, 496, 495),
+    COL_TRI(496, 497, 495),
+    COL_TRI(490, 498, 492),
+    COL_TRI(492, 498, 499),
+    COL_TRI(492, 499, 494),
+    COL_TRI(494, 499, 500),
+    COL_TRI(494, 500, 496),
+    COL_TRI(496, 500, 501),
+    COL_TRI(491, 493, 502),
+    COL_TRI(493, 503, 502),
+    COL_TRI(493, 495, 503),
+    COL_TRI(495, 504, 503),
+    COL_TRI(495, 497, 504),
+    COL_TRI(497, 505, 504),
+#endif
     COL_TRI_STOP(),
     COL_SPECIAL_INIT(30),
     SPECIAL_OBJECT_WITH_YAW(/*preset*/ special_level_geo_03,     /*pos*/     0, 2867, -3924, /*yaw*/ 0),

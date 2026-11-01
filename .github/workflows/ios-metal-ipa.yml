@@ -9,6 +9,10 @@ on:
         description: Temporary private release tag containing sm64-assets.tar.gz and sm64-assets.sha256 (leave empty to use configured HTTPS URL secrets; [build-ipa] pushes use the current draft bundle)
         required: false
         type: string
+      hyrule_o2r_release_tag:
+        description: Optional private draft release tag containing oot.o2r and oot.o2r.sha256; enables the opt-in Hyrule Field level
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile tools/hyrule_importer.py tests/test_hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/test_render_diagnostics.py ios/test_metal_graphics_foundation.py ios/test_hd_texture_overrides.py ios/patch_sdl2_ios27_orientation.py
+          python3 -m py_compile tools/hyrule_importer.py tests/test_hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/test_render_diagnostics.py ios/test_metal_graphics_foundation.py ios/test_hd_texture_overrides.py ios/test_hyrule_gateway.py ios/test_hyrule_asset_workflow.py ios/patch_sdl2_ios27_orientation.py
           bash -n ios/build_sdl2_ios.sh
           python3 ios/test_scene_lifecycle.py
           python3 ios/test_ios_diagnostics.py
@@ -43,6 +47,8 @@ jobs:
           python3 ios/test_texture_cache_reset.py
           python3 ios/test_render_diagnostics.py
           python3 ios/test_hd_texture_overrides.py
+          python3 ios/test_hyrule_gateway.py
+          python3 ios/test_hyrule_asset_workflow.py
           (cd ios && python3 -m unittest -v test_asset_checksum.py test_ipa_validation.py)
 
   ios-arm64-ipa:
@@ -59,6 +65,7 @@ jobs:
       ASSET_BUNDLE_URL: ${{ secrets.SM64_ASSET_BUNDLE_URL }}
       ASSET_BUNDLE_SHA256: ${{ secrets.SM64_ASSET_BUNDLE_SHA256 }}
       ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
+      HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Verify Xcode and iOS 27 SDK
@@ -113,6 +120,12 @@ jobs:
             [[ "$ASSET_BUNDLE_URL" == https://* ]] || { echo "Asset URL must use HTTPS." >&2; exit 1; }
             [[ "$ASSET_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Asset SHA-256 secret must contain 64 hex characters." >&2; exit 1; }
           fi
+          if [[ -n "$HYRULE_O2R_RELEASE_TAG" ]]; then
+            [[ "$HYRULE_O2R_RELEASE_TAG" =~ ^hyrule-o2r-[A-Za-z0-9._-]+$ ]] || { echo "OoT archive release tag must start with hyrule-o2r-." >&2; exit 1; }
+            hyrule_release_metadata=$(gh release view "$HYRULE_O2R_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body)
+            python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and d["body"] == "Temporary private Ocarina archive for Hyrule-enabled iOS IPA build."' "$hyrule_release_metadata"
+            echo "Validated the optional Ocarina archive is stored in a private draft release."
+          fi
       - name: Download private extracted assets
         shell: bash
         env:
@@ -138,6 +151,38 @@ jobs:
           print("private asset bundle checksum verified")
           PY
           python3 ios/asset_bundle.py extract "$RUNNER_TEMP/sm64-assets.tar.gz" --root "$GITHUB_WORKSPACE"
+      - name: Download and validate optional private OoT archive
+        if: ${{ env.HYRULE_O2R_RELEASE_TAG != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$HYRULE_O2R_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'oot.o2r' \
+            --pattern 'oot.o2r.sha256' \
+            --dir "$RUNNER_TEMP"
+          archive_sha=$(python3 ios/asset_checksum.py "$RUNNER_TEMP/oot.o2r.sha256" oot.o2r)
+          python3 - "$RUNNER_TEMP/oot.o2r" "$archive_sha" <<'PY'
+          import hashlib, pathlib, sys, zipfile
+          archive = pathlib.Path(sys.argv[1])
+          if archive.stat().st_size > 512 * 1024 * 1024:
+              raise SystemExit("oot.o2r exceeds the 512 MiB private asset limit")
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          if digest.lower() != sys.argv[2].lower():
+              raise SystemExit("oot.o2r SHA-256 mismatch")
+          with zipfile.ZipFile(archive) as bundle:
+              bad_member = bundle.testzip()
+              if bad_member is not None:
+                  raise SystemExit(f"oot.o2r contains a corrupt ZIP member: {bad_member}")
+              names = set(bundle.namelist())
+              if "scenes/shared/spot00_scene/spot00_scene" not in names:
+                  raise SystemExit("oot.o2r is missing the Hyrule Field spot00 scene resource")
+          print("Private OoT archive checksum and Hyrule Field resource verified")
+          PY
+          echo "HYRULE_O2R_PATH=$RUNNER_TEMP/oot.o2r" >> "$GITHUB_ENV"
+          echo "IOS_HYRULE_WORLD=1" >> "$GITHUB_ENV"
       - name: Fetch pinned SDL2 source
         shell: bash
         run: |
@@ -217,4 +262,7 @@ jobs:
           python3 ios/asset_bundle.py clean --root "$GITHUB_WORKSPACE"
           rm -f "$RUNNER_TEMP/sm64-assets.tar.gz"
           rm -rf "$RUNNER_TEMP/SDL2" "$RUNNER_TEMP/sdl2-stage" "$RUNNER_TEMP/DerivedData" "$RUNNER_TEMP/ios-products"
+          rm -f "$RUNNER_TEMP/oot.o2r" "$RUNNER_TEMP/oot.o2r.sha256"
+          rm -rf "$GITHUB_WORKSPACE/build/hyrule_field_import"
+          rm -f "$GITHUB_WORKSPACE/build/hyrule_field_generated.inc.c" "$GITHUB_WORKSPACE/build/hyrule_field_spawn.h"
           rm -rf "$GITHUB_WORKSPACE/build/us_pc"

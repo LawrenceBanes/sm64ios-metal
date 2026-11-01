@@ -22,6 +22,9 @@ const GeoLayout castle_grounds_geo_00073C[] = {
                GEO_DISPLAY_LIST(LAYER_ALPHA, castle_grounds_seg7_dl_0700BA20),
                GEO_DISPLAY_LIST(LAYER_OPAQUE_DECAL, castle_grounds_seg7_dl_0700C430),
                GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_seg7_dl_0700C210),
+#if defined(IOS_HYRULE_WORLD)
+               GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_forest_gateway_dl),
+#endif
                GEO_ASM(   0, geo_movtex_pause_control),
                GEO_ASM(0x1601, geo_movtex_draw_nocolor),
                GEO_ASM(0x1601, geo_movtex_draw_water_regions),

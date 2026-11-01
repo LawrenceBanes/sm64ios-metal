@@ -16,7 +16,8 @@ from tools.hyrule_importer import (ImportFailure, collision_floor_at, collision_
                                   coordinate, parse_texture_descriptor, parse_vertex_array,
                                   read_resource_header, safe_archive_path, crc64_resource_path,
                                   parse_display_list, decode_texture_rgba, decode_room_render_data,
-                                  emit_native_level_include)
+                                  emit_native_level_include, oot_angle_to_sm64_degrees,
+                                  choose_hyrule_auxiliary_spawns)
 
 
 def resource_header(resource_type, version=0):
@@ -89,6 +90,26 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertIn(".ios_hyrule_mode", makefile)
         self.assertIn(".ios_hyrule_mode", split_makefile)
         self.assertNotIn('STUB_LEVEL(  "",               LEVEL_HYRULE_FIELD', definitions)
+
+    def test_oot_binary_yaw_is_converted_to_mario_pos_degrees(self):
+        self.assertEqual(oot_angle_to_sm64_degrees(-3641), -20)
+        self.assertEqual(oot_angle_to_sm64_degrees(0x4000), 90)
+        self.assertEqual(oot_angle_to_sm64_degrees(-0x8000), -180)
+        self.assertEqual(oot_angle_to_sm64_degrees(0), 0)
+
+    def test_auxiliary_kart_and_return_positions_require_flat_collision(self):
+        collision = {
+            "vertices": [(-2000, 0, -2000), (2000, 0, -2000),
+                         (2000, 0, 2000), (-2000, 0, 2000)],
+            "polygons": [
+                {"vertex_indices": [0, 1, 2], "normal": [0, 32767, 0], "surface_type": 0},
+                {"vertex_indices": [0, 2, 3], "normal": [0, 32767, 0], "surface_type": 0},
+            ],
+        }
+        kart, return_warp = choose_hyrule_auxiliary_spawns(collision, [0, 0, 0])
+        self.assertEqual(kart, [-500, 0, 0])
+        self.assertEqual(return_warp, [800, 0, 0])
+        self.assertGreaterEqual(abs(return_warp[0]), 800)
 
     def test_resource_path_hash_matches_o2r_reference(self):
         self.assertEqual(crc64_resource_path("scenes/shared/spot00_scene/spot00_room_0Vtx_002340"),
