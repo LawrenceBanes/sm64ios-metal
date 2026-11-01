@@ -14,6 +14,7 @@ CC="$cc" "$repo_dir/tests/run_fs_writepath_test.sh"
 python3 "$repo_dir/ios/test_render_diagnostics.py"
 python3 "$repo_dir/ios/test_metal_graphics_foundation.py"
 python3 "$repo_dir/ios/test_hd_texture_overrides.py"
+python3 "$repo_dir/tests/check_ios_gameplay_features.py"
 
 common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
 # shellcheck disable=SC2086

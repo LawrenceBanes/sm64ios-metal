@@ -51,4 +51,12 @@ s32 execute_mario_action(UNUSED struct Object *o);
 void init_mario(void);
 void init_mario_from_save_file(void);
 
+// Native iOS gameplay prototype controls. UIKit callbacks only enqueue requests;
+// the game thread applies them during execute_mario_action.
+void mario_ios_request_character_switch(void);
+void mario_ios_request_yoshi_toggle(void);
+s32 mario_ios_is_riding_yoshi(const struct MarioState *m);
+void mario_ios_detach_yoshi(struct MarioState *m);
+void mario_set_temporary_luigi_palette(s32 enabled);
+
 #endif // MARIO_H

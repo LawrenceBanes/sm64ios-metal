@@ -667,6 +667,34 @@ s32 act_riding_shell_air(struct MarioState *m) {
     return FALSE;
 }
 
+s32 act_riding_yoshi_air(struct MarioState *m) {
+    if (!mario_ios_is_riding_yoshi(m)) {
+        mario_ios_detach_yoshi(m);
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+
+    if (m->input & INPUT_Z_PRESSED) {
+        mario_ios_detach_yoshi(m);
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+
+    play_mario_sound(m, SOUND_ACTION_TERRAIN_JUMP, 0);
+    set_mario_animation(m, MARIO_ANIM_JUMP_RIDING_SHELL);
+    update_air_without_turn(m);
+    switch (perform_air_step(m, 0)) {
+        case AIR_STEP_LANDED:
+            set_mario_action(m, ACT_RIDING_YOSHI_GROUND, 0);
+            break;
+        case AIR_STEP_HIT_WALL:
+            mario_set_forward_vel(m, 0.0f);
+            break;
+        case AIR_STEP_HIT_LAVA_WALL:
+            lava_boost_on_wall(m);
+            break;
+    }
+    return FALSE;
+}
+
 s32 act_twirling(struct MarioState *m) {
     s16 startTwirlYaw = m->twirlYaw;
     s16 yawVelTarget;
@@ -2140,6 +2168,7 @@ s32 mario_execute_airborne_action(struct MarioState *m) {
         case ACT_LONG_JUMP:            cancel = act_long_jump(m);            break;
         case ACT_RIDING_SHELL_JUMP:
         case ACT_RIDING_SHELL_FALL:    cancel = act_riding_shell_air(m);     break;
+        case ACT_RIDING_YOSHI_AIR:     cancel = act_riding_yoshi_air(m);      break;
         case ACT_DIVE:                 cancel = act_dive(m);                 break;
         case ACT_AIR_THROW:            cancel = act_air_throw(m);            break;
         case ACT_BACKWARD_AIR_KB:      cancel = act_backward_air_kb(m);      break;

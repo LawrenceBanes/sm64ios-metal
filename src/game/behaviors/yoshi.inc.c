@@ -178,3 +178,38 @@ void bhv_yoshi_loop(void) {
 
     curr_obj_random_blink(&o->oYoshiBlinkTimer);
 }
+
+// Separate, optional test mount. The original star-reward Yoshi above remains
+// independent and keeps its stock rooftop interaction.
+void bhv_rideable_yoshi_init(void) {
+    o->oAction = 0;
+    o->oInteractType = 0;
+    cur_obj_init_animation(0);
+}
+
+void bhv_rideable_yoshi_loop(void) {
+    struct MarioState *m = gMarioState;
+
+    if (m != NULL && m->riddenObj == o && mario_ios_is_riding_yoshi(m)) {
+        f32 followOffset = 28.0f;
+        o->oAction = 1;
+        o->oPosX = m->pos[0] - sins(m->faceAngle[1]) * followOffset;
+        o->oPosY = m->pos[1];
+        o->oPosZ = m->pos[2] - coss(m->faceAngle[1]) * followOffset;
+        o->oMoveAngleYaw = m->faceAngle[1];
+        if (m->action == ACT_RIDING_YOSHI_AIR) {
+            cur_obj_init_animation(2);
+        } else if (m->forwardVel > 2.0f) {
+            cur_obj_init_animation(1);
+        } else {
+            cur_obj_init_animation(0);
+        }
+    } else {
+        // Leave the actor where the player dismounted and return to its idle pose.
+        o->oAction = 0;
+        cur_obj_init_animation(0);
+    }
+
+    o->oInteractStatus = 0;
+    curr_obj_random_blink(&o->oYoshiBlinkTimer);
+}

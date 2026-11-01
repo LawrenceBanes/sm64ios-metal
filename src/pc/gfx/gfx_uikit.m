@@ -10,6 +10,7 @@
 #include <unistd.h>
 #import <objc/runtime.h>
 #import "gfx_uikit.h"
+#include "game/mario.h"
 #if TARGET_OS_IOS
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
@@ -43,6 +44,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *textureCacheButton;
 @property(nonatomic, strong) UIButton *renderModeButton;
 @property(nonatomic, strong) UIButton *graphicsButton;
+@property(nonatomic, strong) UIButton *gameplayButton;
 @property(nonatomic, strong) UIView *graphicsPanel;
 @property(nonatomic, strong) UISegmentedControl *presetControl;
 @property(nonatomic, strong) UISegmentedControl *scaleControl;
@@ -71,6 +73,7 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsSettings;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
+- (void)showGameplayActions;
 @end
 
 @interface SM64DiagnosticsPassthroughView : UIView
@@ -164,14 +167,17 @@ static int sm64RenderDiagnosticMode;
     self.textureCacheButton = [self buttonWithTitle:@"Tex log: OFF" action:@selector(toggleTextureCacheDiagnostics)];
     self.renderModeButton = [self buttonWithTitle:@"Mode: Normal" action:@selector(cycleRenderDiagnosticMode)];
     self.graphicsButton = [self buttonWithTitle:@"Graphics" action:@selector(toggleGraphicsSettings)];
+    self.gameplayButton = [self buttonWithTitle:@"Gameplay" action:@selector(showGameplayActions)];
     [buttons addArrangedSubview:share];
     [buttons addArrangedSubview:probe];
     [buttons addArrangedSubview:self.textureCacheButton];
     [buttons addArrangedSubview:self.renderModeButton];
     [buttons addArrangedSubview:self.graphicsButton];
+    [buttons addArrangedSubview:self.gameplayButton];
     self.renderModeButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     self.textureCacheButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     self.graphicsButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
+    self.gameplayButton.titleLabel.font = [UIFont systemFontOfSize:9.0 weight:UIFontWeightSemibold];
     [self updateTextureCacheDiagnosticsButton];
     [self buildGraphicsSettingsPanel];
     self.recentStatus = [NSMutableArray array];
@@ -187,6 +193,29 @@ static int sm64RenderDiagnosticMode;
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
+}
+
+- (void)showGameplayActions {
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
+        message:@"Luigi is a temporary green palette on Mario’s model. To ride Yoshi, approach the separate Yoshi on the castle grounds and tap A; tap Z to dismount."
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_character_switch();
+        gfx_ios_diag_log("Gameplay menu queued Mario/temporary-Luigi palette switch");
+        [self appendStatus:@"Character switch queued for game thread"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Yoshi mount" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        mario_ios_request_yoshi_toggle();
+        gfx_ios_diag_log("Gameplay menu queued Yoshi mount/dismount request");
+        [self appendStatus:@"Yoshi mount request queued; approach Yoshi if it does not mount"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = menu.popoverPresentationController;
+    popover.sourceView = self.gameplayButton;
+    popover.sourceRect = self.gameplayButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
 }
 
 - (void)viewDidLayoutSubviews {

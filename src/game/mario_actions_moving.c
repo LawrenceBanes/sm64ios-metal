@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "mario_actions_object.h"
 #include "memory.h"
+#include "object_helpers.h"
 #include "behavior_data.h"
 #include "thread6.h"
 #include "pc/configfile.h"
@@ -1257,6 +1258,53 @@ s32 act_riding_shell_ground(struct MarioState *m) {
     return FALSE;
 }
 
+// Early gameplay prototype: Mario uses the game's established floor collision
+// and camera coordinates while Yoshi follows as a separate animated object.
+s32 act_riding_yoshi_ground(struct MarioState *m) {
+    s32 stepResult;
+    s16 startYaw = m->faceAngle[1];
+    f32 targetSpeed;
+
+    if (!mario_ios_is_riding_yoshi(m)) {
+        mario_ios_detach_yoshi(m);
+        return set_mario_action(m, ACT_WALKING, 0);
+    }
+
+    if (m->actionArg == 1) {
+        m->actionArg = 0; // Consume the mount press without also jumping.
+    } else if (m->input & INPUT_A_PRESSED) {
+        return set_mario_action(m, ACT_RIDING_YOSHI_AIR, 0);
+    }
+
+    if (m->input & INPUT_Z_PRESSED) {
+        mario_ios_detach_yoshi(m);
+        return set_mario_action(m, ACT_WALKING, 0);
+    }
+
+    if (m->intendedMag > 0.0f) {
+        m->faceAngle[1] = approach_s16_symmetric(m->faceAngle[1], m->intendedYaw, 0x1000);
+        targetSpeed = m->intendedMag * 1.35f;
+        if (targetSpeed > 40.0f) targetSpeed = 40.0f;
+        if (m->forwardVel < targetSpeed) m->forwardVel += 1.2f;
+        else if (m->forwardVel > targetSpeed) m->forwardVel -= 1.2f;
+    } else {
+        m->forwardVel *= 0.82f;
+        if (m->forwardVel < 0.5f) m->forwardVel = 0.0f;
+    }
+
+    apply_slope_accel(m);
+    set_mario_animation(m, MARIO_ANIM_RIDING_SHELL);
+    stepResult = perform_ground_step(m);
+    if (stepResult == GROUND_STEP_LEFT_GROUND) {
+        set_mario_action(m, ACT_RIDING_YOSHI_AIR, 1);
+    } else if (stepResult == GROUND_STEP_HIT_WALL) {
+        mario_set_forward_vel(m, 0.0f);
+    }
+    tilt_body_ground_shell(m, startYaw);
+    reset_rumble_timers();
+    return FALSE;
+}
+
 s32 act_crawling(struct MarioState *m) {
     s32 val04;
 
@@ -1994,6 +2042,7 @@ s32 mario_execute_moving_action(struct MarioState *m) {
         case ACT_FINISH_TURNING_AROUND:    cancel = act_finish_turning_around(m);    break;
         case ACT_BRAKING:                  cancel = act_braking(m);                  break;
         case ACT_RIDING_SHELL_GROUND:      cancel = act_riding_shell_ground(m);      break;
+        case ACT_RIDING_YOSHI_GROUND:      cancel = act_riding_yoshi_ground(m);     break;
         case ACT_CRAWLING:                 cancel = act_crawling(m);                 break;
         case ACT_BURNING_GROUND:           cancel = act_burning_ground(m);           break;
         case ACT_DECELERATING:             cancel = act_decelerating(m);             break;

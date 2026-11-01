@@ -2,6 +2,16 @@
 
 ## Current state
 
+### Mission 51 — playable character and Yoshi gameplay prototype (Apple/device validation pending)
+
+- Added a native UIKit Gameplay action sheet. It queues character/Yoshi requests for the game thread instead of mutating Mario state in a UIKit callback.
+- Added a Mario/temporary-Luigi toggle that edits the existing Mario model's shared red lighting colors to green and restores the original palette. This is explicitly not a separate Luigi model; Mario geometry and animations are reused because no project-licensed Luigi model was available.
+- Added an iOS-only test Yoshi in Castle Grounds near the intro spawn, using the repository's existing Yoshi model and animation table. The stock star-gated rooftop Yoshi is untouched.
+- Added explicit ground and airborne riding actions. Tap A near the test Yoshi to mount and jump; use the virtual joystick to steer; tap Z to dismount. Movement continues through SM64's normal ground/air collision steps, and abnormal action transitions release the mount.
+- No save structure, assets, renderer code, HD textures, or third-party files were changed. The full device experience remains unverified until the replacement IPA is installed and exercised on the iPhone.
+- `tests/run_linux_checks.sh` passes with the gameplay source guard. A Clang syntax-only check also passes for the changed C game/action/behavior/level/model translation units; it reports one unrelated pre-existing warning in `mario_actions_airborne.c` about comparing a `u16` action state to `ACT_GROUND_POUND`. Apple Objective-C/UIKit compilation, IPA validation, and device behavior remain pending.
+
+
 ### Mission 50 — optional RENDER96 HD texture replacements (CI validation running; device test pending)
 
 - Enabled canonical external texture identities in the iOS IPA build. Original PNGs remain in the private app's bundled `res/base.zip`; the public RENDER96 pack itself is not copied into Git or the IPA because the upstream collection mixes assets with different provenance.
