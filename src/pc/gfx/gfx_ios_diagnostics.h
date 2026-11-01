@@ -17,4 +17,11 @@ bool gfx_ios_texture_cache_diagnostics_enabled(void);
 int gfx_ios_render_diagnostic_mode(void);
 #endif
 
+#if defined(IOS_BUILD)
+void gfx_ios_diag_log(const char *format, ...);
+/* Game-thread portal feedback is marshalled to the native UIKit diagnostic
+ * overlay; this does not mutate UIKit from the simulation thread. */
+void gfx_ios_portal_status(const char *message);
+#endif
+
 #endif
