@@ -1,0 +1,32 @@
+{
+  "format": "sm64-hyrule-region-registry",
+  "version": 1,
+  "regions": [
+    {
+      "id": "hyrule_field",
+      "name": "Hyrule Field",
+      "source_scene": "scenes/shared/spot00_scene",
+      "status": "primary_import_target",
+      "planned_connections": [
+        { "region": "lon_lon_ranch", "status": "pending_source_coordinates", "transition": "continuous_world" },
+        { "region": "kokiri_forest", "status": "unmapped" },
+        { "region": "lost_woods", "status": "unmapped" },
+        { "region": "kakariko_village", "status": "unmapped" },
+        { "region": "lake_hylia", "status": "unmapped" },
+        { "region": "gerudo_valley", "status": "unmapped" },
+        { "region": "death_mountain_trail", "status": "unmapped" },
+        { "region": "zoras_river", "status": "unmapped" },
+        { "region": "hyrule_castle_surroundings", "status": "unmapped" }
+      ]
+    },
+    { "id": "lon_lon_ranch", "name": "Lon Lon Ranch", "source_scene": "scenes/shared/spot20_scene", "status": "planned" },
+    { "id": "kakariko_village", "name": "Kakariko Village", "source_scene": "scenes/shared/spot01_scene", "status": "planned" },
+    { "id": "kokiri_forest", "name": "Kokiri Forest", "source_scene": "scenes/shared/spot04_scene", "status": "planned" },
+    { "id": "lost_woods", "name": "Lost Woods", "source_scene": "scenes/shared/spot10_scene", "status": "planned" },
+    { "id": "lake_hylia", "name": "Lake Hylia", "source_scene": "scenes/shared/spot06_scene", "status": "planned" },
+    { "id": "gerudo_valley", "name": "Gerudo Valley", "source_scene": "scenes/shared/spot09_scene", "status": "planned" },
+    { "id": "death_mountain_trail", "name": "Death Mountain Trail", "source_scene": "scenes/shared/spot16_scene", "status": "planned" },
+    { "id": "zoras_river", "name": "Zora's River", "source_scene": "scenes/shared/spot03_scene", "status": "planned" },
+    { "id": "hyrule_castle_surroundings", "name": "Hyrule Castle surroundings", "source_scene": "scenes/shared/spot15_scene", "status": "planned" }
+  ]
+}

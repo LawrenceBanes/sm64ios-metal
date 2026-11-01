@@ -2,6 +2,13 @@
 
 ## Current state
 
+### Mission 55 — Hyrule Field import foundation (archive-dependent)
+
+- Confirmed the Shipwright `.o2r` container is a ZIP of typed resources, not a directly renderable scene blob. Added a host-side, versioned importer for ZIP indexing, 64-byte OTR headers, supported Scene v0 command metadata, CollisionHeader v0 geometry, dependency checks, scaled collision debug OBJ, collision-derived bounds, and deterministic JSON manifests. Unsupported scene commands stop with their exact command ID and offset.
+- Added the planned 10-region registry and corrected OoT scene-name mapping (`spot01` Kakariko, `spot03` Zora's River). Field-to-Ranch adjacency remains data-marked pending actual coordinates.
+- The supplied archive is not present in the accessible workspace (`/home/larry`, `/tmp`, `/mnt/data`, `/mnt`, `/media`, or Downloads). Therefore no real Hyrule resource has been decoded; the 10 automated cases use generated format fixtures only. No Hyrule geometry, collision, texture, or object assets were added to the repository.
+- Host validation: `python3 -m py_compile tools/hyrule_importer.py tests/test_hyrule_importer.py`, `python3 tests/test_hyrule_importer.py` (11 passing), JSON validation, `git diff --check`, and the complete `tests/run_linux_checks.sh` passed. The suite emitted one existing warning in `mario_actions_airborne.c:75` about an out-of-range `u16` comparison. No iOS app, Metal runtime loader, region streamer, or playable Hyrule Field was built; those require decoding the actual archive and implementing a runtime scene path. The next concrete step is to place `oot.o2r` locally and run the importer against it.
+
 ### Mission 54 — Reality Debugger runtime (in progress)
 
 - Audited CHEATERex's `mario_cheats.c/.h`, menu, `options_menu.c`, `pc/cheats.h`, and README. Its repository has no declared license or license file, so no code was copied. `ios/CHEATEREX_AUDIT.md` maps its feature ideas to local integration points and compatibility limits.
