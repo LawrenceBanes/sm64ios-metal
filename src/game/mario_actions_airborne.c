@@ -697,12 +697,14 @@ s32 act_riding_yoshi_air(struct MarioState *m) {
 
 s32 act_ios_kart_air(struct MarioState *m) {
     IOSKartEvents events;
+    s16 startYaw = m->faceAngle[1];
     if (!mario_ios_is_driving_kart(m)) {
         return set_mario_action(m, ACT_FREEFALL, 0);
     }
 
     mario_ios_update_kart(m, FALSE, &events);
     set_mario_animation(m, MARIO_ANIM_JUMP_RIDING_SHELL);
+    m->marioBodyState->handState = MARIO_HAND_OPEN;
     play_mario_sound(m, SOUND_ACTION_TERRAIN_JUMP, 0);
     switch (perform_air_step(m, 0)) {
         case AIR_STEP_LANDED:
@@ -716,6 +718,7 @@ s32 act_ios_kart_air(struct MarioState *m) {
             lava_boost_on_wall(m);
             break;
     }
+    tilt_body_ground_shell(m, startYaw);
     return FALSE;
 }
 

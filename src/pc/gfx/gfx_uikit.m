@@ -214,7 +214,7 @@ static int sm64RenderDiagnosticMode;
 
 - (void)showGameplayActions {
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
-        message:@"Kart: press L beside it to enter or exit; joystick steers, B accelerates, Z brakes/reverses, and hold A while steering to hop/powerslide. Release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, and Yoshi remains available; the portal surface is an animated fallback, not a linked world view."
+        message:@"Kart: press L nearby to enter or exit. Touch joystick left/right steers; push up for forward throttle or down for reverse. B accelerates and Z only brakes. Press A to hop; hold A with left/right steering after the hop to powerslide, then release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, Yoshi remains available, and the portal surface is an animated fallback, not a linked world view."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;

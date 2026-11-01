@@ -387,7 +387,8 @@ Gfx *geo_mario_tilt_torso(s32 callContext, struct GraphNode *node, UNUSED Mat4 *
         struct GraphNodeRotation *rotNode = (struct GraphNodeRotation *) node->next;
 
         if (action != ACT_BUTT_SLIDE && action != ACT_HOLD_BUTT_SLIDE && action != ACT_WALKING
-            && action != ACT_RIDING_SHELL_GROUND) {
+            && action != ACT_RIDING_SHELL_GROUND && action != ACT_IOS_KART_GROUND
+            && action != ACT_IOS_KART_AIR) {
             vec3s_copy(bodyState->torsoAngle, gVec3sZero);
         }
         rotNode->rotation[0] = bodyState->torsoAngle[1];

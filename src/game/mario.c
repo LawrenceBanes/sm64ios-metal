@@ -32,6 +32,7 @@
 #include "mario_misc.h"
 #include "mario_step.h"
 #include "memory.h"
+#include "pc/controller/controller_api.h"
 #include "object_fields.h"
 #include "object_helpers.h"
 #include "object_list_processor.h"
@@ -96,10 +97,13 @@ static struct Area *sIOSKartArea;
 static Vec3f sIOSKartLastGroundPosition;
 static s16 sIOSKartLastGroundYaw;
 static s32 sIOSKartHasGroundPosition;
+static u32 sIOSKartDiagnosticTicks;
 
 #define IOS_KART_MOUNT_DISTANCE 130.0f
 #define IOS_KART_PI 3.14159265358979323846f
-#define IOS_KART_DRIVER_RENDER_HEIGHT 52.0f
+#define IOS_KART_DRIVER_RENDER_HEIGHT 7.0f
+#define IOS_KART_DIAGNOSTIC_INTERVAL 60
+#define IOS_KART_WHEEL_RADIUS 18.0f
 
 static const char *mario_ios_portal_name(s32 portalType) {
     return portalType == MARIO_IOS_PORTAL_BLUE ? "blue" : "orange";
@@ -405,7 +409,7 @@ static s32 mario_ios_try_mount_kart(struct MarioState *m) {
     mario_set_forward_vel(m, 0.0f);
     IOS_KART_EVENT("Kart mounted object=%p distance=%.1f driver=%s position=(%.1f,%.1f,%.1f)", kart, distance,
                    sTemporaryLuigiPaletteEnabled ? "Luigi" : "Mario", m->pos[0], m->pos[1], m->pos[2]);
-    IOS_KART_STATUS("Driving. Joystick steers; B accelerates; Z brakes/reverses; hold A to drift");
+    IOS_KART_STATUS("Driving: left/right steers; up or B accelerates; down reverses; Z brakes; A hops/drifts");
     return set_mario_action(m, ACT_IOS_KART_GROUND, 1);
 }
 
@@ -523,25 +527,25 @@ static void mario_ios_process_kart_interaction(struct MarioState *m) {
 
 void mario_ios_update_kart(struct MarioState *m, s32 grounded, IOSKartEvents *events) {
     IOSKartInput input = {0};
-    f32 stickX = 0.0f, stickY = 0.0f, slopeDot;
+    f32 stickX = 0.0f, stickY = 0.0f;
     f32 velocityX, velocityZ;
     s32 yaw;
     if (m->controller != NULL) {
         stickX = m->controller->stickX / 64.0f;
         stickY = m->controller->stickY / 64.0f;
-        input.throttle = (m->controller->buttonDown & B_BUTTON) ? 1.0f : fmaxf(stickY, 0.0f);
-        input.brake = (m->controller->buttonDown & Z_TRIG) ? 1.0f : fmaxf(-stickY, 0.0f);
-        input.steer = fmaxf(-1.0f, fminf(stickX, 1.0f));
-        input.driftHeld = (m->controller->buttonDown & A_BUTTON) != 0;
-        input.hopPressed = (m->controller->buttonPressed & A_BUTTON) != 0;
+        ios_kart_map_controller_input(&input, stickX, stickY,
+                                     (m->controller->buttonDown & B_BUTTON) != 0,
+                                     (m->controller->buttonDown & Z_TRIG) != 0,
+                                     (m->controller->buttonDown & A_BUTTON) != 0,
+                                     (m->controller->buttonPressed & A_BUTTON) != 0);
     }
     input.grounded = grounded;
     input.traction = mario_floor_is_slippery(m) ? 0.68f : 1.0f;
     if (grounded && m->floor != NULL) {
-        f32 normalY = fmaxf(m->floor->normal.y, 0.25f);
-        slopeDot = m->floor->normal.x * sinf(sIOSKartState.headingRadians)
-                 + m->floor->normal.z * cosf(sIOSKartState.headingRadians);
-        input.slopeAcceleration = fmaxf(-0.9f, fminf(0.9f, -0.38f * slopeDot / normalY));
+        input.slopeAcceleration = ios_kart_slope_acceleration(m->floor->normal.x,
+                                                              m->floor->normal.y,
+                                                              m->floor->normal.z,
+                                                              sIOSKartState.headingRadians);
     }
 
     ios_kart_update(&sIOSKartState, &input, events);
@@ -552,6 +556,23 @@ void mario_ios_update_kart(struct MarioState *m, s32 grounded, IOSKartEvents *ev
     m->vel[0] = m->slideVelX = velocityX;
     m->vel[2] = m->slideVelZ = velocityZ;
     if (grounded) m->vel[1] = 0.0f;
+
+    if (m->controller != NULL && (++sIOSKartDiagnosticTicks % IOS_KART_DIAGNOSTIC_INTERVAL) == 0) {
+        f32 forwardX = sinf(sIOSKartState.headingRadians);
+        f32 forwardZ = cosf(sIOSKartState.headingRadians);
+        IOS_KART_EVENT("Kart controls tick=%u source=%d rawStick=(%d,%d) shapedStick=(%.1f,%.1f) mapped=(steer=%.2f throttle=%.2f brake=%.2f reverse=%.2f) buttons=(B=%d Z=%d A=%d) nose=(%.2f,%.2f) velocity=(%.2f,%.2f) speed=%.2f yaw=%.3f yawRate=%.3f steerAngle=%.3f drift=%d driftDir=%d grounded=%d cameraYaw=%d",
+                       sIOSKartDiagnosticTicks, get_current_input(), m->controller->rawStickX,
+                       m->controller->rawStickY, m->controller->stickX, m->controller->stickY,
+                       input.steer, input.throttle, input.brake, input.reverse,
+                       (m->controller->buttonDown & B_BUTTON) != 0,
+                       (m->controller->buttonDown & Z_TRIG) != 0,
+                       (m->controller->buttonDown & A_BUTTON) != 0,
+                       forwardX, forwardZ, velocityX, velocityZ, sIOSKartState.forwardSpeed,
+                       sIOSKartState.headingRadians, sIOSKartState.yawRateRadians,
+                       sIOSKartState.steeringAngleRadians, sIOSKartState.drifting,
+                       sIOSKartState.driftDirection, grounded,
+                       (m->area != NULL && m->area->camera != NULL) ? m->area->camera->yaw : 0);
+    }
 
     if (events->driftStarted) {
         IOS_KART_EVENT("Kart powerslide started speed=%.1f steer=%.2f", sIOSKartState.forwardSpeed, input.steer);
@@ -599,6 +620,10 @@ void mario_ios_sync_kart_object(struct Object *kart) {
         kart->oPosY = m->pos[1];
         kart->oPosZ = m->pos[2];
         kart->oMoveAngleYaw = m->faceAngle[1];
+        kart->oForwardVel = sIOSKartState.forwardSpeed;
+        kart->oAngleVelYaw = (s32)(sIOSKartState.steeringAngleRadians * (32768.0f / IOS_KART_PI));
+        kart->oAnimState = (s16)(kart->oAnimState
+            + (s32)(sIOSKartState.forwardSpeed * (32768.0f / (IOS_KART_PI * IOS_KART_WHEEL_RADIUS))));
         if (m->floor != NULL && m->floor->normal.y > 0.1f) {
             f32 sinHeading = sinf(sIOSKartState.headingRadians);
             f32 cosHeading = cosf(sIOSKartState.headingRadians);
@@ -617,7 +642,12 @@ void mario_ios_sync_kart_object(struct Object *kart) {
         obj_scale(kart, pulse);
     } else if (kart->oAction == 1) {
         kart->oAction = 0;
+        kart->oForwardVel = 0.0f;
+        kart->oAngleVelYaw = 0;
         obj_scale(kart, 1.0f);
+    } else {
+        kart->oForwardVel = 0.0f;
+        kart->oAngleVelYaw = 0;
     }
     obj_set_gfx_pos_from_pos(kart);
     obj_set_angle(kart, kart->oMoveAnglePitch, kart->oMoveAngleYaw, kart->oMoveAngleRoll);

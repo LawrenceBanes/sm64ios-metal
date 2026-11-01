@@ -1310,6 +1310,7 @@ s32 act_riding_yoshi_ground(struct MarioState *m) {
 s32 act_ios_kart_ground(struct MarioState *m) {
     IOSKartEvents events;
     s32 stepResult;
+    s16 startYaw = m->faceAngle[1];
     if (!mario_ios_is_driving_kart(m)) {
         return set_mario_action(m, ACT_WALKING, 0);
     }
@@ -1321,6 +1322,7 @@ s32 act_ios_kart_ground(struct MarioState *m) {
     }
 
     set_mario_animation(m, MARIO_ANIM_RIDING_SHELL);
+    m->marioBodyState->handState = MARIO_HAND_OPEN;
     stepResult = perform_ground_step(m);
     mario_ios_kart_record_ground_position(m, stepResult != GROUND_STEP_LEFT_GROUND);
     if (stepResult == GROUND_STEP_LEFT_GROUND) {
@@ -1331,6 +1333,7 @@ s32 act_ios_kart_ground(struct MarioState *m) {
     if (stepResult == GROUND_STEP_HIT_WALL) {
         mario_ios_kart_wall_collision(m);
     }
+    tilt_body_ground_shell(m, startYaw);
 
     if (mario_ios_kart_boost_active() && (m->actionTimer++ & 3) == 0) {
         m->particleFlags |= PARTICLE_DUST;

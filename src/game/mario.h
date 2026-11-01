@@ -65,6 +65,7 @@ void mario_ios_request_portal_enable_toggle(void);
 void mario_ios_request_portal_reset(void);
 void mario_ios_request_kart_spawn(void);
 s32 mario_ios_is_driving_kart(const struct MarioState *m);
+void tilt_body_ground_shell(struct MarioState *m, s16 startYaw);
 void mario_ios_register_kart(struct Object *kart);
 void mario_ios_sync_kart_object(struct Object *kart);
 void mario_ios_update_kart(struct MarioState *m, s32 grounded, IOSKartEvents *events);

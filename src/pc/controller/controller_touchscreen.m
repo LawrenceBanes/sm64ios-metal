@@ -10,6 +10,7 @@
 #include <PR/gbi.h>
 
 #include "controller_api.h"
+#include "controller_touch_axis.h"
 #import "controller_touchscreen.h"
 
 #if TARGET_OS_IOS
@@ -255,13 +256,23 @@ void touchscreen_set_imageviews(NSMutableArray *imageViews) {
 static void touchscreen_read(OSContPad *pad) {
     uint64_t read_sequence = ++ios_controller_touch_read_count;
     int active_controls = 0;
+    s32 joystick_touch = FALSE;
+    s32 joystick_pixels_x = 0;
+    s32 joystick_pixels_y = 0;
+    s32 joystick_axis_x = 0;
+    s32 joystick_axis_y = 0;
     for(int i = 0; i < ControlElementsLength; i++) {
         if (ControlElements[i].touchID != 0) ++active_controls;
         switch (ControlElements[i].type) {
             case Joystick:
-                if (ControlElements[i].joyX || ControlElements[i].joyY) {
-                    pad->stick_x = (ControlElements[i].joyX + joystick_size/2) * 255 / joystick_size + 128;
-                    pad->stick_y = (-ControlElements[i].joyY + joystick_size/2) * 255 / joystick_size + 128; //inverted for some reason
+                joystick_touch = ControlElements[i].touchID != 0;
+                joystick_pixels_x = ControlElements[i].joyX;
+                joystick_pixels_y = ControlElements[i].joyY;
+                if (joystick_touch) {
+                    joystick_axis_x = touchscreen_axis_from_delta(joystick_pixels_x, joystick_size, FALSE);
+                    joystick_axis_y = touchscreen_axis_from_delta(joystick_pixels_y, joystick_size, TRUE);
+                    pad->stick_x = (s8)joystick_axis_x;
+                    pad->stick_y = (s8)joystick_axis_y;
                 }
                 break;
             case Button:
@@ -282,7 +293,7 @@ static void touchscreen_read(OSContPad *pad) {
         }
     }
     if (read_sequence <= 3 || read_sequence % 120 == 0)
-        gfx_ios_diag_log("Touch controller read heartbeat read=%llu activeControls=%d padButtons=0x%04x stick=(%d,%d) inputSource=%d", (unsigned long long)read_sequence, active_controls, pad->button, pad->stick_x, pad->stick_y, get_current_input());
+        gfx_ios_diag_log("Touch controller read heartbeat read=%llu activeControls=%d padButtons=0x%04x stick=(%d,%d) joystickTouch=%d screenDelta=(%d,%d) mappedN64=(%d,%d) inputSource=%d", (unsigned long long)read_sequence, active_controls, pad->button, pad->stick_x, pad->stick_y, joystick_touch, joystick_pixels_x, joystick_pixels_y, joystick_axis_x, joystick_axis_y, get_current_input());
 }
 
 static u32 touchscreen_rawkey(void) { //dunno what this does but I'll skip it for now
