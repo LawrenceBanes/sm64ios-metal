@@ -33,6 +33,9 @@ jobs:
           tests/run_scene_capture_test.sh
           tests/run_scene_bvh_test.sh
           tests/run_texture_cache_reset_test.sh
+          tests/run_texture_override_test.sh
+          tests/run_fs_writepath_test.sh
+          tests/run_texture_override_test.sh
           tests/check_metal_project_wiring.sh
           python3 ios/test_scene_lifecycle.py
           python3 ios/test_ios_landscape_geometry.py
@@ -43,6 +46,8 @@ jobs:
           python3 ios/test_texture_cache_reset.py
           python3 ios/test_render_diagnostics.py
           python3 ios/test_metal_graphics_foundation.py
+          python3 ios/test_hd_texture_overrides.py
+          python3 ios/test_hd_texture_overrides.py
       - name: Compile iOS Metal backend and generated MSL
         env:
           METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/metal-apple-validation

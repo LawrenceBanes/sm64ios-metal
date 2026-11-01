@@ -31,7 +31,7 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/test_render_diagnostics.py ios/test_metal_graphics_foundation.py ios/patch_sdl2_ios27_orientation.py
+          python3 -m py_compile ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/test_render_diagnostics.py ios/test_metal_graphics_foundation.py ios/test_hd_texture_overrides.py ios/patch_sdl2_ios27_orientation.py
           bash -n ios/build_sdl2_ios.sh
           python3 ios/test_scene_lifecycle.py
           python3 ios/test_ios_diagnostics.py
@@ -42,6 +42,7 @@ jobs:
           python3 ios/test_ios_touch_pipeline.py
           python3 ios/test_texture_cache_reset.py
           python3 ios/test_render_diagnostics.py
+          python3 ios/test_hd_texture_overrides.py
           (cd ios && python3 -m unittest -v test_asset_checksum.py test_ipa_validation.py)
 
   ios-arm64-ipa:
@@ -161,7 +162,7 @@ jobs:
           set -euo pipefail
           PRODUCT_DIR="$RUNNER_TEMP/ios-products/Release-iphoneos"
           SDL_STAGE="$RUNNER_TEMP/sdl2-stage"
-          SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=0 xcodebuild \
+          SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 xcodebuild \
             -project sm64ios/sm64ios.xcodeproj \
             -scheme sm64ios \
             -configuration Release \
@@ -177,8 +178,8 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
           python3 ios/package_unsigned_ipa.py "$PRODUCT_DIR/sm64ios.app" "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa"
-      - name: Validate IPA layout, app metadata, arm64 slices, and linked dependencies
-        run: python3 ios/validate_ipa.py "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" --require-system-deps
+      - name: Validate IPA layout, app metadata, bundled fallback textures, arm64 slices, and linked dependencies
+        run: python3 ios/validate_ipa.py "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" --require-system-deps --require-game-textures
       - name: Publish this build as a new private prerelease
         env:
           GH_TOKEN: ${{ github.token }}

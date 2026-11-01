@@ -2,6 +2,7 @@
 """Validate the structure and iPhoneOS arm64 executable in an unsigned IPA."""
 
 import argparse
+import io
 import plistlib
 import struct
 import subprocess
@@ -87,7 +88,7 @@ def fat_slices(data: bytes, entries: list[tuple[int, int, int]]) -> dict[int, in
     return result
 
 
-def validate(ipa_path: str, require_system_deps: bool) -> None:
+def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False) -> None:
     with zipfile.ZipFile(ipa_path) as ipa:
         bad_member = ipa.testzip()
         if bad_member:
@@ -151,6 +152,27 @@ def validate(ipa_path: str, require_system_deps: bool) -> None:
             raise ValueError("app metadata does not enable both landscape orientations")
         if app + "Assets.car" not in names:
             raise ValueError("app bundle is missing the compiled touch-control asset catalog")
+        if require_game_textures:
+            resource_pack_path = app + "res/base.zip"
+            try:
+                resource_pack_data = ipa.read(resource_pack_path)
+            except KeyError as exc:
+                raise ValueError("app bundle is missing res/base.zip with original game textures") from exc
+            required_textures = (
+                "gfx/actors/goomba/goomba_face.rgba16.png",
+                "gfx/levels/bob/0.rgba16.png",
+                "gfx/levels/castle_inside/1.rgba16.png",
+            )
+            try:
+                with zipfile.ZipFile(io.BytesIO(resource_pack_data)) as resource_pack:
+                    missing_textures = [name for name in required_textures if name not in resource_pack.namelist()]
+                    if missing_textures:
+                        raise ValueError("app original texture pack is missing: " + ", ".join(missing_textures))
+                    for name in required_textures:
+                        if not resource_pack.read(name).startswith(b"\x89PNG\r\n\x1a\n"):
+                            raise ValueError(f"bundled original texture is not a PNG: {name}")
+            except zipfile.BadZipFile as exc:
+                raise ValueError("app bundle res/base.zip is corrupt") from exc
         for storyboard_key in ("UIMainStoryboardFile", "UILaunchStoryboardName"):
             storyboard = info.get(storyboard_key)
             if storyboard and not any(
@@ -199,8 +221,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ipa")
     parser.add_argument("--require-system-deps", action="store_true", help="inspect linked dylibs with Apple's otool")
+    parser.add_argument("--require-game-textures", action="store_true", help="require original Castle, Battlefield, and Goomba PNGs in res/base.zip")
     args = parser.parse_args()
-    validate(args.ipa, args.require_system_deps)
+    validate(args.ipa, args.require_system_deps, args.require_game_textures)
 
 
 if __name__ == "__main__":

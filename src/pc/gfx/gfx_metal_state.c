@@ -23,13 +23,13 @@ uint32_t gfx_metal_pipeline_state_key(bool depth_test, bool depth_write,
 
 struct GfxMetalSettings gfx_metal_classic_settings(void) {
     return (struct GfxMetalSettings) {
-        GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u
+        GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false
     };
 }
 
 struct GfxMetalSettings gfx_metal_enhanced_settings(void) {
     return (struct GfxMetalSettings) {
-        GFX_METAL_PRESET_ENHANCED, 100u, 4u, 8u
+        GFX_METAL_PRESET_ENHANCED, 100u, 4u, 8u, true
     };
 }
 
@@ -38,6 +38,8 @@ struct GfxMetalSettings gfx_metal_settings_sanitize(
     struct GfxMetalSettings settings = requested;
     if (settings.preset > GFX_METAL_PRESET_ENHANCED)
         settings.preset = GFX_METAL_PRESET_CLASSIC;
+    if (settings.preset == GFX_METAL_PRESET_CLASSIC)
+        settings.hd_textures = false;
 
     if (settings.render_scale_percent != 50u &&
         settings.render_scale_percent != 75u &&

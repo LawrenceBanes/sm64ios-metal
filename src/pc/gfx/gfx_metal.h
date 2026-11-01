@@ -6,6 +6,10 @@
 
 extern struct GfxRenderingAPI gfx_metal_api;
 
+#if defined(TARGET_OS_IOS)
+bool gfx_metal_hd_textures_enabled(void);
+#endif
+
 #ifdef __OBJC__
 #import <UIKit/UIKit.h>
 bool gfx_metal_attach_to_view_controller(UIViewController *view_controller);

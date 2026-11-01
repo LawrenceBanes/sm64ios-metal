@@ -1,32 +1,39 @@
 # RENDER96 texture pack compatibility
 
-## Audit result
+## Audit result and runtime support
 
-The repository's `gfx` tree has the same three top-level groups as the SM64 PC external texture layout: `actors`, `levels`, and `textures`. The current master tree is organized by actor and level names; sample assets use names such as `*.rgba16.png`. The pack README instructs Render96ex users to copy the `gfx` contents into the built game's `res/gfx` directory. This is a strong filename/layout match for this port's existing external texture loader.
+The pack's `gfx` tree matches the SM64 PC external texture path: `actors`, `levels`, and `textures`, with filenames such as `actors/goomba/goomba_face.rgba16.png`. Five official-upstream sample images were checked against this checkout: Goomba face/body, Mario mustache, Bob-omb Battlefield texture `0`, and Castle interior texture `1`. Their canonical filenames match and their 512×512 RGBA PNGs preserve the 32×32 originals' aspect ratio.
 
-The repo's public page identifies a GPL-3.0 license, but the README says the collection contains ESRGAN upscales, some textures Nintendo originally used, and contributor-created/source images. A repository-level license does not establish provenance or distribution rights for every image. Do not copy this pack into the source tree or IPA. Before redistribution, review the origin and permissions for each included asset and the requirements that apply to the collection.
+The repository identifies itself as GPL-3.0, while the README says the collection mixes ESRGAN upscales, Nintendo source imagery, and contributor-created work. The repository-level license does not establish the provenance or distribution rights for every image. No pack artwork is copied into this repository or the IPA. The official release archive is about 392 MB compressed and expands to several gigabytes; users should obtain it from the [official release page](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/releases/tag/1.3.26.7.7).
 
-## Existing loader fit and current gap
+## Runtime integration
 
-`FS_TEXTUREDIR` is `gfx`. With `EXTERNAL_DATA=1`, SM64's asset pipeline stores external texture names instead of their decoded game texture bytes. At runtime, `gfx_pc.c` constructs `gfx/<name>.png`, loads PNG data through stb_image as four-channel RGBA8, and sends it through `GfxRenderingAPI.upload_texture`. The preloader recognizes format suffixes before `.png`, including `rgba16`, matching the pack's standard PNG naming. Therefore, an externally supplied matching file can replace the named texture without changing shader-combiner code.
+The iOS target now builds with `EXTERNAL_DATA=1`, which gives each texture a canonical asset-path identity and keeps the original PNGs in the app's `res/base.zip`. The renderer looks for a user replacement at `Documents/hd_textures/gfx/<canonical-name>.png`, then falls back to the bundled `gfx/<canonical-name>.png`. Its cache key uses the stable original path and preset variant, never a Metal texture ID or a cache-slot number.
 
-The current iOS build defaults to `EXTERNAL_DATA=0`, so it embeds/decodes the original game textures and never looks for these PNG paths. The existing `EXTERNAL_DATA` mode is a build-time choice; switching it on changes how extracted texture references are represented. Its preloader defaults to enabled and walks the whole `gfx` tree. That is not a safe iPhone policy for a multi-gigabyte pack. The current code also treats a missing external PNG as a missing-texture image rather than falling back to the original N64 texture. So this pack is **not usable as an optional enhancement in the current iOS executable**.
+Classic mode ignores the HD folder. Enhanced mode enables HD lookup by default. Missing, malformed, too-small, over-dimension, mismatched-aspect, or over-budget replacements fall back to the bundled original. The iOS build disables eager external-texture precaching: only textures reached by gameplay are read and uploaded. HD RGBA residency is capped at 256 MiB, each replacement is limited to 4096 pixels per side and a 64 MiB decoded base level, and unsafe relative paths are rejected.
 
-The later runtime design should add a filesystem override layer to the existing texture lookup: try an imported pack's `gfx/<canonical game texture name>.png`; if absent, use the original texture decode. Keep the default path entirely on original textures. Store user-imported packs in the app's Documents area through the iOS document picker, and let users enable or disable each pack. This requires renderer/application changes once, but pack selection and pack updates should not require another game executable build. Do not just enable `EXTERNAL_DATA` and point it at the entire pack: that loses the original-texture fallback and can eagerly allocate every replacement.
+The existing SM64 tile-based UV transform and Metal sampler state remain unchanged. Coordinates are normalized to the original tile dimensions; the inspected pack samples retain their aspect ratio, so that mapping continues over the larger image. PNG alpha is decoded to RGBA8. Repeat, mirror, clamp, point, and linear filtering keep their existing renderer behavior. DDS is not supported by this loader.
 
-## Metal format, filtering, and memory
+### Install and test
 
-- The current Metal uploader creates `MTLPixelFormatRGBA8Unorm` textures from RGBA8 data. This is compatible with the PNG path after stb_image decoding. The DDS release variant is not supported by this loader and may use block-compressed formats requiring a separate iOS transcode path; start with PNG only.
-- Textures currently use `mipmapped:NO`, no generated mip chain, and the backend has no mip LOD selection. The existing sampler states preserve N64 repeat/mirror/clamp and nearest/linear behavior. HD replacement should retain those wrap and base-level filtering semantics by default. Optional mipmapping can be added as an HD-only quality setting after measuring the visual change and cost; it should not silently change the normal renderer's N64 sampler behavior.
-- At RGBA8, a `W × H` base level costs `4WH` bytes. A full mip chain is about `4WH × 4/3`: roughly 5.33 MiB for 1024² and 21.33 MiB for 2048², before alignment, CPU decode buffers, caches, render targets, and the game. These are per-texture estimates, not a pack total. The repository's Git size is not a runtime-memory estimate.
-- The current external-data preloader defaults to loading every texture. The Metal backend retains each allocated `MTLTexture`, has a fixed 8192 texture-ID ceiling, and does not evict textures. HD support needs lazy decode/upload, an explicit memory budget, dimension checks, and an LRU or scene-aware eviction policy. Decode work should happen off the render-encoding path where practical; Metal resource creation and upload still need synchronization and residency accounting.
+1. Download the official RENDER96 release from the [releases page](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/releases/tag/1.3.26.7.7) and extract it on a computer with 7z support.
+2. Copy the extracted pack's `gfx` folder into the app's Documents folder. The final examples should be `Documents/hd_textures/gfx/actors/goomba/goomba_face.rgba16.png` and `Documents/hd_textures/gfx/levels/bob/0.rgba16.png`. Create `hd_textures` if needed. Documents is available in Files because app file sharing is enabled.
+3. Fully quit and relaunch the game after copying. Open the native Graphics panel and select **Enhanced**. Check Mario on the title screen, a Goomba, Peach's Castle, and Bob-omb Battlefield. To return to the original look, select **Classic**.
 
-## Ray-traced materials
+The loader also supports installing only selected `actors`, `levels`, or `textures` subfolders. The app does not bundle or redistribute the pack. Textures not supplied by the user remain original automatically.
 
-Treat a replacement as the same logical texture/material identity, independent of the Metal texture pointer. Scene capture should record a stable game texture key plus pack/version identity for debugging. The ray material should sample the same decoded texture asset and preserve alpha, wrap, and filtering semantics. Ray-specific mip selection or compressed formats can be layered on later without changing material identity.
+## Metal format and memory
+
+- The Metal uploader creates `MTLPixelFormatRGBA8Unorm` from stb_image RGBA8 output.
+- Texture uploads currently have no mip chain. Existing N64 wrap and point/linear filtering remain intact; mipmap generation is a separate future improvement and is not claimed here.
+- A 512×512 RGBA8 base level costs 1 MiB, and 1024×1024 costs 4 MiB, before decode buffers and alignment. The loader lazily keeps at most 256 MiB of HD base levels resident. Once full, it selects the bundled original. The renderer currently retains texture IDs and does not evict them; device evidence should guide any later scene-aware eviction.
+
+## Ray-traced material identity
+
+Scene materials should keep the canonical original texture path as their stable identity, with replacement pack/version metadata available for diagnostics. Future ray paths must preserve alpha, addressing, and filter behavior while keeping pack-specific mip selection separate from the original material identity.
 
 ## References
 
-- [RENDER96-HD-TEXTURE-PACK](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK) and its [README](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/blob/master/README.md)
-- [Pack LICENSE](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/blob/master/LICENSE)
-- [Render96ex texture installation notes](https://github.com/Render96/Render96ex/blob/master/README.md)
+- [RENDER96 repository](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK), [README](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/blob/master/README.md), [LICENSE](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/blob/master/LICENSE)
+- [Official release 1.3.26.7.7](https://github.com/pokeheadroom/RENDER96-HD-TEXTURE-PACK/releases/tag/1.3.26.7.7)
+- [Render96ex installation notes](https://github.com/Render96/Render96ex/blob/master/README.md)

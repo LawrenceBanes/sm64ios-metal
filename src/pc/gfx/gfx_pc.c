@@ -1,4 +1,5 @@
 #include <math.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -25,6 +26,10 @@
 #include "gfx_scene_capture.h"
 #include "gfx_screen_config.h"
 #include "gfx_texture_cache_util.h"
+#include "gfx_texture_override.h"
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+#include "gfx_metal.h"
+#endif
 #if defined(TARGET_OS_IOS)
 #include "gfx_ios_diagnostics.h"
 #define GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() gfx_ios_texture_cache_diagnostics_enabled()
@@ -100,6 +105,9 @@ struct TextureHashmapNode {
     uint32_t texture_id;
     uint8_t cms, cmt;
     bool linear_filter;
+#ifdef EXTERNAL_DATA
+    bool hd_variant;
+#endif
 };
 static struct {
     struct TextureHashmapNode *hashmap[HASHMAP_LEN];
@@ -217,12 +225,65 @@ static const uint8_t missing_texture[MISSING_W * MISSING_H * 4] = {
 };
 
 #ifdef EXTERNAL_DATA
+static void gfx_flush(void);
+
 static inline size_t string_hash(const uint8_t *str) {
     size_t h = 0;
     for (const uint8_t *p = str; *p; p++)
         h = 31 * h + *p;
     return h;
 }
+
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+#define GFX_HD_TEXTURE_MEMORY_BUDGET (256ull * 1024ull * 1024ull)
+#define GFX_HD_TEXTURE_MAX_DIMENSION 4096
+static uint64_t gfx_hd_texture_memory_bytes;
+static uint64_t gfx_hd_texture_bytes_by_id[MAX_CACHED_TEXTURES];
+static uint32_t gfx_hd_texture_loaded_log_count;
+static uint32_t gfx_hd_texture_fallback_log_count;
+static bool gfx_hd_mode_initialized;
+static bool gfx_hd_mode_active;
+
+static void gfx_hd_texture_record_residency(uint32_t texture_id, uint64_t hd_bytes) {
+    if (texture_id == 0 || texture_id > MAX_CACHED_TEXTURES) return;
+    uint64_t old_bytes = gfx_hd_texture_bytes_by_id[texture_id - 1];
+    if (old_bytes <= gfx_hd_texture_memory_bytes)
+        gfx_hd_texture_memory_bytes -= old_bytes;
+    else
+        gfx_hd_texture_memory_bytes = 0;
+    gfx_hd_texture_bytes_by_id[texture_id - 1] = hd_bytes;
+    if (UINT64_MAX - gfx_hd_texture_memory_bytes < hd_bytes)
+        gfx_hd_texture_memory_bytes = UINT64_MAX;
+    else
+        gfx_hd_texture_memory_bytes += hd_bytes;
+}
+
+static void gfx_hd_texture_refresh_mode(void) {
+    bool enabled = gfx_metal_hd_textures_enabled();
+    if (gfx_hd_mode_initialized && enabled == gfx_hd_mode_active) return;
+    if (gfx_hd_mode_initialized) {
+        gfx_flush();
+        rendering_state.textures[0] = NULL;
+        rendering_state.textures[1] = NULL;
+        rdp.textures_changed[0] = true;
+        rdp.textures_changed[1] = true;
+        GFX_TEXTURE_CACHE_DIAG_LOG("HD texture preset changed enabled=%d; active tile bindings will be reselected", enabled);
+    }
+    gfx_hd_mode_initialized = true;
+    gfx_hd_mode_active = enabled;
+}
+
+static void gfx_hd_texture_log_fallback(const char *asset, const char *reason,
+                                        int base_width, int base_height,
+                                        int replacement_width, int replacement_height) {
+    uint32_t count = ++gfx_hd_texture_fallback_log_count;
+    if (count <= 16 || count % 128 == 0) {
+        GFX_TEXTURE_CACHE_DIAG_LOG("HD texture fallback asset=%s reason=%s base=%dx%d replacement=%dx%d count=%u",
+                                   asset ? asset : "?", reason, base_width, base_height,
+                                   replacement_width, replacement_height, count);
+    }
+}
+#endif
 #endif
 
 static unsigned long get_time(void) {
@@ -318,7 +379,9 @@ static struct ColorCombiner *gfx_lookup_or_create_color_combiner(uint32_t cc_id)
     return prev_combiner = comb;
 }
 
-static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, const uint8_t *orig_addr, uint32_t fmt, uint32_t siz) {
+static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n,
+                                    const uint8_t *orig_addr, uint32_t fmt, uint32_t siz,
+                                    bool hd_variant) {
     #ifdef EXTERNAL_DATA // hash and compare the data (i.e. the texture name) itself
     size_t hash = string_hash(orig_addr);
     #define CMPADDR(x, y) (x && !sys_strcasecmp((const char *)x, (const char *)y))
@@ -327,11 +390,20 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
     #define CMPADDR(x, y) x == y
     #endif
 
+    #ifdef EXTERNAL_DATA
+    if (hd_variant) hash ^= (size_t)0x9e3779b9u;
+    #endif
+
     hash = (hash >> HASH_SHIFT) & HASH_MASK;
 
     struct TextureHashmapNode **node = &gfx_texture_cache.hashmap[hash];
     while (*node != NULL && *node - gfx_texture_cache.pool < gfx_texture_cache.pool_pos) {
-        if (CMPADDR((*node)->texture_addr, orig_addr) && (*node)->fmt == fmt && (*node)->siz == siz) {
+        if (CMPADDR((*node)->texture_addr, orig_addr) && (*node)->fmt == fmt &&
+            (*node)->siz == siz
+#ifdef EXTERNAL_DATA
+            && (*node)->hd_variant == hd_variant
+#endif
+        ) {
             gfx_rapi->select_texture(tile, (*node)->texture_id);
             *n = *node;
             return true;
@@ -372,6 +444,9 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
     (*node)->texture_addr = orig_addr;
     (*node)->fmt = fmt;
     (*node)->siz = siz;
+#ifdef EXTERNAL_DATA
+    (*node)->hd_variant = hd_variant;
+#endif
     *n = *node;
     return false;
     #undef CMPADDR
@@ -553,26 +628,129 @@ static void import_texture_ci8(int tile) {
 
 #else // EXTERNAL_DATA
 
-static inline void load_texture(const char *fullpath) {
-    int w, h;
-    u64 imgsize = 0;
+static bool decode_texture_file(const char *fullpath, uint8_t **rgba, int *width, int *height) {
+    uint64_t image_size = 0;
+    uint8_t *encoded = fs_load_file(fullpath, &image_size);
+    if (!encoded) return false;
+    if (image_size > INT_MAX) {
+        free(encoded);
+        return false;
+    }
+    *rgba = stbi_load_from_memory(encoded, (int)image_size, width, height, NULL, 4);
+    free(encoded);
+    return *rgba != NULL;
+}
 
-    u8 *imgdata = fs_load_file(fullpath, &imgsize);
-    if (imgdata) {
-        // TODO: implement stbi_callbacks or some shit instead of loading the whole texture
-        u8 *data = stbi_load_from_memory(imgdata, imgsize, &w, &h, NULL, 4);
-        free(imgdata);
-        if (data) {
-            gfx_rapi->upload_texture(data, w, h);
-            stbi_image_free(data); // don't need this anymore
-            return;
-        }
+static bool load_texture(const char *fullpath) {
+    int width, height;
+    uint8_t *rgba = NULL;
+    if (decode_texture_file(fullpath, &rgba, &width, &height)) {
+        gfx_rapi->upload_texture(rgba, width, height);
+        stbi_image_free(rgba);
+        return true;
     }
 
     fprintf(stderr, "could not load texture: `%s`\n", fullpath);
     // replace with missing texture
     gfx_rapi->upload_texture(missing_texture, MISSING_W, MISSING_H);
+    return false;
 }
+
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+static bool try_load_hd_texture(const char *asset_name, const char *original_path,
+                                uint32_t texture_id) {
+    char override_path[SYS_MAX_PATH];
+    if (!gfx_hd_texture_override_path(asset_name, override_path, sizeof(override_path))) {
+        gfx_hd_texture_log_fallback(asset_name, "unsafe or unrepresentable asset path", 0, 0, 0, 0);
+        return false;
+    }
+
+    uint64_t override_size = 0;
+    uint8_t *override_encoded = fs_load_write_file(override_path,
+                                                   64ull * 1024ull * 1024ull,
+                                                   &override_size);
+    if (!override_encoded) {
+        gfx_hd_texture_log_fallback(asset_name, "replacement not installed or unreadable", 0, 0, 0, 0);
+        return false;
+    }
+    if (override_size > INT_MAX) {
+        free(override_encoded);
+        gfx_hd_texture_log_fallback(asset_name, "PNG file exceeds decoder limit", 0, 0, 0, 0);
+        return false;
+    }
+
+    uint64_t original_size = 0;
+    uint8_t *original_encoded = fs_load_file(original_path, &original_size);
+    int base_width = 0, base_height = 0, channels = 0;
+    bool original_valid = original_encoded && original_size <= INT_MAX &&
+        stbi_info_from_memory(original_encoded, (int)original_size,
+                              &base_width, &base_height, &channels);
+    free(original_encoded);
+    if (!original_valid || base_width <= 0 || base_height <= 0) {
+        free(override_encoded);
+        gfx_hd_texture_log_fallback(asset_name, "original dimensions unavailable",
+                                    base_width, base_height, 0, 0);
+        return false;
+    }
+
+    int replacement_width = 0, replacement_height = 0;
+    if (!stbi_info_from_memory(override_encoded, (int)override_size,
+                               &replacement_width, &replacement_height, &channels) ||
+        replacement_width <= 0 || replacement_height <= 0 ||
+        replacement_width > GFX_HD_TEXTURE_MAX_DIMENSION ||
+        replacement_height > GFX_HD_TEXTURE_MAX_DIMENSION ||
+        !gfx_hd_texture_dimensions_compatible((uint32_t)base_width, (uint32_t)base_height,
+                                             (uint32_t)replacement_width,
+                                             (uint32_t)replacement_height)) {
+        free(override_encoded);
+        gfx_hd_texture_log_fallback(asset_name, "dimensions/aspect ratio incompatible",
+                                    base_width, base_height,
+                                    replacement_width, replacement_height);
+        return false;
+    }
+
+    uint64_t replacement_bytes = (uint64_t)replacement_width *
+                                 (uint64_t)replacement_height * 4u;
+    uint64_t old_bytes = texture_id > 0 && texture_id <= MAX_CACHED_TEXTURES ?
+                         gfx_hd_texture_bytes_by_id[texture_id - 1] : 0;
+    if (replacement_bytes > 64ull * 1024ull * 1024ull ||
+        texture_id == 0 || texture_id > MAX_CACHED_TEXTURES ||
+        !gfx_hd_texture_budget_allows(gfx_hd_texture_memory_bytes, old_bytes,
+                                      replacement_bytes, GFX_HD_TEXTURE_MEMORY_BUDGET)) {
+        free(override_encoded);
+        gfx_hd_texture_log_fallback(asset_name, "resident HD texture budget exceeded",
+                                    base_width, base_height,
+                                    replacement_width, replacement_height);
+        return false;
+    }
+
+    int expected_width = replacement_width;
+    int expected_height = replacement_height;
+    uint8_t *rgba = stbi_load_from_memory(override_encoded, (int)override_size,
+                                          &replacement_width, &replacement_height, NULL, 4);
+    free(override_encoded);
+    if (!rgba || replacement_width != expected_width || replacement_height != expected_height) {
+        if (rgba) stbi_image_free(rgba);
+        gfx_hd_texture_log_fallback(asset_name, "PNG decode failed or dimensions changed",
+                                    base_width, base_height,
+                                    replacement_width, replacement_height);
+        return false;
+    }
+
+    gfx_rapi->upload_texture(rgba, replacement_width, replacement_height);
+    stbi_image_free(rgba);
+    gfx_hd_texture_record_residency(texture_id, replacement_bytes);
+    uint32_t count = ++gfx_hd_texture_loaded_log_count;
+    if (count <= 24 || count % 128 == 0) {
+        GFX_TEXTURE_CACHE_DIAG_LOG("HD texture loaded asset=%s size=%dx%d original=%dx%d resident=%llu/%llu bytes count=%u",
+                                   asset_name, replacement_width, replacement_height,
+                                   base_width, base_height,
+                                   (unsigned long long)gfx_hd_texture_memory_bytes,
+                                   (unsigned long long)GFX_HD_TEXTURE_MEMORY_BUDGET, count);
+    }
+    return true;
+}
+#endif
 
 
 // this is taken straight from n64graphics
@@ -594,7 +772,7 @@ static bool texname_to_texformat(const char *name, u8 *fmt, u8 *siz) {
         { "ci16",   G_IM_FMT_I,    G_IM_SIZ_16b },
     };
 
-    char *fstr = strrchr(name, '.');
+    const char *fstr = strrchr(name, '.');
     if (!fstr) return false; // no format string?
     fstr++;
 
@@ -635,7 +813,7 @@ static bool preload_texture(void *user, const char *path) {
     assert(actualname);
 
     struct TextureHashmapNode *n;
-    if (!gfx_texture_cache_lookup(0, &n, actualname, fmt, siz))
+    if (!gfx_texture_cache_lookup(0, &n, (const uint8_t *)actualname, fmt, siz, false))
         load_texture(path); // new texture, load it
 
     return true;
@@ -653,15 +831,32 @@ static void import_texture(int tile) {
         return;
     }
 
-    if (gfx_texture_cache_lookup(tile, &rendering_state.textures[tile], rdp.loaded_texture[tile].addr, fmt, siz)) {
+#ifdef EXTERNAL_DATA
+    bool hd_variant = false;
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    hd_variant = gfx_metal_hd_textures_enabled();
+#endif
+#else
+    bool hd_variant = false;
+#endif
+
+    if (gfx_texture_cache_lookup(tile, &rendering_state.textures[tile],
+                                 rdp.loaded_texture[tile].addr, fmt, siz, hd_variant)) {
         return;
     }
 
 #ifdef EXTERNAL_DATA
     // the "texture data" is actually a C string with the path to our texture in it
-    // load it from an external image in our data path
+    // use its canonical asset path as the stable override identity
     char texname[SYS_MAX_PATH];
-    snprintf(texname, sizeof(texname), FS_TEXTUREDIR "/%s.png", (const char*)rdp.loaded_texture[tile].addr);
+    const char *asset_name = (const char *)rdp.loaded_texture[tile].addr;
+    snprintf(texname, sizeof(texname), FS_TEXTUREDIR "/%s.png", asset_name);
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    struct TextureHashmapNode *texture_node = rendering_state.textures[tile];
+    uint32_t texture_id = texture_node ? texture_node->texture_id : 0;
+    if (hd_variant && try_load_hd_texture(asset_name, texname, texture_id)) return;
+    gfx_hd_texture_record_residency(texture_id, 0);
+#endif
     load_texture(texname);
 #else
     // the texture data is actual texture data
@@ -1980,6 +2175,9 @@ struct GfxRenderingAPI *gfx_get_current_rendering_api(void) {
 }
 
 void gfx_start_frame(void) {
+#if defined(EXTERNAL_DATA) && defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    gfx_hd_texture_refresh_mode();
+#endif
     gfx_wapi->get_dimensions(&gfx_current_dimensions.width, &gfx_current_dimensions.height);
     if (gfx_current_dimensions.height == 0) {
         // Avoid division by zero
