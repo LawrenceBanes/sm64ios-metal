@@ -3,6 +3,7 @@
 #include "game/level_update.h"
 #include "level_commands.h"
 #include "game/area.h"
+#include "behavior_data.h"
 
 #include "make_const_nonconst.h"
 

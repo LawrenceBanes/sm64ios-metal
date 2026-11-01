@@ -54,6 +54,7 @@ for name in ("blue", "orange", "enable_toggle", "reset"):
     assert f"mario_ios_request_portal_{name}" in ui
 assert "not a linked world view" in ui
 assert "MODEL_PORTAL_BLUE" in scripts and "MODEL_PORTAL_ORANGE" in scripts
+assert '#include "behavior_data.h"' in scripts
 assert "bhvPortalBlue" in behavior and "bhvPortalOrange" in behavior
 assert "LAYER_TRANSPARENT" in model
 
