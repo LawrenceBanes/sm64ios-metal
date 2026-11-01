@@ -1,0 +1,12 @@
+# Hyrule Field is generated from a user-supplied O2R archive at build time.
+short-name: hyrule_field
+full-name: Hyrule Field (imported)
+texture-file: []
+area-count: 1
+objects: []
+shared-path: []
+skybox-bin: none
+texture-bin: generic
+effects: false
+actor-bins: []
+common-bin: [common0]

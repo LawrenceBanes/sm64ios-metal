@@ -29,6 +29,7 @@ TARGET_WEB ?= 0
 
 # Build for iOS devices
 TARGET_IOS ?= 1
+IOS_HYRULE_WORLD ?= 0
 
 # Makeflag to enable OSX fixes
 OSX_BUILD ?= 1
@@ -161,6 +162,9 @@ endif
 
 TARGET := sm64.$(VERSION)
 VERSION_CFLAGS := -D$(VERSION_DEF) -D_LANGUAGE_C
+ifeq ($(IOS_HYRULE_WORLD),1)
+VERSION_CFLAGS += -DIOS_HYRULE_WORLD
+endif
 VERSION_ASFLAGS := --defsym $(VERSION_DEF)=1
 
 # Stuff for showing the git hash in the intro on nightly builds
@@ -1029,8 +1033,8 @@ $(SOUND_BIN_DIR)/sound_data.o: $(SOUND_BIN_DIR)/sound_data.ctl.inc.c $(SOUND_BIN
 
 $(BUILD_DIR)/levels/scripts.o: $(BUILD_DIR)/include/level_headers.h
 
-$(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in
-	$(CPP) -I . levels/level_headers.h.in | $(PYTHON) tools/output_level_headers.py > $(BUILD_DIR)/include/level_headers.h
+$(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in $(BUILD_DIR)/.ios_hyrule_mode
+	$(CPP) $(if $(filter 1,$(IOS_HYRULE_WORLD)),-DIOS_HYRULE_WORLD,) -I . levels/level_headers.h.in | $(PYTHON) tools/output_level_headers.py > $(BUILD_DIR)/include/level_headers.h
 
 $(BUILD_DIR)/assets/mario_anim_data.c: $(wildcard assets/anims/*.inc.c)
 	$(PYTHON) tools/mario_anims_converter.py > $@
@@ -1040,6 +1044,10 @@ $(BUILD_DIR)/assets/demo_data.c: assets/demo_data.json $(wildcard assets/demos/*
 
 # Source code
 $(BUILD_DIR)/levels/%/leveldata.o: OPT_FLAGS := -g
+ifeq ($(IOS_HYRULE_WORLD),1)
+$(BUILD_DIR)/levels/hyrule_field/leveldata.o: build/hyrule_field_generated.inc.c
+$(BUILD_DIR)/levels/hyrule_field/script.o: build/hyrule_field_spawn.h
+endif
 $(BUILD_DIR)/actors/%.o: OPT_FLAGS := -g
 $(BUILD_DIR)/bin/%.o: OPT_FLAGS := -g
 $(BUILD_DIR)/src/goddard/%.o: OPT_FLAGS := -g

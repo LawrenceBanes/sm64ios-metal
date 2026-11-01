@@ -1,5 +1,9 @@
 import json
+import os
+import shlex
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,7 +13,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.hyrule_importer import (ImportFailure, collision_floor_at, collision_geometry_diagnostics,
                                   import_archive, parse_collision, parse_scene,
-                                  coordinate, read_resource_header, safe_archive_path)
+                                  coordinate, parse_texture_descriptor, parse_vertex_array,
+                                  read_resource_header, safe_archive_path, crc64_resource_path,
+                                  parse_display_list, decode_texture_rgba, decode_room_render_data,
+                                  emit_native_level_include)
 
 
 def resource_header(resource_type, version=0):
@@ -35,7 +42,211 @@ def scene_body(collision_path="scenes/shared/spot00_scene/CollisionHeader"):
             + struct.pack(">i", 20))
 
 
+def vertex_array_body():
+    return (struct.pack(">II", 25, 1)
+            + struct.pack(">3hH2h4B", 12, -34, 56, 0, 320, -640, 255, 128, 64, 255))
+
+
+def f3dex2_command(opcode, w0=0, w1=0):
+    return struct.pack(">II", (opcode << 24) | (w0 & 0xFFFFFF), w1 & 0xFFFFFFFF)
+
+
+def f3dex2_wide(opcode, w0, w1, resource_hash):
+    return (f3dex2_command(opcode, w0, w1)
+            + struct.pack(">Q", resource_hash))
+
+
+def vertex_array_with_three_vertices():
+    out = bytearray(struct.pack(">II", 25, 3))
+    for position, uv in (((0, 0, 0), (0, 0)), ((10, 0, 0), (320, 0)),
+                         ((0, 10, 0), (0, 320))):
+        out.extend(struct.pack(">3hH2h4B", *position, 0, *uv, 255, 255, 255, 255))
+    return bytes(out)
+
+
+def display_list_body(instructions):
+    return bytes([4]) + bytes(7) + b"".join(instructions)
+
+
 class HyruleImporterTests(unittest.TestCase):
+    def test_hyrule_level_is_registered_on_the_existing_sm64_gameplay_path(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "levels/hyrule_field/script.c").read_text()
+        definitions = (root / "levels/level_defines.h").read_text()
+        leveldata = (root / "levels/hyrule_field/leveldata.c").read_text()
+        makefile = (root / "Makefile").read_text()
+        split_makefile = (root / "Makefile.split").read_text()
+        self.assertIn("LEVEL_HYRULE_FIELD", definitions)
+        self.assertIn("MARIO(/*model*/ MODEL_MARIO", script)
+        self.assertIn("TERRAIN(hyrule_field_collision)", script)
+        self.assertIn("CALL_LOOP(/*arg*/ 1, /*func*/ lvl_init_or_update)", script)
+        self.assertIn("GEO_DISPLAY_LIST(LAYER_OPAQUE, hyrule_field_opaque_dl)",
+                      (root / "levels/hyrule_field/geo.c").read_text())
+        self.assertIn('"build/hyrule_field_generated.inc.c"', leveldata)
+        self.assertNotIn("hyrule_update_player", script)
+        self.assertNotIn("hyrule_physics_step", script)
+        self.assertIn("IOS_HYRULE_WORLD ?= 0", makefile)
+        self.assertIn(".ios_hyrule_mode", makefile)
+        self.assertIn(".ios_hyrule_mode", split_makefile)
+        self.assertNotIn('STUB_LEVEL(  "",               LEVEL_HYRULE_FIELD', definitions)
+
+    def test_resource_path_hash_matches_o2r_reference(self):
+        self.assertEqual(crc64_resource_path("scenes/shared/spot00_scene/spot00_room_0Vtx_002340"),
+                         0x98B2E95F16A5E274)
+        self.assertNotEqual(crc64_resource_path("scenes/spot00/é"),
+                            crc64_resource_path("scenes/spot00/e"))
+
+    def test_display_list_decodes_wide_references_triangles_and_texture_enable(self):
+        path = "scenes/fixture/mesh"
+        body = display_list_body([
+            f3dex2_wide(0x33, 0, 0, crc64_resource_path(path)),
+            f3dex2_wide(0x32, (3 << 12) | (3 << 1), 0, 0x0102030405060708),
+            f3dex2_wide(0x20, (2 << 19) | 1, 0, 0x1112131415161718),
+            f3dex2_command(0xD7, 2, (0xFFFF << 16) | 0xFFFF),
+            f3dex2_command(0x05, (0 << 16) | (2 << 8) | 4),
+            f3dex2_command(0xDF),
+        ])
+        parsed = parse_display_list(body, ">", path)
+        self.assertTrue(parsed["terminated"])
+        self.assertEqual(parsed["triangle_count"], 1)
+        self.assertEqual(parsed["instructions"][1]["vertex_count"], 3)
+        self.assertEqual(parsed["instructions"][1]["vertex_destination"], 0)
+        self.assertEqual(parsed["instructions"][4]["triangles"], [[0, 1, 2]])
+        self.assertTrue(parsed["instructions"][3]["texture_state"]["enabled"])
+        self.assertFalse(parse_display_list(display_list_body([
+            f3dex2_command(0xD7, 0, 0), f3dex2_command(0xDF)]), ">", path)
+            ["instructions"][0]["texture_state"]["enabled"])
+
+    def test_display_list_rejects_missing_end_and_truncated_wide_command(self):
+        with self.assertRaisesRegex(ImportFailure, "no end opcode"):
+            parse_display_list(display_list_body([f3dex2_command(0x00)]), ">", "fixture/list")
+        with self.assertRaisesRegex(ImportFailure, "truncated"):
+            parse_display_list(bytes([4]) + bytes(7) + f3dex2_command(0x20), ">", "fixture/list")
+
+    def test_texture_decoder_expands_rgba16_and_packed_intensity_alpha(self):
+        rgba16 = {"width": 1, "height": 1, "format_code": 2, "image_data_size": 2}
+        self.assertEqual(decode_texture_rgba(rgba16, b"\xf8\x01"), bytes((255, 0, 0, 255)))
+        ia4 = {"width": 2, "height": 1, "format_code": 7, "image_data_size": 1}
+        self.assertEqual(decode_texture_rgba(ia4, b"\xf1"),
+                         bytes((255, 255, 255, 255, 0, 0, 0, 255)))
+
+    def test_texture_decoder_uses_rgba16_palette_for_ci4(self):
+        ci4 = {"width": 2, "height": 1, "format_code": 3, "image_data_size": 1}
+        palette = [[0, 0, 0, 0], [0, 255, 0, 255]]
+        self.assertEqual(decode_texture_rgba(ci4, b"\x10", palette),
+                         bytes((0, 255, 0, 255, 0, 0, 0, 0)))
+
+    def test_room_decoder_resolves_vertices_texture_state_and_polygon_translation(self):
+        display_path = "scenes/fixture/DisplayList"
+        array_path = "scenes/fixture/VertexArray"
+        texture_path = "scenes/fixture/Texture"
+        palette_path = "scenes/fixture/TLUT"
+        array = parse_vertex_array(vertex_array_with_three_vertices(), ">", array_path)
+        texture_descriptor = {"format_code": 3, "format": "Palette4bpp", "width": 2,
+                              "height": 1, "image_data_size": 1}
+        palette_descriptor = {"format_code": 2, "format": "RGBA16bpp", "width": 2,
+                              "height": 1, "image_data_size": 4}
+        texture_hash = crc64_resource_path(texture_path)
+        display_body = display_list_body([
+            f3dex2_wide(0x33, 0, 0, crc64_resource_path(display_path)),
+            f3dex2_wide(0x32, (3 << 12) | (3 << 1), 0, crc64_resource_path(array_path)),
+            f3dex2_wide(0x20, (2 << 19) | 1, 0, texture_hash),
+            f3dex2_command(0xF5, 0, 7 << 24),
+            f3dex2_command(0xF3, 0, 7 << 24),
+            f3dex2_command(0xF5, 0, 0),
+            f3dex2_command(0xD7, 2, (0xFFFF << 16) | 0xFFFF),
+            f3dex2_wide(0x20, (2 << 19) | 1, 0, crc64_resource_path(palette_path)),
+            f3dex2_command(0xF5, 0, 7 << 24),
+            f3dex2_command(0xF0, 0, 7 << 24),
+            f3dex2_command(0x05, (0 << 16) | (2 << 8) | 4),
+            f3dex2_command(0xDF),
+        ])
+        mesh = {"type": 2, "polygons": [{"position": [100, 20, -5],
+                                           "opaque_display_list": display_path}]}
+        result = decode_room_render_data(
+            [{"mesh": mesh}], {}, {array_path: array},
+            {texture_path: (texture_descriptor, b"\x10", 0, ">"),
+             palette_path: (palette_descriptor, b"\x00\x00\x07\xc1", 0, ">")},
+            {display_path: {"body": display_body, "version": 0}},
+            [display_path, array_path, texture_path, palette_path],
+            {display_path: ">"}, 2.0)
+        self.assertEqual(result["decoded_triangle_count"], 1)
+        triangle = result["triangles"][0]
+        self.assertEqual(triangle["material"]["texture_image_path"], texture_path)
+        self.assertEqual(triangle["material"]["current_settimg_path"], palette_path)
+        self.assertEqual(triangle["material"]["palette_path"], palette_path)
+        self.assertEqual(triangle["material"]["texture_image_tmem_words"], 0)
+        self.assertTrue(triangle["material"]["texture_enabled"])
+        self.assertEqual(triangle["vertices"][0]["position"], [100, 20, -5])
+        self.assertEqual(triangle["vertices"][0]["world_position"], [200.0, 40.0, -10.0])
+        self.assertEqual(triangle["vertices"][1]["uv_texels"], [10.0, 0.0])
+        self.assertEqual(result["texture_rgba8"][texture_path],
+                         bytes((0, 255, 0, 255, 0, 0, 0, 0)))
+
+    def test_native_level_export_lowers_to_existing_gfx_and_collision_abi(self):
+        display_path = "scenes/fixture/DisplayList"
+        array_path = "scenes/fixture/VertexArray"
+        texture_path = "scenes/fixture/Texture"
+        array = parse_vertex_array(vertex_array_with_three_vertices(), ">", array_path)
+        descriptor = {"format_code": 2, "format": "RGBA16bpp", "width": 1,
+                      "height": 1, "image_data_size": 2}
+        display_body = display_list_body([
+            f3dex2_wide(0x33, 0, 0, crc64_resource_path(display_path)),
+            f3dex2_wide(0x32, (3 << 12) | (3 << 1), 0, crc64_resource_path(array_path)),
+            f3dex2_wide(0x20, (2 << 19) | 1, 0, crc64_resource_path(texture_path)),
+            f3dex2_command(0xF5, 0, 7 << 24),
+            f3dex2_command(0xF3, 0, 7 << 24),
+            f3dex2_command(0xF5, 0, 0),
+            f3dex2_command(0xD7, 2, (0xFFFF << 16) | 0xFFFF),
+            f3dex2_command(0xDE, 0, 0x09000001),
+            f3dex2_command(0x05, (0 << 16) | (2 << 8) | 4),
+            f3dex2_command(0xDF),
+        ])
+        mesh = {"type": 2, "polygons": [{"position": [100, 20, -5],
+                                           "opaque_display_list": display_path}]}
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "render" / "hyrule_field_runtime.inc.c"
+            result = emit_native_level_include(
+                output_path, [{"mesh": mesh}], {array_path: array},
+                {texture_path: (descriptor, b"\xf8\x01", 0, ">")},
+                {display_path: {"body": display_body, "version": 0}},
+                [display_path, array_path, texture_path], {display_path: ">"},
+                parse_collision(collision_body(), ">", "fixture/CollisionHeader"),
+                2.0, {"position": [1, 2, 3], "yaw": -90})
+            generated = output_path.read_text()
+            self.assertIn("0x01003006u", generated)  # OTR VTX_HASH lowered to F3DEX2 VTX
+            self.assertIn("0xfd100001u", generated)  # OTR SETTIMG_HASH lowered to SETTIMG
+            self.assertIn("220.0f", generated)       # polygon translation and world scale are baked
+            self.assertIn("const Gfx hyrule_field_opaque_dl[]", generated)
+            self.assertIn("COL_TRI_INIT(SURFACE_DEFAULT, 1)", generated)
+            self.assertIn("COL_TRI(0, 1, 2)", generated)
+            self.assertEqual(result["omitted_segmented_display_list_calls"], 1)
+            spawn_header = (output_path.parent / "hyrule_field_spawn.h").read_text()
+            self.assertIn("#define HYRULE_FIELD_SPAWN_X 2", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_SPAWN_Y 4", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_SPAWN_Z 6", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_SPAWN_YAW ((s16)-90)", spawn_header)
+            compiler = shlex.split(os.environ.get("CC", "cc"))[0]
+            if shutil.which(compiler):
+                translation_unit = Path(directory) / "generated.c"
+                translation_unit.write_text(
+                    "#include <ultra64.h>\n"
+                    f'#include "{output_path.as_posix()}"\n', encoding="utf-8")
+                root = Path(__file__).resolve().parents[1]
+                command = shlex.split(os.environ.get("CC", "cc")) + [
+                    "-fsyntax-only", "-std=gnu99", f"-I{root / 'include'}", f"-I{root}",
+                    "-DVERSION_US", "-DF3DEX_GBI_2", "-DNON_MATCHING=1", "-DAVOID_UB=1",
+                    str(translation_unit)]
+                compiled = subprocess.run(command, text=True, capture_output=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+
+    def test_native_level_export_rejects_unrepresentable_spawn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "hyrule_field_runtime.inc.c"
+            with self.assertRaisesRegex(ImportFailure, "MARIO_POS s16 range"):
+                emit_native_level_include(output_path, [], {}, {}, {}, [], {}, None,
+                                          1.0, {"position": [32768, 0, 0], "yaw": 0})
+
     def test_resource_header_reads_o2r_byte_order_and_fourcc(self):
         data = resource_header(0x4F434F4C) + b"payload"
         header = read_resource_header(data, "CollisionHeader")
@@ -68,6 +279,28 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertTrue(parsed["fully_decoded"])
         self.assertEqual(parsed["dependencies"], [cutscene])
 
+    def test_vertex_array_decodes_position_fixed_uv_and_color_bytes(self):
+        array = parse_vertex_array(vertex_array_body(), ">", "fixture/VertexArray")
+        self.assertEqual(array["array_type_name"], "Vertex")
+        self.assertEqual(array["count"], 1)
+        self.assertEqual(array["vertices"][0]["position"], [12, -34, 56])
+        self.assertEqual(array["vertices"][0]["uv_fixed_s10_5"], [320, -640])
+        self.assertEqual(array["vertices"][0]["uv_texels"], [10.0, -20.0])
+        self.assertEqual(array["vertices"][0]["cn_bytes"], [255, 128, 64, 255])
+
+    def test_texture_header_v0_and_v1_match_declared_payload_lengths(self):
+        rgba16 = struct.pack(">IIII", 2, 2, 2, 8) + bytes(8)
+        descriptor0 = parse_texture_descriptor(rgba16, ">", 0, "fixture/RGBA16")
+        self.assertEqual(descriptor0["format"], "RGBA16bpp")
+        self.assertTrue(descriptor0["expected_packed_size_matches"])
+        self.assertFalse(descriptor0["payload_decoded"])
+        gray4 = struct.pack(">IIIIffI", 5, 1, 1, 1, 2.0, 0.5, 1) + bytes(1)
+        descriptor1 = parse_texture_descriptor(gray4, ">", 1, "fixture/Gray4")
+        self.assertEqual(descriptor1["flags"], 1)
+        self.assertEqual(descriptor1["horizontal_byte_scale"], 2.0)
+        self.assertEqual(descriptor1["vertical_pixel_scale"], 0.5)
+        self.assertTrue(descriptor1["expected_packed_size_matches"])
+
     def test_unknown_payload_stops_with_precise_diagnostic(self):
         body = struct.pack(">Iii", 2, 3, 1) + b"x" + struct.pack(">i", 2)
         parsed = parse_scene(body, ">", "fixture/Scene")
@@ -85,16 +318,22 @@ class HyruleImporterTests(unittest.TestCase):
                 archive.writestr(prefix + "/spot00_sceneSet_0001",
                                  resource_header(0x4F524F4D) + scene_body(prefix + "/MissingAlternateCollision"))
                 archive.writestr(prefix + "/CollisionHeader", resource_header(0x4F434F4C) + collision_body())
+                archive.writestr(prefix + "/VertexArray", resource_header(0x4F415252) + vertex_array_body())
+                texture_body = struct.pack(">IIII", 2, 2, 2, 8) + bytes(8)
+                archive.writestr(prefix + "/Texture", resource_header(0x4F544558) + texture_body)
                 archive.writestr("objects/object_spot00_objects/Texture", b"fixture only")
                 archive.writestr(prefix + "/source-info.bin", b"headerless fixture")
             output = root / "converted"
             result = import_archive(archive_path, output, prefix, 1.5)
             manifest = json.loads((output / "hyrule-world.json").read_text())
             self.assertEqual(manifest["format_version"], 1)
-            self.assertEqual(manifest["archive"]["entry_count"], 5)
+            self.assertEqual(manifest["archive"]["entry_count"], 7)
             self.assertEqual(result["region"]["scene_resource"], prefix + "/spot00_scene")
             self.assertEqual(result["collision_outputs"][0]["triangles"], 1)
-            self.assertEqual(result["decoded_resource_count"], 3)
+            self.assertEqual(result["decoded_resource_count"], 4)
+            self.assertEqual(result["parsed_resource_count"], 5)
+            self.assertEqual(result["vertex_arrays"][0]["vertices"][0]["position"], [12, -34, 56])
+            self.assertEqual(result["textures"][0]["format"], "RGBA16bpp")
             self.assertEqual(result["resource_type_counts"]["headerless-or-short"], 1)
             self.assertEqual(result["dependencies"][0]["status"], "available")
             self.assertEqual(result["region_bounds"], {"min": [-15.0, -1.5, -15.0],
@@ -103,6 +342,8 @@ class HyruleImporterTests(unittest.TestCase):
             self.assertEqual([entry["path"] for entry in result["resource_index"]],
                              sorted(entry["path"] for entry in result["resource_index"]))
             self.assertIn("v 150.000000 0.000000 0.000000", (output / "spot00.collision.obj").read_text())
+            self.assertTrue((output / "render/hyrule_field_runtime.inc.c").is_file())
+            self.assertEqual(manifest["native_level_include_summary"]["collision_triangles"], 1)
 
     def test_missing_scene_dependency_is_reported_without_fabrication(self):
         with tempfile.TemporaryDirectory() as directory:

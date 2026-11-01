@@ -145,6 +145,19 @@ define level_rules =
     $$(BUILD_DIR)/levels/$(1)/leveldata.elf: TEXTURE_BIN := $(2)
 endef
 
+# The generated level rule/header tables depend on build-time options as well
+# as their source files. Track the optional Hyrule registration mode so a
+# reused build directory cannot silently keep the opposite mode's level list.
+.PHONY: FORCE
+FORCE:
+
+$(BUILD_DIR)/.ios_hyrule_mode: FORCE
+	@mkdir -p "$(BUILD_DIR)"
+	@printf '%s\n' '$(IOS_HYRULE_WORLD)' > "$@.tmp"
+	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
+
+$(BUILD_DIR)/level_rules.mk: $(BUILD_DIR)/.ios_hyrule_mode
+
 ifneq ($(MAKECMDGOALS),clean)
 ifneq ($(MAKECMDGOALS),distclean)
 $(BUILD_DIR)/level_rules.mk: levels/level_rules.mk levels/level_defines.h

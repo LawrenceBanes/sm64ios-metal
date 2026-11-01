@@ -55,3 +55,6 @@ STUB_LEVEL(  "",               LEVEL_UNKNOWN_35,       COURSE_NONE,             
 DEFINE_LEVEL("DONKEY % SLID2", LEVEL_TTM,              COURSE_TTM,      ttm,              mountain, 15000,    0x08, 0x08, 0x08, _,         _)
 STUB_LEVEL(  "",               LEVEL_UNKNOWN_37,       COURSE_NONE,                                 20000,    0x00, 0x00, 0x00, _,         _)
 STUB_LEVEL(  "",               LEVEL_UNKNOWN_38,       COURSE_NONE,                                 20000,    0x00, 0x00, 0x00, sDynUnk38, _)
+#ifdef IOS_HYRULE_WORLD
+DEFINE_LEVEL("HYRULE FIELD",  LEVEL_HYRULE_FIELD,      COURSE_NONE,      hyrule_field,     generic,  20000,    0x08, 0x08, 0x08, _,         _)
+#endif

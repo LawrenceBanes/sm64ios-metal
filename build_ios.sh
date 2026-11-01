@@ -9,6 +9,19 @@ export IOSLIBS="${IOSLIBS:-$SDL2_ROOT/lib}"
 export CODE_SIGN_IDENTITY="Apple Development"
 export CODE_SIGN_ENTITLEMENTS="sm64ios.entitlements"
 
+IOS_HYRULE_WORLD_BUILD=0
+if [[ ${IOS_HYRULE_WORLD:-0} == 1 || -n ${HYRULE_O2R_PATH:-} ]]; then
+    if [[ -z ${HYRULE_O2R_PATH:-} || ! -f ${HYRULE_O2R_PATH} ]]; then
+        echo "IOS_HYRULE_WORLD requires HYRULE_O2R_PATH to name a readable user-supplied .o2r archive." >&2
+        exit 1
+    fi
+    HYRULE_IMPORT_DIR="build/hyrule_field_import"
+    python3 tools/hyrule_importer.py "$HYRULE_O2R_PATH" "$HYRULE_IMPORT_DIR"
+    cp "$HYRULE_IMPORT_DIR/render/hyrule_field_runtime.inc.c" build/hyrule_field_generated.inc.c
+    cp "$HYRULE_IMPORT_DIR/render/hyrule_field_spawn.h" build/hyrule_field_spawn.h
+    IOS_HYRULE_WORLD_BUILD=1
+fi
+
 MAKE_BIN=$(command -v gmake || command -v make || true)
 if [[ -z "$MAKE_BIN" ]]; then
     echo "GNU Make is required to build the game" >&2
@@ -24,4 +37,4 @@ if (( MAKE_MAJOR < 4 )); then
     echo "GNU Make 4 or newer is required (found $MAKE_VERSION)" >&2
     exit 1
 fi
-"$MAKE_BIN" ios -j4 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL
+"$MAKE_BIN" ios -j4 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOS_HYRULE_WORLD="$IOS_HYRULE_WORLD_BUILD"

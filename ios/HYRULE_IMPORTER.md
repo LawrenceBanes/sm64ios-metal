@@ -1,39 +1,80 @@
-# Hyrule Field importer: first implementation boundary
+# Hyrule Field import: SM64 runtime integration
 
-## First real archive pass
+## Current implementation
 
-The supplied archive is available locally at `/home/larry/Downloads/oot.o2r` (32 MiB; SHA-256 `e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`). It passes ZIP CRC validation and contains 38,390 file entries. The selected `scenes/shared/spot00_scene` prefix contains 591 entries: 445 display lists, 52 textures, 38 arrays, 24 Scene resources, 15 cutscenes, 5 paths, 1 collision header, and 11 headerless/short files.
+The host importer reads Larry's user-supplied `oot.o2r` ZIP archive and lowers
+the default `spot00` Hyrule Field room into the project's existing SM64 level
+ABI. It does **not** create a second player controller or Hyrule-only movement
+simulation.
 
-The canonical Hyrule Field root is `scenes/shared/spot00_scene/spot00_scene`; the folder also contains room and alternate-header Scene resources. Root selection now prefers that canonical path rather than an arbitrary sorted entry. The importer fully parsed all 13 commands in the root and all 24 Scene resources (including room and alternate-header metadata); its scene graph has 74 referenced resources, all present in the archive. The `SetCutscenes` command's payload is a length-prefixed resource path, consistent with Shipwright's [SetCutscenesFactory](https://github.com/HarbourMasters/Shipwright/blob/develop/soh/soh/resource/importer/scenecommand/SetCutscenesFactory.cpp).
+The generated level uses the stock `MARIO` object, `lvl_init_or_update` loop,
+camera and object systems. Its converted OoT collision mesh is passed to the
+normal `TERRAIN(...)` level command, so Mario's existing floor, wall, ledge,
+gravity, jump, and collision update code remains authoritative. The imported
+static world geometry is submitted as ordinary F3DEX2 `Gfx` commands, which
+continue through `gfx_pc.c` and the selected rendering backend, including
+Metal. Hyrule is registered as an optional level only when
+`IOS_HYRULE_WORLD=1`; ordinary builds do not add a level entry or shift the
+existing level/save tables.
 
-The root's CollisionHeader v0 was decoded to 1,162 vertices and 1,579 collision triangles. All 18 root start positions lie over an upward-facing collision triangle within the importer check's vertical range. All collision triangles are nondegenerate, and all 1,579 computed triangle normals agree with the archived collision normals; the declared collision bounds contain the vertices. The output is a collision debug OBJ plus metadata, not the textured visual scene. Conversion output remains in `/tmp/hyrule-field-import`; no archive-derived data was added to Git.
-
-The render blocker is now concrete: the scene references 445 ODLT display-list resources, 52 OTEX textures, and 38 Array resources under the scene prefix. The importer indexes but does not interpret their RDP/GBI command streams, vertex payload indirections, texture encodings/palettes, or material state. Other object banks are separate resource dependencies. Until those are decoded into runtime geometry/materials, the field is not renderable or playable in SM64. Coordinate units remain source OoT units at an explicitly provisional 1:1 scale; collision and spawn geometry agree internally, but scale still needs comparison in the target engine.
-
-## Resource format findings
-
-Shipwright's O2R archive wrapper treats `.o2r` as a ZIP and indexes each non-directory member by resource path. The resource loader reads a 64-byte OTR resource header: byte-order marker, custom flag, two reserved bytes, four-byte resource type, resource version, 64-bit resource identity, and reserved remainder. The type identifies the parser factory; it is not a geometry file extension. Scene (`OROM`), collision (`OCOL`), vertex (`OVTX`), display-list (`ODLT`), and texture (`OTEX`) are separate resources. Binary scene bodies begin with a command count and contain variable-sized commands; geometry is referenced by resource paths. See the upstream [O2R archive reader](https://github.com/kenix3/libultraship/blob/da6daf1a50a5e46d6641408d52227e31e85e46df/src/ship/resource/archive/O2rArchive.cpp), [resource loader](https://github.com/kenix3/libultraship/blob/da6daf1a50a5e46d6641408d52227e31e85e46df/src/ship/resource/ResourceLoader.cpp), [scene factory](https://github.com/HarbourMasters/Shipwright/blob/develop/soh/soh/resource/importer/SceneFactory.cpp), and [collision factory](https://github.com/HarbourMasters/Shipwright/blob/develop/soh/soh/resource/importer/CollisionHeaderFactory.cpp).
-
-The scene importer records starts, actors, collision header paths, room lists, entrances/exits, objects, lights, mesh display-list references, and supported environment settings. It stops at the first command whose payload is not implemented, and records the exact command and offset. Dependency paths are resolved against the ZIP index, and missing references are listed explicitly. CollisionHeader version 0 is decoded into vertices, triangles, normals, surface type words, camera data, and water boxes. Collision-derived region bounds and an OBJ are emitted as a **debug geometry export**; neither is a textured/renderable Hyrule scene or loaded by the game yet.
-
-Planned scene IDs follow the OoT decompilation's [scene-name mapping](https://github.com/zeldaret/oot/blob/main/tools/namefixer.py): Hyrule Field is `spot00_scene`, Kakariko is `spot01_scene`, Zora's River is `spot03_scene`, Kokiri Forest is `spot04_scene`, Lake Hylia is `spot06_scene`, Gerudo Valley is `spot09_scene`, Lost Woods is `spot10_scene`, Hyrule Castle surroundings are `spot15_scene`, Death Mountain Trail is `spot16_scene`, and Lon Lon Ranch is `spot20_scene`.
-
-O2R resources also include references outside the scene prefix (object banks, textures, and display lists). They must be resolved and their formats decoded before this tool can make a complete region package. N64 display-list execution carries material state and vertex references; dumping those command bytes as mesh geometry would be incorrect. Texture dimensions and raw pixels do not by themselves reveal the N64 format, palette, or material interpretation.
-
-## Run
+Run a local asset build with the supplied archive:
 
 ```sh
-python3 tools/hyrule_importer.py /path/to/oot.o2r /tmp/hyrule-field
+HYRULE_O2R_PATH=/path/to/oot.o2r ./build_ios.sh
 ```
 
-The tool verifies ZIP CRCs, emits a sorted resource index and versioned `hyrule-world.json`, parses supported scene/collision records, and writes collision metadata/OBJ to the chosen output directory. `--scene-prefix` selects another scene path; `--scale` sets a provisional positive coordinate scale. The current coordinate mapping preserves X/Y/Z (Y-up) with a configurable unit scale. Scale is explicitly marked provisional until compared against in-game dimensions.
+The importer and generated files stay in the local ignored `build/` tree. Do
+not add the archive, generated C, decoded texture files, or other archive data
+to Git or public build artifacts. The optional level is selected through the
+existing level-select/debug path; it does not replace Peach's Castle or alter
+the default game entry.
 
-The test archive is generated in memory from format fixtures and contains no game data. Fourteen host tests validate archive/header/scene/collision parsing, deterministic indexing, present and missing dependency reporting, coordinate scaling, root-scene selection, collision floor queries and winding/bounds checks, region mapping, path safety, and failure reporting. The first real-archive figures above were produced by the same CLI and are kept out of the test fixtures.
+## Decoded room and current coverage
 
-## Hyrule region and streaming state
+For the supplied archive (38,390 ZIP entries; SHA-256
+`e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`), the
+canonical `scenes/shared/spot00_scene/spot00_scene` points to one default
+room. The importer resolves its 37 display lists, 37 vertex arrays, and 51
+sampled texture images. It decodes 1,639 triangles and 52 texture resources,
+including the RGBA16 palette used by CI4. The source collision header contains
+1,162 vertices and 1,579 triangles; all triangle winding/normals and bounds
+were checked, and the selected spawn is over valid ground.
 
-[`hyrule_regions.json`](hyrule_regions.json) reserves region IDs and records the intended Hyrule Field → Lon Lon Ranch connection as pending coordinate calibration. Other edges are unmapped; they are not assumed to correspond to physical adjacency. This is data planning only. There is no runtime region loader, Metal resource activation, bounded residency manager, or cross-region collision continuity yet. Those need a validated scene package and must keep the currently occupied region pinned.
+The O2R display lists are F3DEX2 streams with custom hash-wide resource
+references. The importer resolves those hashes and rewrites hashed texture,
+vertex, and nested-list commands into standard SM64 `G_SETTIMG`, `G_VTX`, and
+`G_DL` commands. It retains supported RDP/GBI material, tile, combiner, filter,
+and geometry-state commands for the existing graphics interpreter. Raw
+archived texel bytes are kept in the generated level data so the normal SM64
+texture loader performs sampling and format conversion.
 
-## iOS/Metal integration limit
+There are three ordinary segmented `G_DL` pointers in the selected room whose
+segment bases are not represented in the O2R scene resource graph. The
+importer replaces those three calls with `G_SPNOOP` and reports them; it does
+not guess pointers or dereference them. Other scene headers, alternate rooms,
+actors, object banks, and moving geometry are not included in this default-room
+pass.
 
-Nothing here changes the SM64 renderer or level loader. The existing runtime currently consumes compiled SM64 levels and N64-style `Gfx`; the importer’s intermediate format is not yet a runtime level format. A real playable Hyrule Field requires display-list/texture/material conversion, collision adaptation, a scene selector, spawn selection, region ownership, and device verification. Until `oot.o2r` is parsed and those paths exist, **there is no playable Hyrule Field and no seamless streaming claim**.
+Collision triangles currently use `SURFACE_DEFAULT`. Collision geometry is
+real and enters Mario's normal terrain queries, but OoT-specific surface
+effects, water boxes, scene actors, transitions, and moving platforms are not
+yet mapped. Coordinate axes are both Y-up and the default scale is 1.0; scale
+remains provisional until the imported scene is inspected in-game. Geometry,
+collision, and spawn coordinates use the same configured scale, and the tool
+rejects values that cannot fit SM64's `s16` coordinate fields.
+
+## Validation and limitations
+
+Host regressions cover O2R headers, F3DEX2 command widths and references,
+texture formats and palette loading, TMEM texture selection, native Gfx and
+Collision lowering, coordinate scaling, spawn bounds, and use of the existing
+Mario/TERRAIN/level update path. The exporter also syntax-checks generated C
+with the host compiler when available.
+
+This validates resource decoding and source generation, not full Xcode
+compilation or visible iPhone rendering. The three omitted display-list calls,
+provisional scale, generic collision surface type, and lack of alternate-room
+or actor import remain visible limitations. The next Hyrule milestone is to
+build this opt-in level from the private archive, inspect authentic geometry
+and textures on device, then tune the shared SM64 collision integration based
+on the actual playtest. Region expansion and seamless streaming are deferred.
