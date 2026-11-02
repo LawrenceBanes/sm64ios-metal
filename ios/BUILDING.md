@@ -16,3 +16,5 @@ For the pinned SDL2 build and private extracted-asset workflow, see [`IOS_IPA_BU
 ## Linux checks
 
 Run `tests/run_linux_checks.sh`. It tests portable shader generation and scene-capture storage, syntax-checks the shared C rendering path with both GL and Metal renderer macros, and builds host asset tools. It does not compile Objective-C Metal code or MSL, produce an iOS app, sign an IPA, or validate rendering on hardware.
+
+For the zero-Actions-cost workflow, including local Hyrule conversion, CachyOS validation, and the exact Apple SDK boundary, see [`LOCAL_CACHYOS_BUILD.md`](LOCAL_CACHYOS_BUILD.md). CachyOS can run `ios/build_cachyos_local.sh prepare <oot.o2r>`; an existing/borrowed Mac can run `ios/build_local_macos_ipa.sh <local-SDL2-checkout> <oot.o2r>` for a real local IPA.

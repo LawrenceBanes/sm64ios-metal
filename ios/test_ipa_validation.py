@@ -2,6 +2,7 @@
 
 import plistlib
 from pathlib import Path
+import subprocess
 import stat
 import struct
 import tempfile
@@ -13,6 +14,52 @@ from validate_ipa import validate
 
 
 class IpaValidationTests(unittest.TestCase):
+    def test_cachyos_local_commands_keep_apple_build_boundary_explicit(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "ios/build_cachyos_local.sh").read_text()
+        self.assertIn('python3 tools/hyrule_importer.py "$OOT_ARCHIVE"', script)
+        self.assertIn("tests/run_linux_checks.sh", script)
+        self.assertIn("TARGET_IOS=1 TARGET_OS_IOS=1 IOS_HYRULE_WORLD=1", script)
+        self.assertIn("ios/package_unsigned_ipa.py", script)
+        self.assertIn("ios/validate_ipa.py", script)
+        self.assertNotIn("gh workflow run", script)
+        self.assertIn("No IPA was built: this host lacks Xcode/xcrun", script)
+
+    def test_cachyos_local_package_command_accepts_real_app_bundle_structure(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "ios/build_cachyos_local.sh"
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            app = self.make_app(temp_path, include_game_textures=True)
+            ipa = temp_path / "sm64ios.ipa"
+            result = subprocess.run(
+                [str(script), "package", str(app), str(ipa)],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(ipa.is_file())
+            self.assertIn("valid iPhoneOS arm64 IPA", result.stdout)
+            self.assertIn("Package structure is validated", result.stdout)
+
+    def test_local_macos_builder_uses_pinned_local_inputs_and_refuses_linux(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "ios/build_local_macos_ipa.sh"
+        source = script.read_text()
+        self.assertIn('"$SCRIPT_DIR/build_sdl2_ios.sh"', source)
+        self.assertIn('HYRULE_O2R_PATH="$OOT_ARCHIVE"', source)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", source)
+        self.assertIn("ios/package_unsigned_ipa.py", source)
+        self.assertIn("ios/validate_ipa.py", source)
+        self.assertNotIn("gh ", source)
+        self.assertNotIn("curl ", source)
+        if subprocess.run(["uname", "-s"], capture_output=True, text=True, check=True).stdout.strip() != "Darwin":
+            result = subprocess.run([str(script)], text=True, capture_output=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("requires macOS with Xcode", result.stderr)
+
     def test_ipa_workflow_preserves_private_asset_release_for_retries(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ios-metal-ipa.yml").read_text()
         self.assertIn("asset_bundle_release_tag", workflow)
