@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 60
     env:
       SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
-      BUILD_DIAG_DIR: ${{ runner.temp }}/mission-55-5
+      BUILD_DIAG_DIR: ${{ github.workspace }}/build/mission-55-5
       ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +104,7 @@ jobs:
       - name: Compile Metal backend and representative generated MSL
         shell: bash
         env:
-          METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/mission-55-5/metal-validation
+          METAL_VALIDATION_OUTPUT_DIR: ${{ github.workspace }}/build/mission-55-5/metal-validation
         run: |
           set -euo pipefail
           ios/validate-metal-apple.sh 2>&1 | tee "$BUILD_DIAG_DIR/metal-validation.log"
@@ -156,14 +156,14 @@ jobs:
         with:
           name: mission-55-5-connected-world-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/mission-55-5/toolchain.log
-            ${{ runner.temp }}/mission-55-5/sdl2-build.log
-            ${{ runner.temp }}/mission-55-5/metal-validation.log
-            ${{ runner.temp }}/mission-55-5/metal-validation/**
-            ${{ runner.temp }}/mission-55-5/ios-build.log
-            ${{ runner.temp }}/mission-55-5/ipa.sha256
-            ${{ runner.temp }}/mission-55-5/sm64ios-connected-world-arm64-unsigned.ipa
-            ${{ runner.temp }}/mission-55-5/ios-products/Release-iphoneos/sm64ios.app
+            ${{ github.workspace }}/build/mission-55-5/toolchain.log
+            ${{ github.workspace }}/build/mission-55-5/sdl2-build.log
+            ${{ github.workspace }}/build/mission-55-5/metal-validation.log
+            ${{ github.workspace }}/build/mission-55-5/metal-validation/**
+            ${{ github.workspace }}/build/mission-55-5/ios-build.log
+            ${{ github.workspace }}/build/mission-55-5/ipa.sha256
+            ${{ github.workspace }}/build/mission-55-5/sm64ios-connected-world-arm64-unsigned.ipa
+            ${{ github.workspace }}/build/mission-55-5/ios-products/Release-iphoneos/sm64ios.app
           if-no-files-found: warn
           retention-days: 1
 

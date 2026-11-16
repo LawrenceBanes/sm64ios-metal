@@ -1,10 +1,16 @@
 # Mission 55.5 report — GitHub Actions iOS Build Recovery
 
-**Status:** PREPARED; remote push and run blocked by missing OAuth scopes
+**Status:** dedicated branch pushed; manual build held for allowance verification
 **Starting local HEAD:** `94f7da885a94593e934cc8748f81209464256c55`
 **Remote `ios` head verified through GitHub read-only API:** `c456f2fb5ea5d4400cdc3d851c29e140a0cfc2c2`
-**Run URL:** N/A — awaiting push and Actions-usage review
+**Manual run URL:** N/A — no manual build dispatched
 **Artifact:** none
+
+## Latest result (2026-11-15)
+
+- The refreshed `LawrenceBanes` CLI login has `repo`, `workflow`, and `user` scopes. The private repository reports Actions enabled with all actions allowed. Remote `ios` remains `c456f2fb`; `mission-55-5-connected-world` was created at `acefdbea` without force.
+- GitHub unexpectedly recorded a failed **push** event at [run 43805415136](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/43805415136). It has zero jobs and no logs; no runner was allocated. Local `actionlint` found the cause: `${{ runner.temp }}` is unavailable in a job-level `env` expression. The workflow now uses `${{ github.workspace }}` for that path. `actionlint` passes after ignoring its outdated warning that the documented `xcode-27` label is unknown; the local workflow contract test also passes.
+- GitHub Free includes $12 of monthly Actions compute. The November billing summary reports $14.854 of gross Actions compute ($8.976 Linux, $0.002 Linux slim, $5.876 macOS), fully discounted so far. The API does not state a remaining allowance or explain the extra discount, so a further 60-minute macOS job (up to $3.72 at the published rate) is **not confirmed covered**. No manual run was dispatched.
 
 ## Workflow prepared
 
@@ -23,7 +29,7 @@ The local branch is `ios`; remotes are `metal-origin` (the writable project repo
 
 The normal sandbox cannot resolve GitHub or access the host resolver. A read-only connectivity check outside the sandbox reached `api.github.com` (HTTP 200), and the existing `gh` keyring login for `LawrenceBanes` works there. The cached token has `repo` but lacks `workflow` and `user` scopes. SSH fails on `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`; bypassing that file still gives `Permission denied (publickey)`. HTTPS Git with the existing `gh` credential helper can read remote `ios`.
 
-An HTTPS push to the new `mission-55-5-connected-world` branch was rejected by GitHub because creating `.github/workflows/mission-55-5-connected-world.yml` requires the OAuth `workflow` scope. No remote ref was created. A `gh auth refresh -s workflow,user` attempt prompted for browser authorization and timed out; subsequent `gh auth status` showed unchanged scopes. No token was replaced or exposed, and no system security setting was changed.
+The initial HTTPS push to `mission-55-5-connected-world` was rejected because creating the workflow required OAuth `workflow` scope. A scope-refresh attempt initially timed out. The user then completed the refresh, and the branch push succeeded as described above. No token was displayed or system security setting changed.
 
 The latest Actions records are:
 
@@ -43,15 +49,9 @@ The existing private draft `sm64-assets-20261031-04` is present and contains `sm
 - **Unsigned IPA packaging:** NOT RUN.
 - **Artifact and run URL:** NONE; no Actions job was dispatched.
 - **Repository Actions:** ENABLED (`allowed_actions=all`) according to the repository API; the repository is private. GitHub documents `xcode-27` as a standard hosted runner for private repositories, but an actual runner assignment remains unverified.
-- **Billing/quota availability:** UNVERIFIED. The personal billing usage API returned HTTP 404 with a specific `user` scope requirement. No billing settings were changed.
+- **Billing/quota availability:** usage summary retrieved after scope refresh; remaining allowance for a 60-minute macOS job is UNVERIFIED. No billing settings were changed.
 - **iPhone gameplay:** UNVERIFIED and requires later installation/testing; an unsigned IPA is not directly installable.
 
 ## Approval checkpoint
 
-The user approved one hosted run only after access and allowance checks. The workflow and local checks are ready, but the required gates remain:
-
-1. Complete GitHub's browser authorization for `gh auth refresh -h github.com -s workflow,user`, or supply an existing credential with those scopes. Recheck scopes afterward. The temporary device code from the timed-out attempt should not be reused.
-2. Recheck that the remote branch is still unused, then push the local work to `mission-55-5-connected-world` without force. Pushing to `ios` would also trigger the existing `Metal Apple SDK validation` workflow.
-3. Verify that the personal Actions allowance covers one 60-minute `xcode-27` job. If the API still cannot provide it, inspect GitHub's billing dashboard directly. A runner label being available does not prove a remaining allowance.
-
-No run should be started until all gates are satisfied. The prior failure records establish that no steps ran, but their expired logs do not reveal why GitHub failed to allocate runners. After the push and allowance check, record the exact workflow run URL, runner/Xcode versions, compile and MSL results, IPA validation, and artifact availability here. Do not dispatch a second run without new approval.
+The user approved one hosted run only if the remaining allowance covers it. Verify that coverage in GitHub's billing dashboard or another authoritative account source before dispatch. The workflow is capped at 60 minutes, but the usage summary alone cannot prove the next run is free. Do not start a manual run or retry without that verification. Keep the corrected workflow on the dedicated branch and leave `ios` untouched.
