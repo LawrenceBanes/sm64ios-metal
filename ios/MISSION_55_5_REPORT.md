@@ -1,9 +1,9 @@
 # Mission 55.5 report — GitHub Actions iOS Build Recovery
 
-**Status:** PREPARED; remote run not started
+**Status:** PREPARED; remote push and run blocked by missing OAuth scopes
 **Starting local HEAD:** `94f7da885a94593e934cc8748f81209464256c55`
 **Remote `ios` head verified through GitHub read-only API:** `c456f2fb5ea5d4400cdc3d851c29e140a0cfc2c2`
-**Run URL:** N/A — awaiting push, Actions-usage review, and user approval
+**Run URL:** N/A — awaiting push and Actions-usage review
 **Artifact:** none
 
 ## Workflow prepared
@@ -21,7 +21,9 @@
 
 The local branch is `ios`; remotes are `metal-origin` (the writable project repository) and `origin` (the upstream). The GitHub read-only API reports remote `ios` at `c456f2fb`, while local HEAD is `94f7da88` and contains nine descendants of that remote commit. **The latest Mission 55.4 commits are not pushed**, so dispatching now would build stale source.
 
-Local push/CLI access is currently blocked. `gh auth status` reports the cached local token invalid, while its API request fails DNS resolution for `api.github.com`. SSH push fails before connecting because `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` has unacceptable ownership/permissions; HTTPS remote lookup also cannot resolve GitHub. No credentials were replaced or displayed. The GitHub read-only connector can inspect the repository but does not provide a route to push this local commit history.
+The normal sandbox cannot resolve GitHub or access the host resolver. A read-only connectivity check outside the sandbox reached `api.github.com` (HTTP 200), and the existing `gh` keyring login for `LawrenceBanes` works there. The cached token has `repo` but lacks `workflow` and `user` scopes. SSH fails on `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`; bypassing that file still gives `Permission denied (publickey)`. HTTPS Git with the existing `gh` credential helper can read remote `ios`.
+
+An HTTPS push to the new `mission-55-5-connected-world` branch was rejected by GitHub because creating `.github/workflows/mission-55-5-connected-world.yml` requires the OAuth `workflow` scope. No remote ref was created. A `gh auth refresh -s workflow,user` attempt prompted for browser authorization and timed out; subsequent `gh auth status` showed unchanged scopes. No token was replaced or exposed, and no system security setting was changed.
 
 The latest Actions records are:
 
@@ -40,15 +42,16 @@ The existing private draft `sm64-assets-20261031-04` is present and contains `sm
 - **Apple Metal/Msl compile:** NOT RUN.
 - **Unsigned IPA packaging:** NOT RUN.
 - **Artifact and run URL:** NONE; no Actions job was dispatched.
-- **Billing/quota availability:** UNVERIFIED. Local `gh` cannot reach GitHub with the current DNS/token state; the read-only connector rejects the account-specific Actions usage endpoint; no browser is available. No billing settings were changed.
+- **Repository Actions:** ENABLED (`allowed_actions=all`) according to the repository API; the repository is private. GitHub documents `xcode-27` as a standard hosted runner for private repositories, but an actual runner assignment remains unverified.
+- **Billing/quota availability:** UNVERIFIED. The personal billing usage API returned HTTP 404 with a specific `user` scope requirement. No billing settings were changed.
 - **iPhone gameplay:** UNVERIFIED and requires later installation/testing; an unsigned IPA is not directly installable.
 
 ## Approval checkpoint
 
-The workflow and local checks are ready, but two gates remain before any hosted build:
+The user approved one hosted run only after access and allowance checks. The workflow and local checks are ready, but the required gates remain:
 
-1. Restore local GitHub connectivity/authentication and re-check the remote before pushing. The current local `ios` branch is nine commits ahead of remote `ios`; do not force-push or overwrite a changed remote.
-2. Push the work to a new `mission-55-5-connected-world` branch after confirming it is still unused. This branch name was absent in the latest read-only branch search. Pushing to `ios` would also trigger the existing `Metal Apple SDK validation` workflow, so the separate branch avoids an unintended hosted run.
-3. Review Actions quota/billing in GitHub account settings and explicitly approve one manual `xcode-27` run. The workflow caps the job at 60 minutes; its actual charge or free-quota impact cannot be verified from this session.
+1. Complete GitHub's browser authorization for `gh auth refresh -h github.com -s workflow,user`, or supply an existing credential with those scopes. Recheck scopes afterward. The temporary device code from the timed-out attempt should not be reused.
+2. Recheck that the remote branch is still unused, then push the local work to `mission-55-5-connected-world` without force. Pushing to `ios` would also trigger the existing `Metal Apple SDK validation` workflow.
+3. Verify that the personal Actions allowance covers one 60-minute `xcode-27` job. If the API still cannot provide it, inspect GitHub's billing dashboard directly. A runner label being available does not prove a remaining allowance.
 
-No run should be started until all gates are satisfied. The prior failure records establish that no steps ran, but their expired logs do not reveal why GitHub failed to allocate runners. After approval and push, record the exact workflow run URL, runner/Xcode versions, compile and MSL results, IPA validation, and artifact availability here.
+No run should be started until all gates are satisfied. The prior failure records establish that no steps ran, but their expired logs do not reveal why GitHub failed to allocate runners. After the push and allowance check, record the exact workflow run URL, runner/Xcode versions, compile and MSL results, IPA validation, and artifact availability here. Do not dispatch a second run without new approval.
