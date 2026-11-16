@@ -2,6 +2,15 @@
 
 ## Current state
 
+### Mission 55.3 — Connected Kingdom (local importer/collision groundwork; continuous world not integrated)
+
+- Starting tree was clean at `b183638b8e8d67d586af072434063faef8063648`; historical commits `0253c162`, `913c3b3b`, and `c456f2fb` are present. The current Castle Grounds gateway still uses a paired fading warp to the selectable Hyrule Field level. Kokiri is not registered, and the requested single-session route does not exist.
+- Re-imported the local `oot.o2r`: Hyrule (`spot00`) emits 37 Gfx lists, 37 vertex arrays, 51 sampled textures, 1,639 render triangles, and 1,579 collision triangles; three segmented calls are omitted. Kokiri (`spot04`) emits 40 Gfx lists, 34 vertex arrays, 60 textures, 2,060 render triangles, and 1,692 collision triangles; six segmented calls are omitted. The importer now uses region-specific names, per-room/polygon variants, deterministic output coverage, and correct multi-room draw-call totals. Kokiri remains a conversion artifact only.
+- Added an opt-in 64x64 collision partition and expanded surface/node pools for Hyrule builds. This brings `find_floor`, `find_ceil`, wall lookup, ray-cell traversal, and the portal's partition scans into range for the existing Hyrule and connector coordinates. Ordinary builds keep their 16x16 grid and original pool sizes. `Makefile.split` now rebuilds the affected objects when a reused build directory toggles the feature; a regression checks it. The change does not merge levels or establish that a combined world's surface totals fit.
+- Added `MISSION_55_3_BASELINE.md`, `CONNECTED_WORLD_ARCHITECTURE.md`, `LOCAL_BUILD_STRATEGY.md`, `MISSION_55_3_DEVICE_HANDOFF.md`, and `MISSION_55_3_REPORT.md`. The proposed first implementation keeps one SM64 level/area active and combines static region Gfx/collision there; streaming is deferred until measurements require it.
+- Local results: importer tests 29/29, partition boundary tests 2/2, full Linux regression suite passed, generated Hyrule/Kokiri C syntax checks passed, and `ios/build_cachyos_local.sh prepare /home/larry/Downloads/oot.o2r` passed. No GitHub Actions were launched. This CachyOS host lacks Xcode, iPhoneOS SDK, Metal compiler, and signing tools, so no IPA or iPhone validation exists.
+- Next blockers: resolve the 3 Hyrule and 6 Kokiri segmented calls, select/validate Kokiri's scene setup and dependencies, establish transforms from actual terrain/entrances, generate one combined `Collision` stream and Castle-area display-list composition, and get an Apple-toolchain build/device test. See the Mission 55.3 report; do not describe the world as seamless yet.
+
 ### Mission 55.2 — First Contact (source checks pass; iOS IPA blocked before build)
 
 - Revalidated the user-supplied local `oot.o2r` (SHA-256 `e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`). The importer produced the opt-in `spot00` runtime package: 37 Gfx lists, 1,579 collision triangles, and three explicitly omitted unresolved segmented calls. Archive-derived output remains ignored under `build/`; neither the archive nor generated assets are tracked.

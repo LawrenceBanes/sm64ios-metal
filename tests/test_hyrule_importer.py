@@ -261,6 +261,65 @@ class HyruleImporterTests(unittest.TestCase):
                 compiled = subprocess.run(command, text=True, capture_output=True)
                 self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
 
+    def test_native_level_export_keeps_polygon_transforms_separate_between_rooms(self):
+        array_path = "scenes/fixture/shared_vertex_array"
+        list_paths = ("scenes/fixture/room0_list", "scenes/fixture/room1_list")
+        array = parse_vertex_array(
+            struct.pack(">II", 25, 1)
+            + struct.pack(">3hH2h4B", 1, 2, 3, 0, 0, 0, 255, 255, 255, 255),
+            ">", array_path)
+        rooms = []
+        display_lists = {}
+        endian_by_path = {}
+        for mesh_index, (path, position) in enumerate(zip(list_paths, ([100, 0, 0], [-200, 0, 0]))):
+            mesh = {"type": 2, "polygons": [{"position": position,
+                                               "opaque_display_list": path}]}
+            rooms.append({"room": f"room{mesh_index}", "mesh": mesh})
+            display_lists[path] = {"body": display_list_body([
+                f3dex2_wide(0x32, (1 << 12) | (1 << 1), 0,
+                            crc64_resource_path(array_path)),
+                f3dex2_command(0xDF),
+            ]), "version": 0}
+            endian_by_path[path] = ">"
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "kokiri_forest_runtime.inc.c"
+            result = emit_native_level_include(
+                output_path, rooms, {array_path: array}, {}, display_lists,
+                [array_path], endian_by_path, None, 2.0, None, "kokiri_forest")
+            generated = output_path.read_text()
+            self.assertIn("202.0f", generated)
+            self.assertIn("-398.0f", generated)
+            self.assertIn("const Gfx kokiri_forest_opaque_dl[]", generated)
+            self.assertEqual(result["opaque_calls"], 2)
+            self.assertEqual(result["vertex_array_count"], 2)
+
+    def test_import_output_is_deterministic_and_scene_names_are_region_specific(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "oot.o2r"
+            prefix = "scenes/shared/spot04_scene"
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(prefix + "/spot04_scene",
+                                 resource_header(0x4F524F4D) + scene_body(prefix + "/CollisionHeader"))
+                archive.writestr(prefix + "/CollisionHeader",
+                                 resource_header(0x4F434F4C) + collision_body())
+
+            first = root / "first"
+            second = root / "second"
+            result = import_archive(archive_path, first, prefix, 1.0)
+            import_archive(archive_path, second, prefix, 1.0)
+            self.assertEqual(result["region"]["id"], "kokiri_forest")
+            self.assertEqual(result["region"]["name"], "Kokiri Forest")
+            self.assertTrue((first / "render/kokiri_forest_runtime.inc.c").is_file())
+            self.assertIn("const Collision kokiri_forest_collision[]",
+                          (first / "render/kokiri_forest_runtime.inc.c").read_text())
+            first_files = {path.relative_to(first): path.read_bytes() for path in first.rglob("*")
+                           if path.is_file()}
+            second_files = {path.relative_to(second): path.read_bytes() for path in second.rglob("*")
+                            if path.is_file()}
+            self.assertEqual(first_files, second_files)
+
     def test_native_level_export_rejects_unrepresentable_spawn(self):
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "hyrule_field_runtime.inc.c"

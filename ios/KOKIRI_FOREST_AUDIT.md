@@ -93,3 +93,39 @@ Hyrule `spot00` root, uses the archive from the runner's temporary directory,
 and deletes it and importer-generated intermediates in cleanup. The archive
 is not committed or attached to the IPA or Actions artifact. The pre-existing
 private SM64 extracted-asset input remains separately required.
+
+## Mission 55.3 revalidation
+
+The local default `spot04` import was rerun on 2026-11-15 using the shared
+importer, now with Kokiri-specific native symbol names. It produced 40 Gfx
+lists, 34 vertex arrays, 60 textures, 2,060 sampled render triangles, and a
+1,081-vertex/1,692-triangle collision mesh. The three declared root rooms each
+contribute an opaque and translucent display-list call (3 of each). The older
+1-call summary was an accounting bug caused by using polygon index alone as a
+dictionary key; it did not count calls from earlier rooms. The emitter now
+keys variants by room and polygon so translated mesh instances cannot reuse
+another room's vertex transform. The current three Kokiri default meshes are
+type 0 and have no polygon translation, so this guard is a general correctness
+fix rather than evidence of a previously visible Kokiri displacement.
+
+Six segmented calls are still omitted and their dependencies are not resolved:
+
+| Source display list | Byte offset | Segmented target |
+| --- | ---: | --- |
+| `spot04_room_0DL_0054B0` | 272 | `0x0b000001` |
+| `spot04_room_0DL_017AC0` | 232 | `0x08000001` |
+| `spot04_room_0DL_017AC0` | 280 | `0x09000001` |
+| `spot04_room_1DL_0041F8` | 272 | `0x0b000001` |
+| `spot04_room_1DL_0041F8` | 280 | `0x0c000001` |
+| `spot04_room_1DL_0018B0` | 272 | `0x0a000001` |
+
+Both generated Kokiri C and the default Hyrule level C compile with the Linux
+host compiler. Kokiri remains an intermediate package only: no level
+registration, combined collision, world transform, gameplay route, iOS build,
+or device rendering is implemented or validated.
+
+The current connected-world design proposal is documented in
+`CONNECTED_WORLD_ARCHITECTURE.md`. It recommends keeping the existing SM64
+loop active in one area and composing static region geometry/collision there;
+it does not claim that Kokiri is already playable or adjacent to the existing
+Castle connector or Hyrule import.

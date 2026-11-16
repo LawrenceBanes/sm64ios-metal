@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import struct
 import sys
 import zipfile
@@ -842,7 +843,8 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                               decoded_resources: dict, texture_payloads: dict,
                               display_list_bodies: dict, archive_paths: list[str],
                               endian_by_path: dict, collision: dict | None,
-                              scale: float, spawn: dict | None) -> dict:
+                              scale: float, spawn: dict | None,
+                              symbol_prefix: str = "hyrule_field") -> dict:
     """Lower supported O2R resources to the game's existing Gfx/Collision ABI.
 
     OTR-specific hashed SETTIMG and VTX commands are rewritten to the standard
@@ -854,23 +856,23 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     for path in archive_paths:
         hash_paths.setdefault(crc64_resource_path(path), []).append(path)
 
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", symbol_prefix):
+        raise ImportFailure(f"invalid native symbol prefix {symbol_prefix!r}")
+
     draw_calls = []
-    by_polygon_lists: dict[int, dict[str, list[str]]] = {}
     parsed_lists: dict[str, dict] = {}
-    referenced_arrays: set[str] = set()
     referenced_textures: set[str] = set()
-    list_to_polygons: dict[str, set[int]] = {}
-    for mesh_record in room_meshes:
+    list_to_variants: dict[str, set[tuple[int, int]]] = {}
+    for mesh_index, mesh_record in enumerate(room_meshes):
         mesh = mesh_record["mesh"]
         for polygon_index, polygon in enumerate(mesh.get("polygons", [])):
-            by_polygon_lists[polygon_index] = {"opaque": [], "translucent": []}
+            variant = (mesh_index, polygon_index)
             for render_pass, key in (("opaque", "opaque_display_list"),
                                      ("translucent", "translucent_display_list")):
                 path = polygon.get(key)
                 if path:
-                    draw_calls.append((path, polygon_index, render_pass))
-                    by_polygon_lists[polygon_index][render_pass].append(path)
-                    list_to_polygons.setdefault(path, set()).add(polygon_index)
+                    draw_calls.append((path, variant, render_pass))
+                    list_to_variants.setdefault(path, set()).add(variant)
 
     queue = [path for path, _, _ in draw_calls]
     while queue:
@@ -900,36 +902,34 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
             elif opcode == 0x31:
                 if target not in display_list_bodies:
                     raise ImportFailure(f"native Gfx lowering: nested display list {target} is unavailable")
-                if path not in list_to_polygons:
-                    list_to_polygons[path] = set()
-                list_to_polygons[path].update(list_to_polygons.get(path, set()))
                 queue.append(target)
             elif opcode == 0x32:
                 if target not in decoded_resources:
                     raise ImportFailure(f"native Gfx lowering: vertex array {target} is unavailable")
-                referenced_arrays.add(target)
 
     # A nested list inherits the polygon transform of each caller. Use the
     # caller's variants when emitting references; the field's default root
     # lists currently contain no OTR-hashed DL calls.
-    variants = {(path, polygon) for path, polygons in list_to_polygons.items()
-                for polygon in polygons}
+    variants = {(path, variant) for path, mesh_polygons in list_to_variants.items()
+                for variant in mesh_polygons}
     changed = True
     while changed:
         changed = False
-        for source_path, polygon in tuple(variants):
+        for source_path, variant in tuple(variants):
             for instruction in parsed_lists[source_path]["instructions"]:
                 if instruction["opcode"] != 0x31:
                     continue
                 target = instruction.get("resolved_path")
-                if target and (target, polygon) not in variants:
-                    variants.add((target, polygon))
-                    list_to_polygons.setdefault(target, set()).add(polygon)
+                if target and (target, variant) not in variants:
+                    variants.add((target, variant))
+                    list_to_variants.setdefault(target, set()).add(variant)
                     changed = True
 
     symbols = {}
-    for path, polygon in variants:
-        symbols[(path, polygon)] = _native_symbol("dl", path, f"_p{polygon}")
+    for path, variant in variants:
+        mesh_index, polygon_index = variant
+        symbols[(path, variant)] = _native_symbol(
+            "dl", path, f"_m{mesh_index}_p{polygon_index}")
     vertex_symbols = {}
     texture_symbols = {}
     lines = ["/* Generated from the user-provided O2R archive. Do not commit this file. */",
@@ -945,22 +945,22 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
             lines.append("    " + ", ".join(f"0x{byte:02x}" for byte in payload[offset:offset + 16]) + ",")
         lines.extend(["};", ""])
 
-    for path, polygon in sorted(variants, key=lambda item: (item[1], item[0])):
+    for path, variant in sorted(variants, key=lambda item: (item[1], item[0])):
         if path not in parsed_lists:
             continue
-        mesh = next((record["mesh"] for record in room_meshes
-                     if polygon < len(record["mesh"].get("polygons", []))), None)
-        position = (mesh["polygons"][polygon].get("position", [0, 0, 0])
-                    if mesh else [0, 0, 0])
+        mesh_index, polygon_index = variant
+        polygon = room_meshes[mesh_index]["mesh"]["polygons"][polygon_index]
+        position = polygon.get("position", [0, 0, 0])
         for instruction in parsed_lists[path]["instructions"]:
             if instruction["opcode"] != 0x32:
                 continue
             array_path = instruction["resolved_path"]
-            key = (array_path, polygon)
+            key = (array_path, variant)
             if key in vertex_symbols:
                 continue
             array = decoded_resources[array_path]
-            symbol = _native_symbol("vtx", array_path, f"_p{polygon}")
+            symbol = _native_symbol("vtx", array_path,
+                                    f"_m{mesh_index}_p{polygon_index}")
             vertex_symbols[key] = symbol
             lines.append(f"static const Vtx {symbol}[{array['count']}] = {{")
             for vertex in array["vertices"]:
@@ -977,10 +977,10 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     lines.append("")
 
     omitted_segmented_calls = 0
-    for path, polygon in sorted(variants, key=lambda item: (item[1], item[0])):
+    for path, variant in sorted(variants, key=lambda item: (item[1], item[0])):
         if path not in parsed_lists:
             continue
-        symbol = symbols[(path, polygon)]
+        symbol = symbols[(path, variant)]
         lines.append(f"static const Gfx {symbol}[] = {{")
         for instruction in parsed_lists[path]["instructions"]:
             opcode = instruction["opcode"]
@@ -998,7 +998,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                 first = byte_offset // 16
                 if first + count > array["count"] or destination < 0 or destination + count > 32:
                     raise ImportFailure(f"native Gfx lowering: invalid vertex range in {path}")
-                vertex_symbol = vertex_symbols[(target, polygon)]
+                vertex_symbol = vertex_symbols[(target, variant)]
                 lines.append(_gfx_initializer((w0 & 0x00FFFFFF) | 0x01000000,
                                               f"{vertex_symbol} + {first}"))
             elif opcode == 0x20:
@@ -1007,13 +1007,13 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                                               texture_symbols[target]))
             elif opcode == 0x31:
                 target = instruction["resolved_path"]
-                target_symbol = symbols.get((target, polygon))
+                target_symbol = symbols.get((target, variant))
                 if not target_symbol:
                     raise ImportFailure(f"native Gfx lowering: nested list {target} lacks polygon variant")
                 lines.append(_gfx_initializer((w0 & 0x00FFFFFF) | 0xDE000000, target_symbol))
             elif opcode == 0xDE:
-                # O2R keeps three original segmented calls in this room. Their
-                # segment base table is not present in the selected resources.
+                # O2R may keep original segmented calls in a room without
+                # exposing the segment-base table in the selected resources.
                 omitted_segmented_calls += 1
                 lines.append(_gfx_initializer(0xE0000000))
             elif opcode in (0x35, 0x36, 0x42):
@@ -1023,13 +1023,13 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
         lines.append(_gfx_initializer(0xDF000000))
         lines.extend(["};", ""])
 
-    for render_pass, public_name in (("opaque", "hyrule_field_opaque_dl"),
-                                     ("translucent", "hyrule_field_translucent_dl")):
+    for render_pass, public_name in (("opaque", f"{symbol_prefix}_opaque_dl"),
+                                     ("translucent", f"{symbol_prefix}_translucent_dl")):
         lines.append(f"const Gfx {public_name}[] = {{")
-        for path, polygon, draw_pass in draw_calls:
+        for path, variant, draw_pass in draw_calls:
             if draw_pass != render_pass:
                 continue
-            lines.append(_gfx_initializer(0xDE000000, symbols[(path, polygon)]))
+            lines.append(_gfx_initializer(0xDE000000, symbols[(path, variant)]))
         lines.append(_gfx_initializer(0xDF000000))
         lines.extend(["};", ""])
 
@@ -1038,7 +1038,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     if collision is not None:
         collision_vertices = len(collision["vertices"])
         collision_triangles = len(collision["polygons"])
-        lines.extend(["const Collision hyrule_field_collision[] = {", "    COL_INIT(),",
+        lines.extend([f"const Collision {symbol_prefix}_collision[] = {{", "    COL_INIT(),",
                       f"    COL_VERTEX_INIT({collision_vertices}),"])
         for vertex in collision["vertices"]:
             scaled = [int(round(value * scale)) for value in vertex]
@@ -1058,10 +1058,11 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     scaled_spawn = [int(round(value * scale)) for value in spawn_position]
     if any(value < -32768 or value > 32767 for value in scaled_spawn):
         raise ImportFailure("spawn scale produces coordinates outside SM64 MARIO_POS s16 range")
+    macro_prefix = symbol_prefix.upper()
     extra_spawn_macros = []
     if spawn is not None:
-        for name, key in (("HYRULE_FIELD_KART", "kart_position"),
-                          ("HYRULE_FIELD_RETURN", "return_position")):
+        for name, key in ((f"{macro_prefix}_KART", "kart_position"),
+                          (f"{macro_prefix}_RETURN", "return_position")):
             position = spawn.get(key)
             if position is None:
                 continue
@@ -1073,19 +1074,20 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                 for axis, value in zip(("X", "Y", "Z"), scaled_position))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
-    spawn_header_path = output_path.with_name("hyrule_field_spawn.h")
+    header_guard = f"{macro_prefix}_SPAWN_GENERATED_H"
+    spawn_header_path = output_path.with_name(f"{symbol_prefix}_spawn.h")
     spawn_header_path.write_text(
-        "#ifndef HYRULE_FIELD_SPAWN_GENERATED_H\n"
-        "#define HYRULE_FIELD_SPAWN_GENERATED_H\n"
-        f"#define HYRULE_FIELD_SPAWN_X {scaled_spawn[0]}\n"
-        f"#define HYRULE_FIELD_SPAWN_Y {scaled_spawn[1]}\n"
-        f"#define HYRULE_FIELD_SPAWN_Z {scaled_spawn[2]}\n"
-        f"#define HYRULE_FIELD_SPAWN_YAW ((s16){spawn_yaw})\n"
+        f"#ifndef {header_guard}\n"
+        f"#define {header_guard}\n"
+        f"#define {macro_prefix}_SPAWN_X {scaled_spawn[0]}\n"
+        f"#define {macro_prefix}_SPAWN_Y {scaled_spawn[1]}\n"
+        f"#define {macro_prefix}_SPAWN_Z {scaled_spawn[2]}\n"
+        f"#define {macro_prefix}_SPAWN_YAW ((s16){spawn_yaw})\n"
         + "".join(extra_spawn_macros)
         + "#endif\n", encoding="utf-8")
     return {"include": str(output_path), "display_list_count": len(variants),
-            "opaque_calls": sum(len(v["opaque"]) for v in by_polygon_lists.values()),
-            "translucent_calls": sum(len(v["translucent"]) for v in by_polygon_lists.values()),
+            "opaque_calls": sum(1 for _, _, render_pass in draw_calls if render_pass == "opaque"),
+            "translucent_calls": sum(1 for _, _, render_pass in draw_calls if render_pass == "translucent"),
             "vertex_array_count": len(vertex_symbols), "texture_count": len(texture_symbols),
             "collision_vertices": collision_vertices, "collision_triangles": collision_triangles,
             "omitted_segmented_display_list_calls": omitted_segmented_calls,
@@ -1411,12 +1413,22 @@ def write_collision_outputs(output_dir: Path, collision: dict, scale: float, ste
             "scale": scale, "geometry_validation": collision["geometry_validation"]}
 
 
-def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float) -> dict:
+def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float,
+                   symbol_prefix: str | None = None) -> dict:
     if not archive_path.is_file():
         raise ImportFailure(f"O2R archive not found: {archive_path}. Supply oot.o2r as the input path.")
     if not math.isfinite(scale) or scale <= 0.0:
         raise ImportFailure("--scale must be a positive finite number")
     scene_prefix = safe_archive_path(scene_prefix).rstrip("/")
+    scene_name = PurePosixPath(scene_prefix).name
+    scene_tag = scene_name[:-6] if scene_name.endswith("_scene") else scene_name
+    if symbol_prefix is None:
+        symbol_prefix = {"spot00": "hyrule_field", "spot04": "kokiri_forest"}.get(
+            scene_tag, re.sub(r"[^a-z0-9]+", "_", scene_tag.lower()).strip("_") or "region")
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", symbol_prefix):
+        raise ImportFailure(f"invalid native symbol prefix {symbol_prefix!r}")
+    region_name = {"spot00": "Hyrule Field", "spot04": "Kokiri Forest"}.get(
+        scene_tag, symbol_prefix.replace("_", " ").title())
     try:
         archive = zipfile.ZipFile(archive_path, "r")
     except (OSError, zipfile.BadZipFile) as exc:
@@ -1593,7 +1605,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             (texture_output_dir / texture_name).write_bytes(pixels)
             next(item for item in render_data_json["texture_records"] if item["path"] == texture_path)["rgba8_file"] = f"textures/{texture_name}"
         render_data_json["texture_rgba8_format"] = "row-major RGBA8, tightly packed, no row padding"
-        render_manifest_path = output_dir / "render" / "hyrule-render.json"
+        render_manifest_path = output_dir / "render" / f"{symbol_prefix}-render.json"
         render_manifest_path.write_text(json.dumps(render_data_json, sort_keys=True, indent=2) + "\n",
                                         encoding="utf-8")
         for path in collision_paths:
@@ -1602,7 +1614,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                 continue
             if path not in root_dependency_paths:
                 continue
-            stem = "spot00" if len(collision_outputs) == 0 else f"spot00_{len(collision_outputs)}"
+            stem = scene_tag if len(collision_outputs) == 0 else f"{scene_tag}_{len(collision_outputs)}"
             collision_outputs.append({**write_collision_outputs(output_dir, collision, scale, stem),
                                       "source_resource": path})
 
@@ -1677,18 +1689,18 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                     "kart_position": kart_position,
                     "return_position": return_position,
                 }
-        native_include = output_dir / "render" / "hyrule_field_runtime.inc.c"
+        native_include = output_dir / "render" / f"{symbol_prefix}_runtime.inc.c"
         native_summary = emit_native_level_include(
             native_include, room_meshes, decoded, texture_payloads, display_list_bodies,
             [entry["path"] for entry in files], endian_by_path, primary_collision,
-            scale, selected_spawn)
+            scale, selected_spawn, symbol_prefix)
         native_summary["include"] = str(native_include.relative_to(output_dir))
-        native_summary["spawn_header"] = str((native_include.parent / "hyrule_field_spawn.h")
+        native_summary["spawn_header"] = str((native_include.parent / f"{symbol_prefix}_spawn.h")
                                               .relative_to(output_dir))
         output = {
             "format": FORMAT_NAME,
             "format_version": FORMAT_VERSION,
-            "region": {"id": "hyrule_field", "name": "Hyrule Field", "scene_resource": scene_path,
+            "region": {"id": symbol_prefix, "name": region_name, "scene_resource": scene_path,
                        "scene_prefix": scene_prefix, "coordinate_system": {
                            "source_axes": {"x": "X", "y": "vertical Y", "z": "Z"},
                            "target_axes": {"x": "X", "y": "vertical Y", "z": "Z"},
@@ -1715,7 +1727,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             "render_data": {key: value for key, value in render_data_json.items()
                             if key not in ("triangles", "display_lists", "vertex_arrays", "textures",
                                            "texture_records")},
-            "render_manifest": "render/hyrule-render.json",
+            "render_manifest": f"render/{symbol_prefix}-render.json",
             "render_texture_records": render_data_json["texture_records"],
             "native_level_include": str(native_include.relative_to(output_dir)),
             "native_level_include_summary": native_summary,
@@ -1723,9 +1735,8 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             "spawn_support": spawn_support,
             "rendering": {"status": "native-level-source-generated; device rendering unverified",
                           "reason": "Supported F3DEX2 lists are lowered to standard Gfx commands and N64 Collision "
-                                    "data for the existing SM64 interpreter and physics path. Build with "
-                                    "IOS_HYRULE_WORLD=1 and HYRULE_O2R_PATH to register it as a selectable level; "
-                                    "this host conversion does not validate app compilation or device rendering"},
+                                    f"data for the existing SM64 interpreter and physics path ({region_name}). "
+                                    "Host conversion does not validate app compilation or device rendering"},
         }
         manifest = output_dir / "hyrule-world.json"
         manifest.write_text(json.dumps(output, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -1737,10 +1748,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("archive", type=Path, help="path to user-supplied oot.o2r ZIP archive")
     parser.add_argument("output", type=Path, help="directory for the intermediate world package")
     parser.add_argument("--scene-prefix", default="scenes/shared/spot00_scene")
+    parser.add_argument("--symbol-prefix", help="C symbol prefix (defaults from the scene name)")
     parser.add_argument("--scale", type=float, default=1.0, help="provisional OoT-to-SM64 coordinate scale")
     args = parser.parse_args(argv)
     try:
-        result = import_archive(args.archive, args.output, args.scene_prefix, args.scale)
+        result = import_archive(args.archive, args.output, args.scene_prefix, args.scale,
+                                args.symbol_prefix)
     except (ImportFailure, OSError) as exc:
         print(f"hyrule-importer: error: {exc}", file=sys.stderr)
         return 2

@@ -10,7 +10,7 @@ Usage:
   ios/build_cachyos_local.sh prepare <oot.o2r>
   ios/build_cachyos_local.sh package <built-app.app> <output.ipa>
 
-prepare converts the supplied Hyrule Field archive, verifies the local
+prepare converts the supplied Hyrule Field and Kokiri Forest scenes, verifies the local
 extracted SM64 assets, runs the Linux regression suite and IPA packager tests,
 and compiles the generated Hyrule/warp C objects with the host compiler.
 
@@ -38,10 +38,17 @@ case "$command" in
         done
         make --version | head -n 1 | grep -Eq 'Make ([4-9]|[1-9][0-9]+)\.' || fail "GNU Make 4 or newer is required"
 
-        printf 'Converting local Hyrule Field archive: %s\n' "$OOT_ARCHIVE"
+        printf 'Converting local Hyrule Field scene: %s\n' "$OOT_ARCHIVE"
         python3 tools/hyrule_importer.py "$OOT_ARCHIVE" build/hyrule_field_import
         cp build/hyrule_field_import/render/hyrule_field_runtime.inc.c build/hyrule_field_generated.inc.c
         cp build/hyrule_field_import/render/hyrule_field_spawn.h build/hyrule_field_spawn.h
+
+        printf '\nConverting the Kokiri Forest default scene with the same importer...\n'
+        python3 tools/hyrule_importer.py "$OOT_ARCHIVE" build/kokiri_forest_import \
+            --scene-prefix scenes/shared/spot04_scene
+        cc -fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 \
+            -DNON_MATCHING=1 -DAVOID_UB=1 -I include -I src -I . \
+            build/kokiri_forest_import/render/kokiri_forest_runtime.inc.c
 
         asset_bundle=$(mktemp "${TMPDIR:-/tmp}/sm64-local-assets.XXXXXX.tar.gz")
         asset_log=$(mktemp "${TMPDIR:-/tmp}/sm64-local-assets.XXXXXX.log")

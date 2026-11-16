@@ -113,3 +113,27 @@ supplied `oot.o2r`; see `KOKIRI_FOREST_AUDIT.md` for the input convention and
 the Kokiri follow-up plan. The archive itself is not placed in Actions
 artifacts or IPA release assets; only generated game output is compiled into
 the private IPA.
+
+## Mission 55.3 local revalidation
+
+The supplied archive was re-imported locally on 2026-11-15. The default
+`spot00` room still lowers to 37 Gfx lists, 37 vertex arrays, 51 sampled
+textures, and 1,579 collision triangles; its collision bounds are
+X `[-11048, 6732]`, Y `[-1095, 1407]`, Z `[-1811, 16529]`. The host importer
+does not resolve the three segmented calls listed above.
+
+The Hyrule-enabled build now opts into a 64x64 static/dynamic collision grid
+over the signed-16 coordinate range, with larger collision pools. This is
+required because stock `find_floor`, `find_ceil`, and wall collision reject
+coordinates outside ±8192, even though the imported field extends to Z=16529
+and the Castle Grounds forest path reaches X=-11100. The default build retains
+the original ±8192/16x16 grid and 2,300-surface/7,000-node pools. Host tests
+and C compilation cover both configurations; the expanded grid has not yet
+been validated on an iPhone.
+
+The Castle-to-Hyrule route is still implemented with paired `bhvFadingWarp`
+nodes. This collision change makes their authored coordinates addressable; it
+does not turn that route into a continuous world or carry the kart across the
+level load. The widened partition and pools are currently guarded by
+`IOS_HYRULE_WORLD`; ordinary builds still use the original boundary, grid, and
+pool capacities. No combined Castle/Kokiri/Hyrule collision stream exists.
