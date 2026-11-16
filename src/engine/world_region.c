@@ -396,7 +396,7 @@ s32 world_region_info_at(u32 index, struct WorldRegionInfo *info) {
 s32 world_region_render_near_legacy(const struct WorldRegionInfo *info,
                                     f32 cameraX, f32 cameraY, f32 cameraZ, u32 farDistance) {
     struct WorldPoint camera;
-    u64 dx, dy, dz;
+    u64 dx, dy, dz, remaining;
     if (info == NULL || !info->active || info->renderList == NULL) return 0;
     if (!isfinite(cameraX) || !isfinite(cameraY) || !isfinite(cameraZ)
         || cameraX < -32768.0f || cameraX >= 32768.0f
@@ -409,7 +409,12 @@ s32 world_region_render_near_legacy(const struct WorldRegionInfo *info,
     dy = outside(camera.y, info->min.y, info->max.y);
     dz = outside(camera.z, info->min.z, info->max.z);
     if (dx > farDistance || dy > farDistance || dz > farDistance) return 0;
-    return dx * dx + dy * dy + dz * dz <= (u64)farDistance * farDistance;
+    remaining = (u64)farDistance * farDistance;
+    if (dx * dx > remaining) return 0;
+    remaining -= dx * dx;
+    if (dy * dy > remaining) return 0;
+    remaining -= dy * dy;
+    return dz * dz <= remaining;
 }
 
 u32 world_region_count(void) { return sRegionCount; }
