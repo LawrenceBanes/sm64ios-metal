@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 56 — Connected World Expansion (Linux-validated, iPhone unverified)
+
+- On the dedicated `mission-56-connected-world` branch, expanded the opt-in Castle Grounds forest from a flat clearing into a raised meadow with a main trail, a walkable west loop, four original low-poly pines, a stone landmark, and a climbing north connector. The connector ends open at Z=11600 as a future attachment seam; Kokiri Forest and Hyrule Field are not integrated into this Castle area.
+- The additions remain behind `IOS_CONNECTED_WORLD_TEST=1`. Castle Grounds still has one area, the stock terrain stream and `lvl_init_or_update` loop, and unchanged Mario movement/BLJ code. Default and Hyrule-only collision modes remain separately checked. The render registry collects static region display lists under one Castle geo node; regional collision fragments join the existing Collision array.
+- Added 70 vertex-colored render triangles and 109 render vertices. The connected corridor/forest default collision group is 48 triangles and uses the opt-in 64x64 partition with signed-16-bit coordinate bounds. No copyrighted assets or textures were introduced.
+- `ios/test_connected_world.py` validates actual preprocessed collision sources for stock, Hyrule-only, and connected modes; vertex/triangle counts and bounds; sampled Castle-to-north and loop floor continuity; floor/wall winding; display-list vertex windows; and visual/collision elevation matching. The full `CC=clang tests/run_linux_checks.sh` suite passed, as did the focused gateway/connected tests and clang-tidy analyzer for the registry.
+- No iOS/Metal compilation or device session was performed. This host lacks `xcodebuild`/`xcrun`; a full `leveldata.c` syntax attempt stops at the absent generated `levels/castle_grounds/0.rgba16.inc.c`. The connected collision, scripts, and modular geometry sources pass host syntax checks. See `CONNECTED_WORLD_ARCHITECTURE.md` and `MISSION_56_REPORT.md` for limitations and next steps.
+
 ### Mission 55.2 — First Contact (source checks pass; iOS IPA blocked before build)
 
 - Revalidated the user-supplied local `oot.o2r` (SHA-256 `e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`). The importer produced the opt-in `spot00` runtime package: 37 Gfx lists, 1,579 collision triangles, and three explicitly omitted unresolved segmented calls. Archive-derived output remains ignored under `build/`; neither the archive nor generated assets are tracked.

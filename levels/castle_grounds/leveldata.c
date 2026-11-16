@@ -30,7 +30,7 @@
 #include "levels/castle_grounds/areas/1/forest_gateway.inc.c"
 #endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
-#include "levels/castle_grounds/areas/1/connected_forest.inc.c"
+#include "levels/castle_grounds/areas/1/connected_world/registry.inc.c"
 #endif
 #include "levels/castle_grounds/areas/1/collision.inc.c"
 #include "levels/castle_grounds/areas/1/macro.inc.c"

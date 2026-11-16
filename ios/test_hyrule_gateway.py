@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,13 +43,26 @@ def collision_heights_at(source: str, point_x: float, point_z: float,
     return heights
 
 
+def collision_source_for(defines: set[str]) -> str:
+    """Run the host C preprocessor on the real collision stream and fragments."""
+    return _preprocessed_collision_source(tuple(sorted(defines)))
+
+
+@lru_cache(maxsize=4)
+def _preprocessed_collision_source(defines: tuple[str, ...]) -> str:
+    compiler = shlex.split(os.environ.get("CC", "clang"))
+    command = [*compiler, "-E", "-P", "-x", "c", f"-I{ROOT}"]
+    command.extend(f"-D{define}" for define in defines)
+    command.append(str(ROOT / "levels/castle_grounds/areas/1/collision.inc.c"))
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(f"C preprocessor failed for {defines}: {result.stderr}")
+    return result.stdout
+
+
 def connected_collision_source() -> str:
-    """Select the connected-test branch, where the corridor wall is opened."""
-    source = (ROOT / "levels/castle_grounds/areas/1/collision.inc.c").read_text()
-    return re.sub(
-        r"#if !defined\(IOS_CONNECTED_WORLD_TEST\)\s*"
-        r"COL_TRI\(493, 495, 503\),\s*COL_TRI\(495, 504, 503\),\s*#endif",
-        "", source)
+    """Expand the real connected-world collision fragments and C conditions."""
+    return collision_source_for({"IOS_CONNECTED_WORLD_TEST"})
 
 
 class HyruleGatewayTests(unittest.TestCase):
@@ -122,7 +136,7 @@ class HyruleGatewayTests(unittest.TestCase):
         self.assertIn("castle_grounds_forest_gateway_dl", (ROOT / "levels/castle_grounds/areas/1/geo.inc.c").read_text())
 
     def test_castle_entry_overlaps_existing_ground_and_kart_can_be_recovered(self):
-        collision = (ROOT / "levels/castle_grounds/areas/1/collision.inc.c").read_text()
+        collision = connected_collision_source()
         old_ground = collision_heights_at(collision, -7400, 1460,
                                           group="SURFACE_NOISE_DEFAULT")
         self.assertTrue(old_ground, "the original castle collision must cover the path entrance approach")
@@ -154,15 +168,19 @@ class HyruleGatewayTests(unittest.TestCase):
         geo = (ROOT / "levels/castle_grounds/areas/1/geo.inc.c").read_text()
         leveldata = (ROOT / "levels/castle_grounds/leveldata.c").read_text()
         extension = (ROOT / "levels/castle_grounds/areas/1/connected_forest.inc.c").read_text()
+        registry = (ROOT / "levels/castle_grounds/areas/1/connected_world/registry.inc.c").read_text()
         area_runtime = (ROOT / "src/game/area.c").read_text()
 
         self.assertEqual(script.count("AREA(/*index*/ 1"), 1)
         self.assertEqual(script.count("TERRAIN(/*terrainData*/ castle_grounds_seg7_collision_level)"), 1)
         self.assertIn("CALL_LOOP(/*arg*/ 1, /*func*/ lvl_init_or_update)", script)
         self.assertIn("GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_forest_gateway_dl)", geo)
-        self.assertIn("GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_connected_forest_dl)", geo)
-        self.assertIn('"levels/castle_grounds/areas/1/connected_forest.inc.c"', leveldata)
+        self.assertIn("GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_connected_world_dl)", geo)
+        self.assertIn('"levels/castle_grounds/areas/1/connected_world/registry.inc.c"', leveldata)
         self.assertIn("castle_grounds_connected_forest_dl", extension)
+        self.assertIn("castle_grounds_north_transition_dl", registry)
+        self.assertIn("gsSPDisplayList(castle_grounds_connected_forest_dl)", registry)
+        self.assertIn("gsSPDisplayList(castle_grounds_north_transition_dl)", registry)
         self.assertNotIn("bhvFadingWarp", extension)
         self.assertNotIn("LEVEL_HYRULE_FIELD", extension)
         self.assertIn("IOS_CONNECTED_WORLD_TEST ?= 0", (ROOT / "Makefile").read_text())
@@ -180,31 +198,34 @@ class HyruleGatewayTests(unittest.TestCase):
             route.append((x, 1460))
         for z in range(2200, 4201, 40):
             route.append((-9200, z))
+        for z in range(4200, 8001, 40):
+            route.append((-9300, z))
+        for z in range(8000, 11601, 40):
+            route.append((-9300, z))
         route.extend(reversed(route[:-1]))
 
         for index, (x, z) in enumerate(route):
             with self.subTest(step=index, x=x, z=z):
                 heights = collision_heights_at(source, x, z, group="SURFACE_DEFAULT")
                 self.assertTrue(heights, f"no collision floor at route point ({x},{z})")
-                self.assertTrue(any(abs(height - 260) <= 1 for height in heights),
-                                f"unexpected floor height at ({x},{z}): {heights}")
+                self.assertLessEqual(max(heights) - min(heights), 2,
+                                     f"overlapping floors disagree at ({x},{z}): {heights}")
 
-        # The branch opening has no blocking wall triangles. The side and end
-        # walls remain in the same Collision stream as the floor.
+        # The branch opening and north extension are unwarped; only the
+        # authored outer meadow edges have collision barriers.
         self.assertNotIn("COL_TRI(493, 495, 503)", source)
         self.assertNotIn("COL_TRI(495, 504, 503)", source)
         for triangle in (
             "COL_TRI(495, 504, 506)", "COL_TRI(504, 508, 506)",
             "COL_TRI(493, 507, 503)", "COL_TRI(507, 509, 503)",
-            "COL_TRI(506, 508, 507)", "COL_TRI(507, 508, 509)",
+            "COL_TRI(506, 524, 512)", "COL_TRI(507, 515, 525)",
         ):
             self.assertIn(triangle, source)
 
         # The complete static collision count, including the branch, fits the
         # expanded 8,192-surface pool with substantial headroom.
         counts = [int(value) for value in re.findall(r"COL_TRI_INIT\([^,]+,\s*(\d+)\)", source)]
-        counts.remove(18)  # the old closed-corridor group is inactive under this flag
-        self.assertIn(24, counts)
+        self.assertIn(48, counts)
         self.assertLess(sum(counts), 8192)
 
     def test_gateway_c_and_warp_sources_compile_with_feature_on_and_off(self):
@@ -267,6 +288,12 @@ class HyruleGatewayTests(unittest.TestCase):
                  "geo_commands.h", str(ROOT / "levels/castle_grounds/areas/1/connected_forest.inc.c")],
                 cwd=ROOT, text=True, capture_output=True)
             self.assertEqual(extension.returncode, 0, extension.stdout + extension.stderr)
+
+            registry = subprocess.run(
+                [*common, "-DIOS_CONNECTED_WORLD_TEST", "-include", "sm64.h", "-include",
+                 "geo_commands.h", str(ROOT / "levels/castle_grounds/areas/1/connected_world/registry.inc.c")],
+                cwd=ROOT, text=True, capture_output=True)
+            self.assertEqual(registry.returncode, 0, registry.stdout + registry.stderr)
 
 
 if __name__ == "__main__":

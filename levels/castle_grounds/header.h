@@ -31,7 +31,7 @@ extern const Gfx castle_grounds_seg7_dl_0700C768[];
 extern const Gfx castle_grounds_forest_gateway_dl[];
 #endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
-extern const Gfx castle_grounds_connected_forest_dl[];
+extern const Gfx castle_grounds_connected_world_dl[];
 #endif
 extern const struct Animation *const castle_grounds_seg7_anims_flags[];
 extern const Gfx castle_grounds_seg7_dl_0700EA58[];
