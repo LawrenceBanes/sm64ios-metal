@@ -3,9 +3,10 @@
 
 #include <PR/ultratypes.h>
 
-#if defined(IOS_HYRULE_WORLD)
-/* OoT spot00 collision reaches Z=16529. Keep source coordinates in SM64's
- * signed-16 collision format and widen only the opt-in world partition. */
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
+#define IOS_EXPANDED_WORLD_COLLISION 1
+/* OoT spot00 reaches Z=16529; the local seamless test also crosses the stock
+ * ±8192 boundary. Keep coordinates in SM64 s16 and widen only opt-in worlds. */
 #define LEVEL_BOUNDARY_MAX 0x8000
 #define SURFACE_PARTITION_DIM 64
 #else
@@ -21,7 +22,7 @@ static inline s32 surface_partition_cell_index(s32 coord) {
 }
 
 static inline s32 surface_partition_coord_in_bounds(s32 coord) {
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_EXPANDED_WORLD_COLLISION)
     /* The importer stores coordinates as s16, so -32768 is representable. */
     return coord >= -LEVEL_BOUNDARY_MAX && coord < LEVEL_BOUNDARY_MAX;
 #else

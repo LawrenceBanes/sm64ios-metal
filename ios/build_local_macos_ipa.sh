@@ -11,7 +11,9 @@ Usage:
 
 Builds the unsigned arm64 iPhoneOS app locally with Xcode, from an already
 available SDL2 checkout containing the pinned revision and local extracted
-SM64/OoT assets. It makes no GitHub requests and does not sign the app.
+SM64/OoT assets. Set IOS_CONNECTED_WORLD_TEST=1 to include the Castle Grounds
+same-area forest branch experiment. It makes no GitHub requests and does not
+sign the app.
 EOF
 }
 
@@ -29,6 +31,10 @@ SDL2_SOURCE=$(cd -- "$1" && pwd)
 OOT_ARCHIVE=$(cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")
 [[ -d "$SDL2_SOURCE/.git" || -f "$SDL2_SOURCE/.git" ]] || fail "SDL2 source must be a local Git checkout"
 [[ -f "$OOT_ARCHIVE" && -r "$OOT_ARCHIVE" ]] || fail "cannot read local OoT archive: $OOT_ARCHIVE"
+
+CONNECTED_WORLD_MODE=${IOS_CONNECTED_WORLD_TEST:-0}
+[[ "$CONNECTED_WORLD_MODE" == 0 || "$CONNECTED_WORLD_MODE" == 1 ]] \
+    || fail "IOS_CONNECTED_WORLD_TEST must be 0 or 1"
 
 for tool in xcodebuild xcrun git python3 gmake gobjcopy; do
     command -v "$tool" >/dev/null 2>&1 || fail "required local tool is missing: $tool"
@@ -81,6 +87,7 @@ SM64_SKIP_CODESIGN=1 \
 NOEXTRACT=1 \
 EXTERNAL_DATA=1 \
 IOS_HYRULE_WORLD=1 \
+IOS_CONNECTED_WORLD_TEST="$CONNECTED_WORLD_MODE" \
 HYRULE_O2R_PATH="$OOT_ARCHIVE" \
 IOS_OBJCOPY="$IOS_OBJCOPY" \
 xcodebuild \

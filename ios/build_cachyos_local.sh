@@ -12,7 +12,8 @@ Usage:
 
 prepare converts the supplied Hyrule Field and Kokiri Forest scenes, verifies the local
 extracted SM64 assets, runs the Linux regression suite and IPA packager tests,
-and compiles the generated Hyrule/warp C objects with the host compiler.
+and compiles the Hyrule option plus the same-area connected-forest Castle
+objects with the host compiler.
 
 package wraps and validates an existing unsigned iPhoneOS .app bundle. It does
 not build or sign that app. On CachyOS, the .app must have been built elsewhere
@@ -78,6 +79,31 @@ case "$command" in
             build/us_pc/levels/scripts.o \
             VERSION=us TARGET_IOS=1 TARGET_OS_IOS=1 IOS_HYRULE_WORLD=1 \
             NOEXTRACT=1 RENDER_API=METAL IOSINCLUDE=include/
+
+        printf '\nCompiling the same-area connected forest test without the Hyrule level flag...\n'
+        make -j4 \
+            build/us_pc/levels/castle_grounds/leveldata.o \
+            build/us_pc/levels/castle_grounds/geo.o \
+            build/us_pc/levels/castle_grounds/script.o \
+            build/us_pc/src/engine/surface_load.o \
+            build/us_pc/src/engine/surface_collision.o \
+            build/us_pc/src/game/area.o \
+            build/us_pc/src/game/mario.o \
+            VERSION=us TARGET_IOS=1 TARGET_OS_IOS=1 IOS_CONNECTED_WORLD_TEST=1 \
+            NOEXTRACT=1 RENDER_API=METAL IOSINCLUDE=include/
+
+        printf '\nSwitching the reused build directory back to the ordinary Castle Grounds mode...\n'
+        make -j4 \
+            build/us_pc/levels/castle_grounds/leveldata.o \
+            build/us_pc/levels/castle_grounds/geo.o \
+            build/us_pc/levels/castle_grounds/script.o \
+            build/us_pc/src/engine/surface_load.o \
+            build/us_pc/src/engine/surface_collision.o \
+            build/us_pc/src/game/area.o \
+            build/us_pc/src/game/mario.o \
+            build/us_pc/levels/scripts.o \
+            VERSION=us TARGET_IOS=1 TARGET_OS_IOS=1 IOS_HYRULE_WORLD=0 \
+            IOS_CONNECTED_WORLD_TEST=0 NOEXTRACT=1 RENDER_API=METAL IOSINCLUDE=include/
 
         printf '\nCachyOS preflight complete. These are Linux host objects, not iPhoneOS objects.\n'
         if command -v xcodebuild >/dev/null 2>&1 && command -v xcrun >/dev/null 2>&1; then

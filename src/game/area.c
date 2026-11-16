@@ -31,6 +31,12 @@
 #define IOS_HYRULE_DIAG(...) ((void)0)
 #endif
 
+#if defined(IOS_BUILD) && defined(IOS_CONNECTED_WORLD_TEST)
+#define IOS_CONNECTED_WORLD_DIAG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define IOS_CONNECTED_WORLD_DIAG(...) ((void)0)
+#endif
+
 #include "gfx_dimensions.h"
 
 struct SpawnInfo gPlayerSpawnInfos[1];
@@ -253,6 +259,14 @@ void load_area(s32 index) {
 #endif
             load_area_terrain(index, gCurrentArea->terrainData, gCurrentArea->surfaceRooms,
                               gCurrentArea->macroObjects);
+#if defined(IOS_BUILD) && defined(IOS_CONNECTED_WORLD_TEST)
+            if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS) {
+                IOS_CONNECTED_WORLD_DIAG(
+                    "Connected forest Castle area collision loaded level=%d area=%d surfaces=%d nodes=%d grid=%dx%d bound=%d",
+                    gCurrLevelNum, index, gNumStaticSurfaces, gNumStaticSurfaceNodes,
+                    SURFACE_PARTITION_DIM, SURFACE_PARTITION_DIM, LEVEL_BOUNDARY_MAX);
+            }
+#endif
 #if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
             if (gCurrLevelNum == LEVEL_HYRULE_FIELD) {
                 IOS_HYRULE_DIAG("Hyrule collision load complete level=%d area=%d staticSurfaces=%d staticNodes=%d",
@@ -276,6 +290,13 @@ void load_area(s32 index) {
         IOS_HYRULE_DIAG("SM64 area activated level=%d area=%d terrain=%p spawnInfos=%p",
                         gCurrLevelNum, gCurrentArea->index, (void *)gCurrentArea->terrainData,
                         (void *)gCurrentArea->objectSpawnInfos);
+#if defined(IOS_BUILD) && defined(IOS_CONNECTED_WORLD_TEST)
+        if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS) {
+            IOS_CONNECTED_WORLD_DIAG(
+                "Connected forest test active in existing area level=%d area=%d camera=%p; no region transition is installed",
+                gCurrLevelNum, gCurrentArea->index, (void *)gCurrentArea->camera);
+        }
+#endif
     }
 }
 

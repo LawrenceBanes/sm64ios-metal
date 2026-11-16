@@ -30,6 +30,7 @@ TARGET_WEB ?= 0
 # Build for iOS devices
 TARGET_IOS ?= 1
 IOS_HYRULE_WORLD ?= 0
+IOS_CONNECTED_WORLD_TEST ?= 0
 
 # Makeflag to enable OSX fixes
 OSX_BUILD ?= 1
@@ -164,6 +165,9 @@ TARGET := sm64.$(VERSION)
 VERSION_CFLAGS := -D$(VERSION_DEF) -D_LANGUAGE_C
 ifeq ($(IOS_HYRULE_WORLD),1)
 VERSION_CFLAGS += -DIOS_HYRULE_WORLD
+endif
+ifeq ($(IOS_CONNECTED_WORLD_TEST),1)
+VERSION_CFLAGS += -DIOS_CONNECTED_WORLD_TEST
 endif
 VERSION_ASFLAGS := --defsym $(VERSION_DEF)=1
 
@@ -1033,7 +1037,7 @@ $(SOUND_BIN_DIR)/sound_data.o: $(SOUND_BIN_DIR)/sound_data.ctl.inc.c $(SOUND_BIN
 
 $(BUILD_DIR)/levels/scripts.o: $(BUILD_DIR)/include/level_headers.h
 
-$(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in $(BUILD_DIR)/.ios_hyrule_mode
+$(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in $(BUILD_DIR)/.ios_world_mode
 	$(CPP) $(if $(filter 1,$(IOS_HYRULE_WORLD)),-DIOS_HYRULE_WORLD,) -I . levels/level_headers.h.in | $(PYTHON) tools/output_level_headers.py > $(BUILD_DIR)/include/level_headers.h
 
 $(BUILD_DIR)/assets/mario_anim_data.c: $(wildcard assets/anims/*.inc.c)

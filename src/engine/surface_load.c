@@ -522,7 +522,7 @@ static void load_environmental_regions(s16 **data) {
  * Allocate some of the main pool for surfaces (2300 surf) and for surface nodes (7000 nodes).
  */
 void alloc_surface_pools(void) {
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_EXPANDED_WORLD_COLLISION)
     sSurfacePoolSize = 8192;
     sSurfaceNodePool = main_pool_alloc(32768 * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
 #else

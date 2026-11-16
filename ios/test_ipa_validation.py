@@ -17,6 +17,7 @@ class IpaValidationTests(unittest.TestCase):
     def test_cachyos_local_commands_keep_apple_build_boundary_explicit(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script = (root / "ios/build_cachyos_local.sh").read_text()
+        app_build_script = (root / "build.sh").read_text()
         self.assertIn('python3 tools/hyrule_importer.py "$OOT_ARCHIVE"', script)
         self.assertIn("tests/run_linux_checks.sh", script)
         self.assertIn("TARGET_IOS=1 TARGET_OS_IOS=1 IOS_HYRULE_WORLD=1", script)
@@ -24,6 +25,8 @@ class IpaValidationTests(unittest.TestCase):
         self.assertIn("ios/validate_ipa.py", script)
         self.assertNotIn("gh workflow run", script)
         self.assertIn("No IPA was built: this host lacks Xcode/xcrun", script)
+        self.assertIn('IOS_CONNECTED_WORLD_TEST="$IOS_CONNECTED_WORLD_TEST_BUILD"',
+                      app_build_script)
 
     def test_cachyos_local_package_command_accepts_real_app_bundle_structure(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -50,6 +53,7 @@ class IpaValidationTests(unittest.TestCase):
         source = script.read_text()
         self.assertIn('"$SCRIPT_DIR/build_sdl2_ios.sh"', source)
         self.assertIn('HYRULE_O2R_PATH="$OOT_ARCHIVE"', source)
+        self.assertIn('IOS_CONNECTED_WORLD_TEST="$CONNECTED_WORLD_MODE"', source)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", source)
         self.assertIn("ios/package_unsigned_ipa.py", source)
         self.assertIn("ios/validate_ipa.py", source)
