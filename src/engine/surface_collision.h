@@ -5,8 +5,7 @@
 
 #include "types.h"
 
-#define LEVEL_BOUNDARY_MAX 0x2000
-#define CELL_SIZE          0x400
+#include "surface_partition.h"
 
 struct WallCollisionData
 {

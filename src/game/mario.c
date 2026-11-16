@@ -706,7 +706,8 @@ static s32 mario_ios_portal_point_has_static_support(const PortalFrame *frame,
      * in every collision class, but accept only static coplanar host pieces. */
     for (dz = -1; dz <= 1; ++dz) for (dx = -1; dx <= 1; ++dx) {
         s32 cx = cellX + dx, cz = cellZ + dz;
-        if (cx < 0 || cx >= 16 || cz < 0 || cz >= 16) continue;
+        if (cx < 0 || cx >= SURFACE_PARTITION_DIM
+            || cz < 0 || cz >= SURFACE_PARTITION_DIM) continue;
         for (partition = SPATIAL_PARTITION_FLOORS; partition <= SPATIAL_PARTITION_WALLS; ++partition) {
             struct SurfaceNode *node = gStaticSurfacePartition[cz][cx][partition].next;
             for (; node != NULL; node = node->next) {
@@ -807,7 +808,8 @@ static s32 mario_ios_portal_has_nearby_obstacle(const PortalFrame *frame) {
         s32 minCellZ = (s32)((minZ + LEVEL_BOUNDARY_MAX) / CELL_SIZE) - 1;
         s32 maxCellZ = (s32)((maxZ + LEVEL_BOUNDARY_MAX) / CELL_SIZE) + 1;
         for (dz = minCellZ; dz <= maxCellZ; ++dz) for (dx = minCellX; dx <= maxCellX; ++dx) {
-            if (dx < 0 || dx >= 16 || dz < 0 || dz >= 16) continue;
+            if (dx < 0 || dx >= SURFACE_PARTITION_DIM
+                || dz < 0 || dz >= SURFACE_PARTITION_DIM) continue;
             for (partition = SPATIAL_PARTITION_FLOORS; partition <= SPATIAL_PARTITION_WALLS; ++partition) {
                 for (dynamic = 0; dynamic <= 1; ++dynamic) {
                     struct SurfaceNode *node = (dynamic ? gDynamicSurfacePartition : gStaticSurfacePartition)[dz][dx][partition].next;

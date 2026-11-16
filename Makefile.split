@@ -156,6 +156,13 @@ $(BUILD_DIR)/.ios_hyrule_mode: FORCE
 	@printf '%s\n' '$(IOS_HYRULE_WORLD)' > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
+# These objects embed the partition dimensions and/or Hyrule-only static
+# collision scans in their compiled code. Rebuild them when a reused build
+# directory switches between the stock and expanded collision grid.
+$(BUILD_DIR)/src/engine/surface_load.o \
+$(BUILD_DIR)/src/engine/surface_collision.o \
+$(BUILD_DIR)/src/game/mario.o: $(BUILD_DIR)/.ios_hyrule_mode
+
 $(BUILD_DIR)/level_rules.mk: $(BUILD_DIR)/.ios_hyrule_mode
 
 ifneq ($(MAKECMDGOALS),clean)

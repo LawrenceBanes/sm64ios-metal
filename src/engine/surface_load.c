@@ -18,11 +18,11 @@
 s32 unused8038BE90;
 
 /**
- * Partitions for course and object surfaces. The arrays represent
- * the 16x16 cells that each level is split into.
+ * Partitions for course and object surfaces. Ordinary builds retain the
+ * original 16x16 grid; the optional OoT build uses a 64x64 grid.
  */
-SpatialPartitionCell gStaticSurfacePartition[16][16];
-SpatialPartitionCell gDynamicSurfacePartition[16][16];
+SpatialPartitionCell gStaticSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
+SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
 
 /**
  * Pools of data to contain either surface nodes or surfaces.
@@ -83,7 +83,7 @@ static struct Surface *alloc_surface(void) {
  * Iterates through the entire partition, clearing the surfaces.
  */
 static void clear_spatial_partition(SpatialPartitionCell *cells) {
-    register s32 i = 16 * 16;
+    register s32 i = SURFACE_PARTITION_DIM * SURFACE_PARTITION_DIM;
 
     while (i--) {
         (*cells)[SPATIAL_PARTITION_FLOORS].next = NULL;
@@ -193,26 +193,24 @@ static s16 max_3(s16 a0, s16 a1, s16 a2) {
 }
 
 /**
- * Every level is split into 16 * 16 cells of surfaces (to limit computing
- * time). This function determines the lower cell for a given x/z position.
+ * The active level grid is split into fixed-size cells. This function
+ * determines the lower cell for a given x/z position.
  * @param coord The coordinate to test
  */
 static s16 lower_cell_index(s16 coord) {
-    s16 index;
+    s32 shiftedCoord = (s32)coord + LEVEL_BOUNDARY_MAX;
+    s32 index;
 
-    // Move from range [-0x2000, 0x2000) to [0, 0x4000)
-    coord += 0x2000;
-    if (coord < 0) {
-        coord = 0;
+    if (shiftedCoord < 0) {
+        shiftedCoord = 0;
     }
 
-    // [0, 16)
-    index = coord / 0x400;
+    index = shiftedCoord / CELL_SIZE;
 
     // Include extra cell if close to boundary
     //! Some wall checks are larger than the buffer, meaning wall checks can
     //  miss walls that are near a cell border.
-    if (coord % 0x400 < 50) {
+    if (shiftedCoord % CELL_SIZE < 50) {
         index -= 1;
     }
 
@@ -220,44 +218,44 @@ static s16 lower_cell_index(s16 coord) {
         index = 0;
     }
 
-    // Potentially > 15, but since the upper index is <= 15, not exploitable
-    return index;
+    if (index >= SURFACE_PARTITION_DIM) {
+        index = SURFACE_PARTITION_DIM - 1;
+    }
+    return (s16)index;
 }
 
 /**
- * Every level is split into 16 * 16 cells of surfaces (to limit computing
- * time). This function determines the upper cell for a given x/z position.
+ * The active level grid is split into fixed-size cells. This function
+ * determines the upper cell for a given x/z position.
  * @param coord The coordinate to test
  */
 static s16 upper_cell_index(s16 coord) {
-    s16 index;
+    s32 shiftedCoord = (s32)coord + LEVEL_BOUNDARY_MAX;
+    s32 index;
 
-    // Move from range [-0x2000, 0x2000) to [0, 0x4000)
-    coord += 0x2000;
-    if (coord < 0) {
-        coord = 0;
+    if (shiftedCoord < 0) {
+        shiftedCoord = 0;
     }
 
-    // [0, 16)
-    index = coord / 0x400;
+    index = shiftedCoord / CELL_SIZE;
 
     // Include extra cell if close to boundary
     //! Some wall checks are larger than the buffer, meaning wall checks can
     //  miss walls that are near a cell border.
-    if (coord % 0x400 > 0x400 - 50) {
+    if (shiftedCoord % CELL_SIZE > CELL_SIZE - 50) {
         index += 1;
     }
 
-    if (index > 15) {
-        index = 15;
+    if (index >= SURFACE_PARTITION_DIM) {
+        index = SURFACE_PARTITION_DIM - 1;
     }
 
     // Potentially < 0, but since lower index is >= 0, not exploitable
-    return index;
+    return (s16)index;
 }
 
 /**
- * Every level is split into 16x16 cells, this takes a surface, finds
+ * Every level is split into cells, this takes a surface, finds
  * the appropriate cells (with a buffer), and adds the surface to those
  * cells.
  * @param surface The surface to check
@@ -524,8 +522,13 @@ static void load_environmental_regions(s16 **data) {
  * Allocate some of the main pool for surfaces (2300 surf) and for surface nodes (7000 nodes).
  */
 void alloc_surface_pools(void) {
+#if defined(IOS_HYRULE_WORLD)
+    sSurfacePoolSize = 8192;
+    sSurfaceNodePool = main_pool_alloc(32768 * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
+#else
     sSurfacePoolSize = 2300;
     sSurfaceNodePool = main_pool_alloc(7000 * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
+#endif
     sSurfacePool = main_pool_alloc(sSurfacePoolSize * sizeof(struct Surface), MEMORY_POOL_LEFT);
 
     gCCMEnteredSlide = 0;
