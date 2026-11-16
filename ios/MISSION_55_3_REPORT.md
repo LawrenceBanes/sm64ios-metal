@@ -11,6 +11,14 @@
 
 **The mission's continuous-world acceptance criterion is not met.** Castle Grounds still connects to Hyrule through paired fading warps. Kokiri is not registered, no cross-region transforms or merged collision/render data are integrated, and no iPhone build has been tested.
 
+## Local implementation commits
+
+- `e872ba16` — expand the opt-in collision grid for Hyrule coordinates.
+- `afe0c691` — generalize OoT region import and record connected-world status.
+- `daf0aac7` — add rigid yaw/translation transforms to generated region data.
+
+These commits are local to branch `ios`; no push or paid workflow was started.
+
 ## Verified importer findings
 
 From the local user-provided O2R archive:

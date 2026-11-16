@@ -62,6 +62,18 @@ not guess pointers or dereference them. Other scene headers, alternate rooms,
 actors, object banks, and moving geometry are not included in this default-room
 pass.
 
+The current unresolved targets are:
+
+| Source display list | Byte offset | Segmented target |
+| --- | ---: | --- |
+| `spot00_room_0DL_015100` | 224 | `0x09000001` |
+| `spot00_room_0DL_014E28` | 224 | `0x08000001` |
+| `spot00_room_0DL_012C38` | 80 | `0x0a000001` |
+
+The archive index contains no segment-base table for these targets in the
+selected scene dependency closure, so the importer cannot safely map them to
+another resource by their low offset alone.
+
 Collision triangles currently use `SURFACE_DEFAULT`. Collision geometry is
 real and enters Mario's normal terrain queries, but OoT-specific surface
 effects, water boxes, scene actors, transitions, and moving platforms are not
