@@ -2,6 +2,15 @@
 
 ## Current state
 
+### Mission 55.4 — First Footstep (same-area test extension implemented; device proof pending)
+
+- Starting code HEAD was `a7d9de10011caaaa0d3a553c69129088943b2d36` on a clean `ios` worktree. Recorded baseline in `MISSION_55_4_BASELINE.md` before implementation.
+- Added opt-in `IOS_CONNECTED_WORLD_TEST=1`: a vertex-colored Castle Grounds forest branch leaves the existing western trail near `x=-9200,z=2200`, opens into a bounded clearing ending near `z=4200`, and returns along the same path. Castle and extension are listed under one area camera node and one stock `TERRAIN` collision array. The new extension has no warp; the pre-existing Hyrule warp remains on the separate straight trail only when the Hyrule option is enabled.
+- Reused the 64x64 signed-16 collision partition and expanded pools for either Hyrule or connected-world test builds. Fixed build invalidation to track both options, including generated level headers. Propagated the connected flag through both iOS shell build paths.
+- `ios/build_cachyos_local.sh prepare /home/larry/Downloads/oot.o2r` passed: importer conversion, asset verification/temporary-bundle cleanup, full Linux checks (31 importer tests), gateway tests (8), partition tests (3), IPA/checksum tests (16), and host object builds in Hyrule, connected-only, then ordinary modes. The mode changes rebuilt their affected objects. One pre-existing tautological-comparison warning and an existing unused-parameter warning appeared.
+- Host tests parse the collision triangles and sample the authored route at Y=260, including the corridor/branch seam and return; they do not invoke Mario's live SM64 collision query. Host compiler output does not validate Metal drawing or camera/gameplay behavior.
+- **PARTIAL:** one-area source integration and collision route are reproducible on Linux. **UNVERIFIED:** actual SM64 runtime collision, visible Metal output, camera/player continuity, iPhone traversal, and IPA. CachyOS has no Xcode/iPhoneOS SDK; no paid Actions run was started. See `MISSION_55_4_REPORT.md` and `MISSION_55_4_DEVICE_HANDOFF.md`.
+
 ### Mission 55.3 — Connected Kingdom (local importer/collision groundwork; continuous world not integrated)
 
 - Starting tree was clean at `b183638b8e8d67d586af072434063faef8063648`; historical commits `0253c162`, `913c3b3b`, and `c456f2fb` are present. The current Castle Grounds gateway still uses a paired fading warp to the selectable Hyrule Field level. Kokiri is not registered, and the requested single-session route does not exist.
