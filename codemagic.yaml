@@ -1,0 +1,26 @@
+workflows:
+  connected-world-ios:
+    name: Mission 55.6 Connected World iOS Metal
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      groups:
+        - sm64_private_assets
+      vars:
+        SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
+        ASSET_BUNDLE_RELEASE_TAG: sm64-assets-20261031-04
+        IOS_HYRULE_WORLD: "0"
+        IOS_CONNECTED_WORLD_TEST: "1"
+      xcode: "27.1"
+    scripts:
+      - name: Build unsigned connected-world iPhoneOS app and validate Metal
+        script: bash ios/build_codemagic_connected_world.sh
+    artifacts:
+      - build/codemagic-connected-world/toolchain.log
+      - build/codemagic-connected-world/sdl2-build.log
+      - build/codemagic-connected-world/metal-validation.log
+      - build/codemagic-connected-world/metal-validation/**
+      - build/codemagic-connected-world/ios-build.log
+      - build/codemagic-connected-world/ipa.sha256
+      - build/codemagic-connected-world/sm64ios-connected-world-arm64-unsigned.ipa
+      - build/codemagic-connected-world/ios-products/Release-iphoneos/sm64ios.app

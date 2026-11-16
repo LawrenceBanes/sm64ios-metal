@@ -87,8 +87,8 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertNotIn("hyrule_update_player", script)
         self.assertNotIn("hyrule_physics_step", script)
         self.assertIn("IOS_HYRULE_WORLD ?= 0", makefile)
-        self.assertIn(".ios_hyrule_mode", makefile)
-        self.assertIn(".ios_hyrule_mode", split_makefile)
+        self.assertIn(".ios_world_mode", split_makefile)
+        self.assertIn("IOS_CONNECTED_WORLD_TEST ?= 0", makefile)
         self.assertNotIn('STUB_LEVEL(  "",               LEVEL_HYRULE_FIELD', definitions)
 
     def test_oot_binary_yaw_is_converted_to_mario_pos_degrees(self):

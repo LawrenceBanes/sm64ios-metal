@@ -1,7 +1,10 @@
 // 0x0700EAE8 - 0x07010D08
 const Collision castle_grounds_seg7_collision_level[] = {
     COL_INIT(),
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    // Original Castle collision + corridor + connected forest branch.
+    COL_VERTEX_INIT(0x1FE),
+#elif defined(IOS_HYRULE_WORLD)
     // 490 original vertices plus the localized forest-path floor and side walls.
     COL_VERTEX_INIT(0x1FA),
 #else
@@ -497,7 +500,7 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_VERTEX(5087, 452, -2031),
     COL_VERTEX(2314, 447, -162),
     COL_VERTEX(2314, 468, -142),
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
     // Forest gateway floor stations, in low-Z/high-Z pairs, from castle land outward.
     COL_VERTEX(-7420, 260, 720),
     COL_VERTEX(-7420, 260, 2200),
@@ -516,6 +519,14 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_VERTEX(-8600, 1300, 2200),
     COL_VERTEX(-9800, 1300, 2200),
     COL_VERTEX(-11100, 1300, 2200),
+#endif
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    // The branch shares its entrance edge with the trail and opens into a
+    // widening, bounded clearing; no vertex is clamped or wrapped.
+    COL_VERTEX(-10400, 260, 4200),
+    COL_VERTEX(-8200, 260, 4200),
+    COL_VERTEX(-10400, 1300, 4200),
+    COL_VERTEX(-8200, 1300, 4200),
 #endif
     COL_TRI_INIT(SURFACE_DEFAULT, 336),
     COL_TRI(406, 407, 408),
@@ -1406,9 +1417,14 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_TRI(473, 472, 489),
     COL_TRI(469, 473, 489),
     COL_TRI(472, 473, 469),
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    // Connector with one open side plus the forest floor and bounded walls.
+    COL_TRI_INIT(SURFACE_DEFAULT, 24),
+#elif defined(IOS_HYRULE_WORLD)
     // Six walkable floor triangles and twelve side-wall triangles.
     COL_TRI_INIT(SURFACE_DEFAULT, 18),
+#endif
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
     COL_TRI(490, 492, 491),
     COL_TRI(492, 493, 491),
     COL_TRI(492, 494, 493),
@@ -1423,10 +1439,24 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_TRI(496, 500, 501),
     COL_TRI(491, 493, 502),
     COL_TRI(493, 503, 502),
+#if !defined(IOS_CONNECTED_WORLD_TEST)
     COL_TRI(493, 495, 503),
     COL_TRI(495, 504, 503),
+#endif
     COL_TRI(495, 497, 504),
     COL_TRI(497, 505, 504),
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    // Shared-edge floor triangles carry Mario into the connected clearing.
+    COL_TRI(495, 506, 493),
+    COL_TRI(506, 507, 493),
+    // Side walls and a far wall bound the extension; its entrance stays open.
+    COL_TRI(495, 504, 506),
+    COL_TRI(504, 508, 506),
+    COL_TRI(493, 507, 503),
+    COL_TRI(507, 509, 503),
+    COL_TRI(506, 508, 507),
+    COL_TRI(507, 508, 509),
+#endif
 #endif
     COL_TRI_STOP(),
     COL_SPECIAL_INIT(30),

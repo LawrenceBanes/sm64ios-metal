@@ -21,6 +21,11 @@ if [[ ${IOS_HYRULE_WORLD:-0} == 1 || -n ${HYRULE_O2R_PATH:-} ]]; then
     cp "$HYRULE_IMPORT_DIR/render/hyrule_field_spawn.h" build/hyrule_field_spawn.h
     IOS_HYRULE_WORLD_BUILD=1
 fi
+IOS_CONNECTED_WORLD_TEST_BUILD=${IOS_CONNECTED_WORLD_TEST:-0}
+if [[ "$IOS_CONNECTED_WORLD_TEST_BUILD" != 0 && "$IOS_CONNECTED_WORLD_TEST_BUILD" != 1 ]]; then
+    echo "IOS_CONNECTED_WORLD_TEST must be 0 or 1" >&2
+    exit 1
+fi
 
 MAKE_BIN=$(command -v gmake || command -v make || true)
 if [[ -z "$MAKE_BIN" ]]; then
@@ -37,4 +42,6 @@ if (( MAKE_MAJOR < 4 )); then
     echo "GNU Make 4 or newer is required (found $MAKE_VERSION)" >&2
     exit 1
 fi
-"$MAKE_BIN" ios -j4 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL IOS_HYRULE_WORLD="$IOS_HYRULE_WORLD_BUILD"
+"$MAKE_BIN" ios -j4 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL \
+    IOS_HYRULE_WORLD="$IOS_HYRULE_WORLD_BUILD" \
+    IOS_CONNECTED_WORLD_TEST="$IOS_CONNECTED_WORLD_TEST_BUILD"

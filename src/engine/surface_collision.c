@@ -199,17 +199,16 @@ s32 find_wall_collisions(struct WallCollisionData *colData) {
 
     colData->numWalls = 0;
 
-    if (x <= -LEVEL_BOUNDARY_MAX || x >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(x)) {
         return numCollisions;
     }
-    if (z <= -LEVEL_BOUNDARY_MAX || z >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(z)) {
         return numCollisions;
     }
 
-    // World (level) consists of a 16x16 grid. Find where the collision is on
-    // the grid (round toward -inf)
-    cellX = ((x + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0x0F;
-    cellZ = ((z + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0x0F;
+    // Find the collision cell in the active grid.
+    cellX = surface_partition_cell_index(x) & SURFACE_PARTITION_MASK;
+    cellZ = surface_partition_cell_index(z) & SURFACE_PARTITION_MASK;
 
     // Check for surfaces belonging to objects.
     node = gDynamicSurfacePartition[cellZ][cellX][SPATIAL_PARTITION_WALLS].next;
@@ -333,16 +332,16 @@ f32 find_ceil(f32 posX, f32 posY, f32 posZ, struct Surface **pceil) {
     z = (s16) posZ;
     *pceil = NULL;
 
-    if (x <= -LEVEL_BOUNDARY_MAX || x >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(x)) {
         return height;
     }
-    if (z <= -LEVEL_BOUNDARY_MAX || z >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(z)) {
         return height;
     }
 
     // Each level is split into cells to limit load, find the appropriate cell.
-    cellX = ((x + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0xF;
-    cellZ = ((z + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0xF;
+    cellX = surface_partition_cell_index(x) & SURFACE_PARTITION_MASK;
+    cellZ = surface_partition_cell_index(z) & SURFACE_PARTITION_MASK;
 
     // Check for surfaces belonging to objects.
     surfaceList = gDynamicSurfacePartition[cellZ][cellX][SPATIAL_PARTITION_CEILS].next;
@@ -513,8 +512,8 @@ f32 unused_find_dynamic_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfl
     s16 z = (s16) zPos;
 
     // Each level is split into cells to limit load, find the appropriate cell.
-    s16 cellX = ((x + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0x0F;
-    s16 cellZ = ((z + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0x0F;
+    s16 cellX = surface_partition_cell_index(x) & SURFACE_PARTITION_MASK;
+    s16 cellZ = surface_partition_cell_index(z) & SURFACE_PARTITION_MASK;
 
     surfaceList = gDynamicSurfacePartition[cellZ][cellX][SPATIAL_PARTITION_FLOORS].next;
     floor = find_floor_from_list(surfaceList, x, y, z, &floorHeight);
@@ -545,16 +544,16 @@ f32 find_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
 
     *pfloor = NULL;
 
-    if (x <= -LEVEL_BOUNDARY_MAX || x >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(x)) {
         return height;
     }
-    if (z <= -LEVEL_BOUNDARY_MAX || z >= LEVEL_BOUNDARY_MAX) {
+    if (!surface_partition_coord_in_bounds(z)) {
         return height;
     }
 
     // Each level is split into cells to limit load, find the appropriate cell.
-    cellX = ((x + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0xF;
-    cellZ = ((z + LEVEL_BOUNDARY_MAX) / CELL_SIZE) & 0xF;
+    cellX = surface_partition_cell_index(x) & SURFACE_PARTITION_MASK;
+    cellZ = surface_partition_cell_index(z) & SURFACE_PARTITION_MASK;
 
     // Check for surfaces belonging to objects.
     surfaceList = gDynamicSurfacePartition[cellZ][cellX][SPATIAL_PARTITION_FLOORS].next;
@@ -705,28 +704,28 @@ void debug_surface_list_info(f32 xPos, f32 zPos) {
     s32 numWalls = 0;
     s32 numCeils = 0;
 
-    s32 cellX = (xPos + LEVEL_BOUNDARY_MAX) / CELL_SIZE;
-    s32 cellZ = (zPos + LEVEL_BOUNDARY_MAX) / CELL_SIZE;
+    s32 cellX = surface_partition_cell_index((s32)xPos);
+    s32 cellZ = surface_partition_cell_index((s32)zPos);
 
-    list = gStaticSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_FLOORS].next;
+    list = gStaticSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_FLOORS].next;
     numFloors += surface_list_length(list);
 
-    list = gDynamicSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_FLOORS].next;
+    list = gDynamicSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_FLOORS].next;
     numFloors += surface_list_length(list);
 
-    list = gStaticSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_WALLS].next;
+    list = gStaticSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_WALLS].next;
     numWalls += surface_list_length(list);
 
-    list = gDynamicSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_WALLS].next;
+    list = gDynamicSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_WALLS].next;
     numWalls += surface_list_length(list);
 
-    list = gStaticSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_CEILS].next;
+    list = gStaticSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_CEILS].next;
     numCeils += surface_list_length(list);
 
-    list = gDynamicSurfacePartition[cellZ & 0x0F][cellX & 0x0F][SPATIAL_PARTITION_CEILS].next;
+    list = gDynamicSurfacePartition[cellZ & SURFACE_PARTITION_MASK][cellX & SURFACE_PARTITION_MASK][SPATIAL_PARTITION_CEILS].next;
     numCeils += surface_list_length(list);
 
-    print_debug_top_down_mapinfo("area   %x", cellZ * 16 + cellX);
+    print_debug_top_down_mapinfo("area   %x", cellZ * SURFACE_PARTITION_DIM + cellX);
 
     // Names represent ground, walls, and roofs as found in SMS.
     print_debug_top_down_mapinfo("dg %d", numFloors);
@@ -891,7 +890,8 @@ void find_surface_on_ray_list(struct SurfaceNode *list, Vec3f orig, Vec3f dir, f
 void find_surface_on_ray_cell(s16 cellX, s16 cellZ, Vec3f orig, Vec3f normalized_dir, f32 dir_length, struct Surface **hit_surface, Vec3f hit_pos, f32 *max_length)
 {
 	// Skip if OOB
-	if (cellX >= 0 && cellX <= 0xF && cellZ >= 0 && cellZ <= 0xF)
+	if (cellX >= 0 && cellX < SURFACE_PARTITION_DIM
+        && cellZ >= 0 && cellZ < SURFACE_PARTITION_DIM)
 	{
 		// Iterate through each surface in this partition
 		if (normalized_dir[1] > -0.99f)

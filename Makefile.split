@@ -146,17 +146,29 @@ define level_rules =
 endef
 
 # The generated level rule/header tables depend on build-time options as well
-# as their source files. Track the optional Hyrule registration mode so a
-# reused build directory cannot silently keep the opposite mode's level list.
+# as their source files. Track both opt-in world modes so a reused build
+# directory cannot silently keep stale level, geometry, or collision objects.
 .PHONY: FORCE
 FORCE:
 
-$(BUILD_DIR)/.ios_hyrule_mode: FORCE
+$(BUILD_DIR)/.ios_world_mode: FORCE
 	@mkdir -p "$(BUILD_DIR)"
-	@printf '%s\n' '$(IOS_HYRULE_WORLD)' > "$@.tmp"
+	@printf '%s %s\n' '$(IOS_HYRULE_WORLD)' '$(IOS_CONNECTED_WORLD_TEST)' > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(BUILD_DIR)/level_rules.mk: $(BUILD_DIR)/.ios_hyrule_mode
+# These objects embed the partition dimensions and/or opt-in collision scans.
+# Rebuild them when a reused build directory switches collision-grid modes.
+$(BUILD_DIR)/src/engine/surface_load.o \
+$(BUILD_DIR)/src/engine/surface_collision.o \
+$(BUILD_DIR)/src/game/area.o \
+$(BUILD_DIR)/src/game/mario.o: $(BUILD_DIR)/.ios_world_mode
+
+# Castle level objects embed connected-forest geometry and collision indices.
+$(BUILD_DIR)/levels/castle_grounds/leveldata.o \
+$(BUILD_DIR)/levels/castle_grounds/geo.o \
+$(BUILD_DIR)/levels/castle_grounds/script.o: $(BUILD_DIR)/.ios_world_mode
+
+$(BUILD_DIR)/level_rules.mk: $(BUILD_DIR)/.ios_world_mode
 
 ifneq ($(MAKECMDGOALS),clean)
 ifneq ($(MAKECMDGOALS),distclean)

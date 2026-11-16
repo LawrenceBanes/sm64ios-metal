@@ -43,7 +43,7 @@ static const LevelScript script_func_local_1[] = {
     RETURN(),
 };
 
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
 static const LevelScript script_func_local_5[] = {
     // Reuse the castle's native tree model to make the new path read as a wooded seam.
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -7800, 260,  850, 0, 0, 0, 0, bhvStaticObject),
@@ -51,15 +51,27 @@ static const LevelScript script_func_local_5[] = {
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -8400, 260,  850, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -8400, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9000, 260,  850, 0, 0, 0, 0, bhvStaticObject),
+#if !defined(IOS_CONNECTED_WORLD_TEST)
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9000, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
+#endif
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9600, 260,  850, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -9600, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10200, 260, 850, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10200, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10700, 260, 850, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10700, 260, 2070, 0, 0, 0, 0, bhvStaticObject),
-    // The source warp doubles as the return spawn; the fade guard prevents an immediate loop.
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    // Existing Castle tree models frame the opening without blocking it.
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10600, 260, 2800, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE,  -8000, 260, 2800, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10600, 260, 3900, 0, 0, 0, 0, bhvStaticObject),
+    OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE,  -8000, 260, 3900, 0, 0, 0, 0, bhvStaticObject),
+#endif
+#if defined(IOS_HYRULE_WORLD)
+    // Keep the legacy Hyrule warp at the end of the main trail; the connected
+    // test branches north before reaching it and never uses it for traversal.
     OBJECT(MODEL_NONE, -10850, 260, 1460, 0, 90, 0, 0x28090000, bhvFadingWarp),
+#endif
     RETURN(),
 };
 #endif
@@ -153,7 +165,7 @@ const LevelScript level_castle_grounds_entry[] = {
         JUMP_LINK(script_func_local_2),
         JUMP_LINK(script_func_local_3),
         JUMP_LINK(script_func_local_4),
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
         JUMP_LINK(script_func_local_5),
 #endif
         TERRAIN(/*terrainData*/ castle_grounds_seg7_collision_level),

@@ -27,8 +27,11 @@ extern const Gfx castle_grounds_seg7_dl_0700C6A8[];
 extern const Gfx castle_grounds_seg7_dl_0700C6E8[];
 extern const Gfx castle_grounds_seg7_dl_0700C728[];
 extern const Gfx castle_grounds_seg7_dl_0700C768[];
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_HYRULE_WORLD) || defined(IOS_CONNECTED_WORLD_TEST)
 extern const Gfx castle_grounds_forest_gateway_dl[];
+#endif
+#if defined(IOS_CONNECTED_WORLD_TEST)
+extern const Gfx castle_grounds_connected_forest_dl[];
 #endif
 extern const struct Animation *const castle_grounds_seg7_anims_flags[];
 extern const Gfx castle_grounds_seg7_dl_0700EA58[];
