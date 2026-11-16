@@ -29,6 +29,7 @@ extern SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURF
 extern struct SurfaceNode *sSurfaceNodePool;
 extern struct Surface *sSurfacePool;
 extern s16 sSurfacePoolSize;
+extern s32 gSurfaceLoadRejectedCount;
 
 void alloc_surface_pools(void);
 

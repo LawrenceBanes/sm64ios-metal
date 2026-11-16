@@ -8,6 +8,9 @@
 #include "game_init.h"
 #include "object_list_processor.h"
 #include "engine/surface_load.h"
+#if defined(IOS_CONNECTED_WORLD_TEST)
+#include "engine/world_region.h"
+#endif
 #include "ingame_menu.h"
 #include "screen_transition.h"
 #include "mario.h"
@@ -199,6 +202,13 @@ void load_obj_warp_nodes(void) {
 void clear_areas(void) {
     s32 i;
 
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    {
+        struct WorldPoint origin = {0, 0, 0};
+        world_region_reset(origin);
+    }
+#endif
+
     gCurrentArea = NULL;
     gWarpTransition.isActive = FALSE;
     gWarpTransition.pauseRendering = FALSE;
@@ -262,9 +272,10 @@ void load_area(s32 index) {
 #if defined(IOS_BUILD) && defined(IOS_CONNECTED_WORLD_TEST)
             if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS) {
                 IOS_CONNECTED_WORLD_DIAG(
-                    "Connected forest Castle area collision loaded level=%d area=%d surfaces=%d nodes=%d grid=%dx%d bound=%d",
+                    "Connected forest Castle area collision loaded level=%d area=%d surfaces=%d nodes=%d grid=%dx%d bound=%d rejected=%d",
                     gCurrLevelNum, index, gNumStaticSurfaces, gNumStaticSurfaceNodes,
-                    SURFACE_PARTITION_DIM, SURFACE_PARTITION_DIM, LEVEL_BOUNDARY_MAX);
+                    SURFACE_PARTITION_DIM, SURFACE_PARTITION_DIM, LEVEL_BOUNDARY_MAX,
+                    gSurfaceLoadRejectedCount);
             }
 #endif
 #if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD)
@@ -302,6 +313,12 @@ void load_area(s32 index) {
 
 void unload_area(void) {
     if (gCurrentArea != NULL) {
+#if defined(IOS_CONNECTED_WORLD_TEST)
+        {
+            struct WorldPoint origin = {0, 0, 0};
+            world_region_reset(origin);
+        }
+#endif
         unload_objects_from_area(0, gCurrentArea->index);
         geo_call_global_function_nodes(&gCurrentArea->unk04->node, GEO_CONTEXT_AREA_UNLOAD);
 
@@ -350,6 +367,13 @@ void change_area(s32 index) {
 
 void area_update_objects(void) {
     gAreaUpdateCounter++;
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    if (gCurrentArea != NULL && gMarioObject != NULL && gMarioState != NULL) {
+        world_region_update_legacy(gMarioState->pos[0], gMarioState->pos[1],
+                                   gMarioState->pos[2], gMarioState->vel[0],
+                                   gMarioState->vel[2], gMarioState->forwardVel, 3072);
+    }
+#endif
     update_objects(0);
 }
 

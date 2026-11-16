@@ -194,6 +194,13 @@ s32 find_wall_collisions(struct WallCollisionData *colData) {
     struct SurfaceNode *node;
     s16 cellX, cellZ;
     s32 numCollisions = 0;
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    if (!surface_partition_float_in_bounds(colData->x)
+        || !surface_partition_float_in_bounds(colData->z)) {
+        colData->numWalls = 0;
+        return 0;
+    }
+#endif
     s16 x = colData->x;
     s16 z = colData->z;
 
@@ -317,6 +324,13 @@ static struct Surface *find_ceil_from_list(struct SurfaceNode *surfaceNode, s32 
  * Find the lowest ceiling above a given position and return the height.
  */
 f32 find_ceil(f32 posX, f32 posY, f32 posZ, struct Surface **pceil) {
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    if (!surface_partition_float_in_bounds(posX)
+        || !surface_partition_float_in_bounds(posZ)) {
+        *pceil = NULL;
+        return 20000.0f;
+    }
+#endif
     s16 cellZ, cellX;
     struct Surface *ceil, *dynamicCeil;
     struct SurfaceNode *surfaceList;
@@ -502,6 +516,13 @@ f32 find_floor_height(f32 x, f32 y, f32 z) {
  * and dynamic floors were checked separately.
  */
 f32 unused_find_dynamic_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    if (!surface_partition_float_in_bounds(xPos)
+        || !surface_partition_float_in_bounds(zPos)) {
+        *pfloor = NULL;
+        return -11000.0f;
+    }
+#endif
     struct SurfaceNode *surfaceList;
     struct Surface *floor;
     f32 floorHeight = -11000.0f;
@@ -527,6 +548,13 @@ f32 unused_find_dynamic_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfl
  * Find the highest floor under a given position and return the height.
  */
 f32 find_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    if (!surface_partition_float_in_bounds(xPos)
+        || !surface_partition_float_in_bounds(zPos)) {
+        *pfloor = NULL;
+        return -11000.0f;
+    }
+#endif
     s16 cellZ, cellX;
 
     struct Surface *floor, *dynamicFloor;

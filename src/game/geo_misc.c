@@ -16,6 +16,43 @@
 #include "rendering_graph_node.h"
 #include "save_file.h"
 #include "segment2.h"
+#if defined(IOS_CONNECTED_WORLD_TEST)
+#include "camera.h"
+#include "engine/world_region.h"
+#endif
+
+#if defined(IOS_CONNECTED_WORLD_TEST)
+/* The Castle geo layout has one extension point. Future regions register
+ * immutable render lists and collision independently of the Castle source. */
+Gfx *geo_connected_world_regions(s32 callContext, struct GraphNode *node,
+                                 UNUSED f32 mtx[4][4]) {
+    struct GraphNodeGenerated *generatedNode = (struct GraphNodeGenerated *)node;
+    Gfx *displayList, *cursor;
+    u32 i, count = 0;
+    struct WorldRegionInfo info;
+    if (callContext != GEO_CONTEXT_RENDER) return NULL;
+    for (i = 0; i < world_region_count(); i++) {
+        if (world_region_info_at(i, &info)
+            && world_region_render_near_legacy(&info, gLakituState.pos[0],
+                                                gLakituState.pos[1], gLakituState.pos[2], 20000)) count++;
+    }
+    if (count == 0) return NULL;
+    displayList = alloc_display_list((count + 1) * sizeof(*displayList));
+    if (displayList == NULL) return NULL;
+    generatedNode->fnNode.node.flags = (generatedNode->fnNode.node.flags & 0xFF)
+                                        | (LAYER_OPAQUE << 8);
+    cursor = displayList;
+    for (i = 0; i < world_region_count(); i++) {
+        if (world_region_info_at(i, &info)
+            && world_region_render_near_legacy(&info, gLakituState.pos[0],
+                                                gLakituState.pos[1], gLakituState.pos[2], 20000)) {
+            gSPDisplayList(cursor++, info.renderList);
+        }
+    }
+    gSPEndDisplayList(cursor);
+    return displayList;
+}
+#endif
 
 /**
  * @file geo_misc.c

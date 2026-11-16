@@ -14,6 +14,9 @@
 #include "game/mario.h"
 #include "game/object_list_processor.h"
 #include "surface_load.h"
+#if defined(IOS_CONNECTED_WORLD_TEST)
+#include "world_region.h"
+#endif
 
 s32 unused8038BE90;
 
@@ -34,6 +37,9 @@ struct Surface *sSurfacePool;
  * The size of the surface pool (2300).
  */
 s16 sSurfacePoolSize;
+static s32 sSurfaceNodePoolSize;
+static s32 sCurrentCollisionVertexCount;
+s32 gSurfaceLoadRejectedCount;
 
 u8 unused8038EEA8[0x30];
 
@@ -41,16 +47,15 @@ u8 unused8038EEA8[0x30];
  * Allocate the part of the surface node pool to contain a surface node.
  */
 static struct SurfaceNode *alloc_surface_node(void) {
+    if (sSurfaceNodePool == NULL || gSurfaceNodesAllocated < 0
+        || gSurfaceNodesAllocated >= sSurfaceNodePoolSize) {
+        gSurfaceLoadRejectedCount++;
+        return NULL;
+    }
     struct SurfaceNode *node = &sSurfaceNodePool[gSurfaceNodesAllocated];
     gSurfaceNodesAllocated++;
 
     node->next = NULL;
-
-    //! A bounds check! If there's more surface nodes than 7000 allowed,
-    //  we, um...
-    // Perhaps originally just debug feedback?
-    if (gSurfaceNodesAllocated >= 7000) {
-    }
 
     return node;
 }
@@ -60,15 +65,14 @@ static struct SurfaceNode *alloc_surface_node(void) {
  * initialize the surface.
  */
 static struct Surface *alloc_surface(void) {
+    if (sSurfacePool == NULL || gSurfacesAllocated < 0
+        || gSurfacesAllocated >= sSurfacePoolSize) {
+        gSurfaceLoadRejectedCount++;
+        return NULL;
+    }
 
     struct Surface *surface = &sSurfacePool[gSurfacesAllocated];
     gSurfacesAllocated++;
-
-    //! A bounds check! If there's more surfaces than the 2300 allowed,
-    //  we, um...
-    // Perhaps originally just debug feedback?
-    if (gSurfacesAllocated >= sSurfacePoolSize) {
-    }
 
     surface->type = 0;
     surface->force = 0;
@@ -115,6 +119,10 @@ static void add_surface_to_cell(s16 dynamic, s16 cellX, s16 cellZ, struct Surfac
     s16 priority;
     s16 sortDir;
     s16 listIndex;
+
+    if (newNode == NULL) {
+        return;
+    }
 
     if (surface->normal.y > 0.01) {
         listIndex = SPATIAL_PARTITION_FLOORS;
@@ -282,6 +290,15 @@ static void add_surface(struct Surface *surface, s32 dynamic) {
     minCellZ = lower_cell_index(minZ);
     maxCellZ = upper_cell_index(maxZ);
 
+    /* Reject an entire surface before linking any of its cells. A partially
+     * inserted floor can leave a collision gap at a partition boundary. */
+    if (sSurfaceNodePool == NULL || gSurfaceNodesAllocated < 0
+        || (maxCellX - minCellX + 1) * (maxCellZ - minCellZ + 1)
+           > sSurfaceNodePoolSize - gSurfaceNodesAllocated) {
+        gSurfaceLoadRejectedCount++;
+        return;
+    }
+
     for (cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
         for (cellX = minCellX; cellX <= maxCellX; cellX++) {
             add_surface_to_cell(dynamic, cellX, cellZ, surface);
@@ -305,7 +322,15 @@ static struct Surface *read_surface_data(s16 *vertexData, s16 **vertexIndices) {
     s32 maxY, minY;
     f32 nx, ny, nz;
     f32 mag;
-    s16 offset1, offset2, offset3;
+    s32 offset1, offset2, offset3;
+
+    if (vertexData == NULL || sCurrentCollisionVertexCount <= 0
+        || (*vertexIndices)[0] < 0 || (*vertexIndices)[0] >= sCurrentCollisionVertexCount
+        || (*vertexIndices)[1] < 0 || (*vertexIndices)[1] >= sCurrentCollisionVertexCount
+        || (*vertexIndices)[2] < 0 || (*vertexIndices)[2] >= sCurrentCollisionVertexCount) {
+        gSurfaceLoadRejectedCount++;
+        return NULL;
+    }
 
     offset1 = 3 * (*vertexIndices)[0];
     offset2 = 3 * (*vertexIndices)[1];
@@ -356,6 +381,9 @@ static struct Surface *read_surface_data(s16 *vertexData, s16 **vertexIndices) {
     nz *= mag;
 
     surface = alloc_surface();
+    if (surface == NULL) {
+        return NULL;
+    }
 
     surface->vertex1[0] = x1;
     surface->vertex2[0] = x2;
@@ -482,6 +510,8 @@ static s16 *read_vertex_data(s16 **data) {
     numVertices = *(*data);
     (*data)++;
 
+    sCurrentCollisionVertexCount = numVertices;
+
     vertexData = *data;
     *data += 3 * numVertices;
 
@@ -524,11 +554,12 @@ static void load_environmental_regions(s16 **data) {
 void alloc_surface_pools(void) {
 #if defined(IOS_EXPANDED_WORLD_COLLISION)
     sSurfacePoolSize = 8192;
-    sSurfaceNodePool = main_pool_alloc(32768 * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
+    sSurfaceNodePoolSize = 32768;
 #else
     sSurfacePoolSize = 2300;
-    sSurfaceNodePool = main_pool_alloc(7000 * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
+    sSurfaceNodePoolSize = 7000;
 #endif
+    sSurfaceNodePool = main_pool_alloc(sSurfaceNodePoolSize * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
     sSurfacePool = main_pool_alloc(sSurfacePoolSize * sizeof(struct Surface), MEMORY_POOL_LEFT);
 
     gCCMEnteredSlide = 0;
@@ -593,11 +624,21 @@ void load_area_terrain(s16 index, s16 *data, s8 *surfaceRooms, s16 *macroObjects
     s16 *vertexData;
     UNUSED s32 unused;
 
+    // Region nodes belong to the old area; unlink them before its partition
+    // heads are cleared. The new area starts at the legacy world origin.
+#if defined(IOS_CONNECTED_WORLD_TEST)
+    {
+        struct WorldPoint origin = {0, 0, 0};
+        world_region_reset(origin);
+    }
+#endif
     // Initialize the data for this.
     gEnvironmentRegions = NULL;
     unused8038BE90 = 0;
     gSurfaceNodesAllocated = 0;
     gSurfacesAllocated = 0;
+    gSurfaceLoadRejectedCount = 0;
+    sCurrentCollisionVertexCount = 0;
 
     clear_static_surfaces();
 
@@ -672,6 +713,8 @@ void transform_object_vertices(s16 **data, s16 *vertexData) {
 
     numVertices = *(*data);
     (*data)++;
+
+    sCurrentCollisionVertexCount = numVertices;
 
     vertices = *data;
 
@@ -780,11 +823,15 @@ void load_object_collision_model(void) {
     if (!(gTimeStopState & TIME_STOP_ACTIVE) && marioDist < tangibleDist
         && !(gCurrentObject->activeFlags & ACTIVE_FLAG_IN_DIFFERENT_ROOM)) {
         collisionData++;
-        transform_object_vertices(&collisionData, vertexData);
+        if (*collisionData < 0 || *collisionData > 200) {
+            gSurfaceLoadRejectedCount++;
+        } else {
+            transform_object_vertices(&collisionData, vertexData);
 
-        // TERRAIN_LOAD_CONTINUE acts as an "end" to the terrain data.
-        while (*collisionData != TERRAIN_LOAD_CONTINUE) {
-            load_object_surfaces(&collisionData, vertexData);
+            // TERRAIN_LOAD_CONTINUE acts as an "end" to the terrain data.
+            while (*collisionData != TERRAIN_LOAD_CONTINUE) {
+                load_object_surfaces(&collisionData, vertexData);
+            }
         }
     }
 

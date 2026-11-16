@@ -27,6 +27,7 @@ const GeoLayout castle_grounds_geo_00073C[] = {
 #endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
                GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_connected_world_dl),
+               GEO_ASM(0, geo_connected_world_regions),
 #endif
                GEO_ASM(   0, geo_movtex_pause_control),
                GEO_ASM(0x1601, geo_movtex_draw_nocolor),

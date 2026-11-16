@@ -31,4 +31,10 @@ static inline s32 surface_partition_coord_in_bounds(s32 coord) {
 #endif
 }
 
+/* Check before the legacy f32 -> s16 cast. Connected worlds must never wrap
+ * a distant coordinate into an unrelated cell (stock PU behavior is retained). */
+static inline s32 surface_partition_float_in_bounds(f32 coord) {
+    return coord >= -LEVEL_BOUNDARY_MAX && coord < LEVEL_BOUNDARY_MAX;
+}
+
 #endif

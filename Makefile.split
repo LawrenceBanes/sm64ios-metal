@@ -160,7 +160,9 @@ $(BUILD_DIR)/.ios_world_mode: FORCE
 # Rebuild them when a reused build directory switches collision-grid modes.
 $(BUILD_DIR)/src/engine/surface_load.o \
 $(BUILD_DIR)/src/engine/surface_collision.o \
+$(BUILD_DIR)/src/engine/world_region.o \
 $(BUILD_DIR)/src/game/area.o \
+$(BUILD_DIR)/src/game/geo_misc.o \
 $(BUILD_DIR)/src/game/mario.o: $(BUILD_DIR)/.ios_world_mode
 
 # Castle level objects embed connected-forest geometry and collision indices.
