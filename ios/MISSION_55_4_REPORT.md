@@ -59,6 +59,31 @@ translated or distorted.
   clearing, and return route. This evaluates the authored collision triangles
   and grid bounds; it is not a call into the running SM64 floor-query engine.
 
+## Files changed
+
+- Build configuration: `Makefile`, `Makefile.split`, `build.sh`,
+  `build_ios.sh`, `ios/build_cachyos_local.sh`, and
+  `ios/build_local_macos_ipa.sh`.
+- Castle level integration: `levels/castle_grounds/areas/1/collision.inc.c`,
+  `geo.inc.c`, new `connected_forest.inc.c`, `levels/castle_grounds/header.h`,
+  `leveldata.c`, and `script.c`.
+- Collision configuration and diagnostics: `src/engine/surface_partition.h`,
+  `src/engine/surface_load.c`, and `src/game/area.c`.
+- Regression coverage: `ios/test_hyrule_gateway.py`,
+  `ios/test_surface_partition_bounds.py`, `ios/test_ipa_validation.py`, and
+  `tests/test_hyrule_importer.py`.
+- Mission records: `MISSION_55_4_BASELINE.md`, this report,
+  `MISSION_55_4_DEVICE_HANDOFF.md`, and `PROGRESS.md`.
+
+## Performance
+
+The extension adds eight vertex records and four display-list triangles, four
+stock static tree objects, and a net six collision triangles beyond the
+already-opt-in trail. These are small bounded additions, but no CPU/GPU frame
+timing or memory measurement was available on this host. The expanded
+collision partition is a fixed 64x64 grid and larger static pools in this
+opt-in mode; its device memory and traversal cost still need measurement.
+
 ## Validation
 
 **PASS —** `git diff --check`, Python bytecode checks, and shell syntax checks.  
