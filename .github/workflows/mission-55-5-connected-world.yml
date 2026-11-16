@@ -1,0 +1,178 @@
+name: Mission 55.5 Connected World iOS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_bundle_release_tag:
+        description: Existing private draft release containing extracted USA SM64 assets
+        required: true
+        type: string
+        default: sm64-assets-20261031-04
+
+permissions:
+  contents: read
+
+jobs:
+  ios-connected-world:
+    if: github.repository == 'LawrenceBanes/sm64ios-metal' && github.event.repository.private == true
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
+      BUILD_DIAG_DIR: ${{ runner.temp }}/mission-55-5
+      ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manual-build workflow configuration
+        run: python3 ios/test_mission_55_5_workflow.py
+
+      - name: Verify Xcode 27, iPhoneOS SDK 27, and Metal tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_DIAG_DIR"
+          {
+            xcodebuild -version
+            printf 'Xcode path: %s\n' "$(xcode-select -p)"
+            printf 'iPhoneOS SDK: %s\n' "$(xcrun --sdk iphoneos --show-sdk-version)"
+            printf 'Metal compiler: %s\n' "$(xcrun --sdk iphoneos --find metal)"
+            printf 'Metal library linker: %s\n' "$(xcrun --sdk iphoneos --find metallib)"
+          } 2>&1 | tee "$BUILD_DIAG_DIR/toolchain.log"
+          xcode_version=$(xcodebuild -version | sed -n '1s/^Xcode //p')
+          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          [[ "$xcode_version" == 27.* ]] || { echo "Expected Xcode 27.x, found $xcode_version" >&2; exit 1; }
+          [[ "$sdk_version" == 27.* ]] || { echo "Expected iPhoneOS SDK 27.x, found $sdk_version" >&2; exit 1; }
+
+      - name: Install required GNU build tools when absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gmake >/dev/null 2>&1 || ! gmake --version | head -n 1 | grep -Eq 'GNU Make ([4-9]|[1-9][0-9])\.'; then
+            brew install make
+          fi
+          if ! command -v gobjcopy >/dev/null 2>&1; then
+            brew install binutils
+          fi
+          binutils_prefix=$(brew --prefix binutils)
+          gobjcopy_path="$binutils_prefix/bin/gobjcopy"
+          [[ -x "$gobjcopy_path" ]] || { echo "gobjcopy not found under $binutils_prefix" >&2; exit 1; }
+          echo "IOS_OBJCOPY=$gobjcopy_path" >> "$GITHUB_ENV"
+          gmake --version | head -n 1
+          "$gobjcopy_path" --version | head -n 1
+
+      - name: Download and verify private extracted SM64 assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$ASSET_BUNDLE_RELEASE_TAG" =~ ^sm64-assets-[A-Za-z0-9._-]+$ ]] || { echo "Invalid private asset draft tag" >&2; exit 1; }
+          metadata=$(gh release view "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body)
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and d["body"] == "Temporary private asset bundle for sm64ios-metal IPA build."' "$metadata"
+          gh release download "$ASSET_BUNDLE_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sm64-assets.tar.gz' \
+            --pattern 'sm64-assets.sha256' \
+            --dir "$RUNNER_TEMP"
+          expected_sha=$(python3 ios/asset_checksum.py "$RUNNER_TEMP/sm64-assets.sha256" sm64-assets.tar.gz)
+          actual_sha=$(shasum -a 256 "$RUNNER_TEMP/sm64-assets.tar.gz" | awk '{print $1}')
+          [[ "$actual_sha" == "$expected_sha" ]] || { echo "Private asset bundle SHA-256 mismatch" >&2; exit 1; }
+          python3 ios/asset_bundle.py extract "$RUNNER_TEMP/sm64-assets.tar.gz" --root "$GITHUB_WORKSPACE"
+
+      - name: Fetch pinned SDL2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/SDL2"
+          git -C "$RUNNER_TEMP/SDL2" remote add origin https://github.com/libsdl-org/SDL.git
+          git -C "$RUNNER_TEMP/SDL2" fetch --depth 1 origin "$SDL2_REVISION"
+          git -C "$RUNNER_TEMP/SDL2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/SDL2" rev-parse HEAD)" = "$SDL2_REVISION"
+
+      - name: Build pinned SDL2 for iPhoneOS arm64 without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_DIAG_DIR/ios-products/Release-iphoneos"
+          ios/build_sdl2_ios.sh \
+            "$RUNNER_TEMP/SDL2" \
+            "$BUILD_DIAG_DIR/ios-products/Release-iphoneos" \
+            "$BUILD_DIAG_DIR/sdl2-stage" \
+            2>&1 | tee "$BUILD_DIAG_DIR/sdl2-build.log"
+
+      - name: Compile Metal backend and representative generated MSL
+        shell: bash
+        env:
+          METAL_VALIDATION_OUTPUT_DIR: ${{ runner.temp }}/mission-55-5/metal-validation
+        run: |
+          set -euo pipefail
+          ios/validate-metal-apple.sh 2>&1 | tee "$BUILD_DIAG_DIR/metal-validation.log"
+
+      - name: Build connected-world iOS app without code signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRODUCT_DIR="$BUILD_DIAG_DIR/ios-products/Release-iphoneos"
+          SDL_STAGE="$BUILD_DIAG_DIR/sdl2-stage"
+          SM64_SKIP_CODESIGN=1 \
+          NOEXTRACT=1 \
+          EXTERNAL_DATA=1 \
+          IOS_HYRULE_WORLD=0 \
+          IOS_CONNECTED_WORLD_TEST=1 \
+          IOS_OBJCOPY="$IOS_OBJCOPY" \
+          xcodebuild \
+            -project sm64ios/sm64ios.xcodeproj \
+            -scheme sm64ios \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$BUILD_DIAG_DIR/DerivedData" \
+            SYMROOT="$BUILD_DIAG_DIR/ios-products" \
+            CONFIGURATION_BUILD_DIR="$PRODUCT_DIR" \
+            SDL2_ROOT="$SDL_STAGE" \
+            SDL2_INCLUDE_DIR="$SDL_STAGE/include" \
+            IOS_HYRULE_WORLD=0 \
+            IOS_CONNECTED_WORLD_TEST=1 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee "$BUILD_DIAG_DIR/ios-build.log"
+
+      - name: Package and validate unsigned iPhoneOS arm64 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$BUILD_DIAG_DIR/ios-products/Release-iphoneos/sm64ios.app"
+          IPA="$BUILD_DIAG_DIR/sm64ios-connected-world-arm64-unsigned.ipa"
+          [[ -d "$APP" ]] || { echo "Xcode did not produce $APP" >&2; exit 1; }
+          python3 ios/package_unsigned_ipa.py "$APP" "$IPA"
+          python3 ios/validate_ipa.py "$IPA" --require-system-deps --require-game-textures
+          shasum -a 256 "$IPA" | tee "$BUILD_DIAG_DIR/ipa.sha256"
+          echo "Unsigned IPA structure is validated; SideStore signing and device launch are not."
+
+      - name: Upload build products and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mission-55-5-connected-world-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mission-55-5/toolchain.log
+            ${{ runner.temp }}/mission-55-5/sdl2-build.log
+            ${{ runner.temp }}/mission-55-5/metal-validation.log
+            ${{ runner.temp }}/mission-55-5/metal-validation/**
+            ${{ runner.temp }}/mission-55-5/ios-build.log
+            ${{ runner.temp }}/mission-55-5/ipa.sha256
+            ${{ runner.temp }}/mission-55-5/sm64ios-connected-world-arm64-unsigned.ipa
+            ${{ runner.temp }}/mission-55-5/ios-products/Release-iphoneos/sm64ios.app
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Remove ROM-derived assets and temporary build inputs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python3 ios/asset_bundle.py clean --root "$GITHUB_WORKSPACE"
+          rm -f "$RUNNER_TEMP/sm64-assets.tar.gz" "$RUNNER_TEMP/sm64-assets.sha256"
+          rm -rf "$RUNNER_TEMP/SDL2" "$BUILD_DIAG_DIR/sdl2-stage" "$BUILD_DIAG_DIR/DerivedData"
+          rm -rf "$GITHUB_WORKSPACE/build/us_pc"

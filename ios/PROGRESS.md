@@ -2,6 +2,14 @@
 
 ## Current state
 
+### Mission 55.5 — GitHub Actions iOS build recovery (manual workflow prepared; remote build pending)
+
+- GitHub read-only API shows remote `ios` at `c456f2fb`; local Mission 55.4 HEAD `94f7da88` is nine commits ahead and is not pushed. Local `gh` auth is invalid and `api.github.com` DNS fails; SSH also stops on `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` ownership/permissions. No credentials were changed and no force-push was attempted.
+- Last runs at `c456f2fb` (`41363939026`, IPA; `41363939019`, Metal validation) failed before runner allocation (`runner_id=0`, zero steps); their logs have expired. The IPA's Apple job was skipped after Linux failed. Earlier runs `41358059303`/`41358059222` at `b384a3f9` succeeded, including Xcode/Metal validation, so the latest failures do not establish a compiler issue.
+- Added `.github/workflows/mission-55-5-connected-world.yml`, a manual-only workflow using the existing `xcode-27` label, private extracted SM64 asset draft, pinned SDL2, connected test enabled, Hyrule disabled, code signing disabled, generated MSL compilation, unsigned IPA validation, and one-day private artifacts. It does not publish releases or retry jobs.
+- Local workflow YAML/static checks, `tests/run_linux_checks.sh`, gateway tests (8), partition tests (3), and IPA/checksum tests (16) pass. No Apple job or artifact exists.
+- Actions usage/billing could not be inspected: local CLI network/auth failed, GitHub read-only connector does not permit the account usage endpoint, and no browser was available. No run was dispatched. Push to a new `mission-55-5-connected-world` branch after rechecking the remote; this avoids the existing push-triggered validation workflow on `ios`. Review quota and obtain explicit approval before dispatching one potentially billable run. See `MISSION_55_5_REPORT.md`.
+
 ### Mission 55.4 — First Footstep (same-area test extension implemented; device proof pending)
 
 - Starting code HEAD was `a7d9de10011caaaa0d3a553c69129088943b2d36` on a clean `ios` worktree. Recorded baseline in `MISSION_55_4_BASELINE.md` before implementation.
