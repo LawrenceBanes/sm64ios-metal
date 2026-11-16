@@ -490,7 +490,7 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
     marker_mismatches = []
     pending_lists = []
 
-    for mesh_record in room_meshes:
+    for mesh_index, mesh_record in enumerate(room_meshes):
         mesh = mesh_record["mesh"]
         for polygon_index, polygon in enumerate(mesh.get("polygons", [])):
             for render_pass, key in (("opaque", "opaque_display_list"),
@@ -498,7 +498,8 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                 path = polygon.get(key)
                 if not path:
                     continue
-                pending_lists.append({"path": path, "polygon_index": polygon_index,
+                pending_lists.append({"path": path, "mesh_index": mesh_index,
+                                      "polygon_index": polygon_index,
                                       "render_pass": render_pass,
                                       "position": polygon.get("position", [0, 0, 0]),
                                       "mesh_type": mesh.get("type")})
@@ -752,7 +753,8 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                     material_key = hashlib.sha256(json.dumps(material, sort_keys=True,
                                                              separators=(",", ":")).encode()).hexdigest()[:16]
                     triangle_records.append({
-                        "display_list": path, "mesh_polygon": draw["polygon_index"],
+                        "display_list": path, "mesh_index": draw["mesh_index"],
+                        "mesh_polygon": draw["polygon_index"],
                         "render_pass": draw["render_pass"],
                         "instruction_offset": instruction["offset"],
                         "triangle_in_instruction": triangle_index,
@@ -823,15 +825,8 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
     }
 
 
-def _native_symbol(kind: str, path: str, suffix: str = "") -> str:
-    return f"hyrule_{kind}_{crc64_resource_path(path):016x}{suffix}"
-
-
-def _c_float(value: float) -> str:
-    text = f"{value:.8g}"
-    if "." not in text and "e" not in text.lower():
-        text += ".0"
-    return text + "f"
+def _native_symbol(kind: str, path: str, suffix: str = "", prefix: str = "hyrule_field") -> str:
+    return f"{prefix}_{kind}_{crc64_resource_path(path):016x}{suffix}"
 
 
 def _gfx_initializer(w0: int, w1: str | int = 0) -> str:
@@ -844,7 +839,10 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                               display_list_bodies: dict, archive_paths: list[str],
                               endian_by_path: dict, collision: dict | None,
                               scale: float, spawn: dict | None,
-                              symbol_prefix: str = "hyrule_field") -> dict:
+                              symbol_prefix: str = "hyrule_field",
+                              world_translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
+                              world_yaw_degrees: float = 0.0,
+                              referenced_vertex_keys: set[tuple[str, int, int, int]] | None = None) -> dict:
     """Lower supported O2R resources to the game's existing Gfx/Collision ABI.
 
     OTR-specific hashed SETTIMG and VTX commands are rewritten to the standard
@@ -929,7 +927,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     for path, variant in variants:
         mesh_index, polygon_index = variant
         symbols[(path, variant)] = _native_symbol(
-            "dl", path, f"_m{mesh_index}_p{polygon_index}")
+            "dl", path, f"_m{mesh_index}_p{polygon_index}", symbol_prefix)
     vertex_symbols = {}
     texture_symbols = {}
     lines = ["/* Generated from the user-provided O2R archive. Do not commit this file. */",
@@ -938,7 +936,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
 
     for path in sorted(referenced_textures):
         descriptor, payload, _, _ = texture_payloads[path]
-        symbol = _native_symbol("tex", path)
+        symbol = _native_symbol("tex", path, prefix=symbol_prefix)
         texture_symbols[path] = symbol
         lines.append(f"static const u8 {symbol}[{len(payload)}] = {{")
         for offset in range(0, len(payload), 16):
@@ -960,12 +958,24 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                 continue
             array = decoded_resources[array_path]
             symbol = _native_symbol("vtx", array_path,
-                                    f"_m{mesh_index}_p{polygon_index}")
+                                    f"_m{mesh_index}_p{polygon_index}", symbol_prefix)
             vertex_symbols[key] = symbol
             lines.append(f"static const Vtx {symbol}[{array['count']}] = {{")
-            for vertex in array["vertices"]:
-                xyz = [_c_float((vertex["position"][axis] + position[axis]) * scale)
-                       for axis in range(3)]
+            for vertex_index, vertex in enumerate(array["vertices"]):
+                local_position = [vertex["position"][axis] + position[axis]
+                                  for axis in range(3)]
+                transformed = transform_world_point(
+                    local_position, scale, world_translation, world_yaw_degrees)
+                xyz_values = [int(round(value)) for value in transformed]
+                is_referenced = (referenced_vertex_keys is None
+                                 or (array_path, mesh_index, polygon_index, vertex_index)
+                                 in referenced_vertex_keys)
+                if is_referenced and any(value < -32768 or value > 32767 for value in xyz_values):
+                    raise ImportFailure(
+                        f"native vertex transform for {array_path}[{vertex_index}] maps "
+                        f"local position {local_position} to "
+                        f"{xyz_values}, outside SM64 s16 range")
+                xyz = [str(value) for value in xyz_values]
                 uv = vertex["uv_fixed_s10_5"]
                 color = ", ".join(f"0x{value:02x}" for value in vertex["cn_bytes"])
                 lines.append(f"    {{{{{{{xyz[0]}, {xyz[1]}, {xyz[2]}}}, "
@@ -1041,9 +1051,11 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
         lines.extend([f"const Collision {symbol_prefix}_collision[] = {{", "    COL_INIT(),",
                       f"    COL_VERTEX_INIT({collision_vertices}),"])
         for vertex in collision["vertices"]:
-            scaled = [int(round(value * scale)) for value in vertex]
+            transformed = transform_world_point(
+                vertex, scale, world_translation, world_yaw_degrees)
+            scaled = [int(round(value)) for value in transformed]
             if any(value < -32768 or value > 32767 for value in scaled):
-                raise ImportFailure("native collision scale produces coordinates outside SM64 s16 range")
+                raise ImportFailure("native collision transform produces coordinates outside SM64 s16 range")
             lines.append(f"    COL_VERTEX({scaled[0]}, {scaled[1]}, {scaled[2]}),")
         lines.append(f"    COL_TRI_INIT(SURFACE_DEFAULT, {collision_triangles}),")
         for polygon in collision["polygons"]:
@@ -1055,9 +1067,12 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     spawn_yaw = int(spawn.get("yaw", 0)) if spawn else 0
     if spawn_position is None:
         spawn_position = [0, 0, 0]
-    scaled_spawn = [int(round(value * scale)) for value in spawn_position]
+    scaled_spawn = [int(round(value)) for value in transform_world_point(
+        spawn_position, scale, world_translation, world_yaw_degrees)]
     if any(value < -32768 or value > 32767 for value in scaled_spawn):
-        raise ImportFailure("spawn scale produces coordinates outside SM64 MARIO_POS s16 range")
+        raise ImportFailure("spawn transform produces coordinates outside SM64 MARIO_POS s16 range")
+    if world_yaw_degrees:
+        spawn_yaw = int(round((spawn_yaw + world_yaw_degrees + 180.0) % 360.0 - 180.0))
     macro_prefix = symbol_prefix.upper()
     extra_spawn_macros = []
     if spawn is not None:
@@ -1066,9 +1081,10 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
             position = spawn.get(key)
             if position is None:
                 continue
-            scaled_position = [int(round(value * scale)) for value in position]
+            scaled_position = [int(round(value)) for value in transform_world_point(
+                position, scale, world_translation, world_yaw_degrees)]
             if any(value < -32768 or value > 32767 for value in scaled_position):
-                raise ImportFailure(f"{key.replace('_', ' ')} scale produces coordinates outside SM64 s16 range")
+                raise ImportFailure(f"{key.replace('_', ' ')} transform produces coordinates outside SM64 s16 range")
             extra_spawn_macros.extend(
                 f"#define {name}_{axis} {value}\n"
                 for axis, value in zip(("X", "Y", "Z"), scaled_position))
@@ -1274,10 +1290,29 @@ def parse_scene(body: bytes, endian: str, path: str) -> dict:
             "unsupported_at": unsupported, "consumed_bytes": reader.offset}
 
 
+def transform_scaled_point(point: list[float],
+                           world_translation: tuple[float, float, float],
+                           world_yaw_degrees: float) -> list[float]:
+    """Rotate a Y-up point about the region origin, then translate in SM64 units."""
+    angle = math.radians(world_yaw_degrees % 360.0)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    x, y, z = point
+    return [x * cosine + z * sine + world_translation[0],
+            y + world_translation[1],
+            -x * sine + z * cosine + world_translation[2]]
+
+
+def transform_world_point(point: list[float], scale: float,
+                          world_translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
+                          world_yaw_degrees: float = 0.0) -> list[float]:
+    scaled = [coordinate * scale for coordinate in point]
+    return transform_scaled_point(scaled, world_translation, world_yaw_degrees)
+
+
 def coordinate(point: list[int], scale: float) -> list[float]:
     # The runtime and OoT use X/Y/Z with Y vertical. Keep axes explicit and
     # preserve the source coordinates until scene calibration is device-tested.
-    return [point[0] * scale, point[1] * scale, point[2] * scale]
+    return transform_world_point(point, scale)
 
 
 def oot_angle_to_sm64_degrees(angle: int) -> int:
@@ -1394,31 +1429,47 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_collision_outputs(output_dir: Path, collision: dict, scale: float, stem: str) -> dict:
+def write_collision_outputs(output_dir: Path, collision: dict, scale: float, stem: str,
+                            world_translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
+                            world_yaw_degrees: float = 0.0) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     obj_path = output_dir / f"{stem}.collision.obj"
     with obj_path.open("w", encoding="utf-8", newline="\n") as obj:
         obj.write("# OoT collision mesh; source triangle order retained\n")
         for point in collision["vertices"]:
-            x, y, z = coordinate(point, scale)
+            x, y, z = transform_world_point(point, scale, world_translation,
+                                             world_yaw_degrees)
             obj.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
         for poly in collision["polygons"]:
             a, b, c = (index + 1 for index in poly["vertex_indices"])
             obj.write(f"f {a} {b} {c}\n")
     json_path = output_dir / f"{stem}.collision.json"
-    collision = {**collision, "geometry_validation": collision_geometry_diagnostics(collision)}
+    collision = {**collision,
+                 "world_transform": {"translation": list(world_translation),
+                                     "yaw_degrees": world_yaw_degrees,
+                                     "translation_units": "SM64 world units after scale"},
+                 "geometry_validation": collision_geometry_diagnostics(collision)}
     json_path.write_text(json.dumps(collision, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return {"obj": obj_path.name, "metadata": json_path.name,
             "vertices": len(collision["vertices"]), "triangles": len(collision["polygons"]),
-            "scale": scale, "geometry_validation": collision["geometry_validation"]}
+            "scale": scale,
+            "world_transform": {"translation": list(world_translation),
+                                "yaw_degrees": world_yaw_degrees},
+            "geometry_validation": collision["geometry_validation"]}
 
 
 def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float,
-                   symbol_prefix: str | None = None) -> dict:
+                   symbol_prefix: str | None = None,
+                   world_translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
+                   world_yaw_degrees: float = 0.0) -> dict:
     if not archive_path.is_file():
         raise ImportFailure(f"O2R archive not found: {archive_path}. Supply oot.o2r as the input path.")
     if not math.isfinite(scale) or scale <= 0.0:
         raise ImportFailure("--scale must be a positive finite number")
+    if len(world_translation) != 3 or not all(math.isfinite(value) for value in world_translation):
+        raise ImportFailure("--world-translation requires three finite coordinates")
+    if not math.isfinite(world_yaw_degrees):
+        raise ImportFailure("--world-yaw-degrees must be finite")
     scene_prefix = safe_archive_path(scene_prefix).rstrip("/")
     scene_name = PurePosixPath(scene_prefix).name
     scene_tag = scene_name[:-6] if scene_name.endswith("_scene") else scene_name
@@ -1597,7 +1648,24 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         render_data = decode_room_render_data(room_meshes, decoded, decoded,
                                               texture_payloads, display_list_bodies,
                                               [entry["path"] for entry in files], endian_by_path, scale)
+        referenced_vertex_keys = {
+            (vertex["array_path"], triangle["mesh_index"], triangle["mesh_polygon"],
+             vertex["array_index"])
+            for triangle in render_data["triangles"]
+            for vertex in triangle["vertices"]
+        }
+        for triangle in render_data["triangles"]:
+            for vertex in triangle["vertices"]:
+                world_position = transform_scaled_point(
+                    vertex["world_position"], world_translation, world_yaw_degrees)
+                vertex["position"] = world_position
+                vertex["world_position"] = world_position
         render_data_json = {key: value for key, value in render_data.items() if key != "texture_rgba8"}
+        render_data_json["world_transform"] = {
+            "translation": list(world_translation),
+            "yaw_degrees": world_yaw_degrees,
+            "translation_units": "SM64 world units after scale",
+        }
         texture_output_dir = output_dir / "render" / "textures"
         texture_output_dir.mkdir(parents=True, exist_ok=True)
         for texture_path, pixels in render_data["texture_rgba8"].items():
@@ -1615,7 +1683,8 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             if path not in root_dependency_paths:
                 continue
             stem = scene_tag if len(collision_outputs) == 0 else f"{scene_tag}_{len(collision_outputs)}"
-            collision_outputs.append({**write_collision_outputs(output_dir, collision, scale, stem),
+            collision_outputs.append({**write_collision_outputs(
+                output_dir, collision, scale, stem, world_translation, world_yaw_degrees),
                                       "source_resource": path})
 
         # The manifest preserves all resource paths and dependencies. Payloads
@@ -1649,8 +1718,15 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                     primary_collision = parsed
         region_bounds = None
         if collision_bounds:
-            mins = [min(bounds["min"][axis] for bounds in collision_bounds) * scale for axis in range(3)]
-            maxs = [max(bounds["max"][axis] for bounds in collision_bounds) * scale for axis in range(3)]
+            world_corners = []
+            for bounds in collision_bounds:
+                for x in (bounds["min"][0], bounds["max"][0]):
+                    for y in (bounds["min"][1], bounds["max"][1]):
+                        for z in (bounds["min"][2], bounds["max"][2]):
+                            world_corners.append(transform_world_point(
+                                [x, y, z], scale, world_translation, world_yaw_degrees))
+            mins = [min(point[axis] for point in world_corners) for axis in range(3)]
+            maxs = [max(point[axis] for point in world_corners) for axis in range(3)]
             region_bounds = {"min": mins, "max": maxs, "source": "collision headers"}
         type_counts = {}
         for item in resources:
@@ -1663,12 +1739,15 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                     continue
                 for index, entry in enumerate(command["entries"]):
                     source_position = entry["position"]
-                    position = coordinate(source_position, scale)
+                    position = transform_world_point(source_position, scale,
+                                                     world_translation, world_yaw_degrees)
                     floor = collision_floor_at(primary_collision, *source_position)
                     if floor is not None:
                         floor["floor_y"] *= scale
+                        floor["floor_y"] += world_translation[1]
                         floor["spawn_y_delta"] *= scale
-                    spawn_support.append({"index": index, "position": position,
+                    spawn_support.append({"index": index, "source_position": source_position,
+                                          "position": position,
                                           "status": "supported" if floor else "no-nearby-floor",
                                           "floor": floor})
         selected_spawn = None
@@ -1693,7 +1772,8 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         native_summary = emit_native_level_include(
             native_include, room_meshes, decoded, texture_payloads, display_list_bodies,
             [entry["path"] for entry in files], endian_by_path, primary_collision,
-            scale, selected_spawn, symbol_prefix)
+            scale, selected_spawn, symbol_prefix, world_translation, world_yaw_degrees,
+            referenced_vertex_keys)
         native_summary["include"] = str(native_include.relative_to(output_dir))
         native_summary["spawn_header"] = str((native_include.parent / f"{symbol_prefix}_spawn.h")
                                               .relative_to(output_dir))
@@ -1701,7 +1781,11 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             "format": FORMAT_NAME,
             "format_version": FORMAT_VERSION,
             "region": {"id": symbol_prefix, "name": region_name, "scene_resource": scene_path,
-                       "scene_prefix": scene_prefix, "coordinate_system": {
+                       "scene_prefix": scene_prefix,
+                       "world_transform": {"translation": list(world_translation),
+                                           "yaw_degrees": world_yaw_degrees,
+                                           "translation_units": "SM64 world units after scale"},
+                       "coordinate_system": {
                            "source_axes": {"x": "X", "y": "vertical Y", "z": "Z"},
                            "target_axes": {"x": "X", "y": "vertical Y", "z": "Z"},
                            "axis_transform": "provisional identity", "scale": scale,
@@ -1750,10 +1834,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scene-prefix", default="scenes/shared/spot00_scene")
     parser.add_argument("--symbol-prefix", help="C symbol prefix (defaults from the scene name)")
     parser.add_argument("--scale", type=float, default=1.0, help="provisional OoT-to-SM64 coordinate scale")
+    parser.add_argument("--world-translation", type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                        metavar=("X", "Y", "Z"),
+                        help="region translation in SM64 world units after scale")
+    parser.add_argument("--world-yaw-degrees", type=float, default=0.0,
+                        help="rotate region around world Y before translation")
     args = parser.parse_args(argv)
     try:
         result = import_archive(args.archive, args.output, args.scene_prefix, args.scale,
-                                args.symbol_prefix)
+                                args.symbol_prefix, tuple(args.world_translation),
+                                args.world_yaw_degrees)
     except (ImportFailure, OSError) as exc:
         print(f"hyrule-importer: error: {exc}", file=sys.stderr)
         return 2

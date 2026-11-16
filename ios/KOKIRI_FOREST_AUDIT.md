@@ -129,3 +129,8 @@ The current connected-world design proposal is documented in
 loop active in one area and composing static region geometry/collision there;
 it does not claim that Kokiri is already playable or adjacent to the existing
 Castle connector or Hyrule import.
+
+The importer accepts optional world translation and yaw values for supported
+geometry, collision, and spawn output. The supplied archive has not yet been
+placed with a measured transform; the new flag is not evidence of adjacency or
+a finished continuous route.

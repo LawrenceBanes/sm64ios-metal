@@ -30,6 +30,16 @@ Current local source bounds are:
 
 Any region placement must keep transformed geometry and player positions in the `s16` representable range. Origin rebasing is not implemented. If a later world exceeds this range, the solution must change collision coordinate management coherently; merely shifting the render camera would break floor, wall, portal, kart, and object queries.
 
+The host importer now accepts `--world-translation X Y Z` and
+`--world-yaw-degrees ANGLE`. Translation is in SM64 units after scaling;
+positive 90-degree yaw maps a region's local +Z direction to world +X. The
+transform is baked into supported render vertices, collision vertices,
+collision-bound metadata, and selected spawn/kart/return positions. Referenced
+render vertices and collision/spawn coordinates are range-checked. This is a
+conversion capability only: no Castle/Kokiri/Hyrule transforms have been
+selected or applied to a runtime level, and scene actors/entrances are not yet
+lowered into the level object list.
+
 ## Integration sequence
 
 1. Finish resource closure for each selected scene setup. Keep unresolved segmented display-list pointers visible as omissions and do not invent their referents.

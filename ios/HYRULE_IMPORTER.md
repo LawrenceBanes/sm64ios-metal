@@ -48,6 +48,13 @@ and geometry-state commands for the existing graphics interpreter. Raw
 archived texel bytes are kept in the generated level data so the normal SM64
 texture loader performs sampling and format conversion.
 
+For region-layout experiments, the importer can bake an optional rigid
+world-space transform using `--world-translation X Y Z` and
+`--world-yaw-degrees ANGLE`. It applies the same transform convention to
+render vertices, collision vertices, bounds, and selected spawn positions.
+This does not choose the Castle/Kokiri/Hyrule layout; all translation values
+must be validated against actual scene entrances and the SM64 `s16` range.
+
 There are three ordinary segmented `G_DL` pointers in the selected room whose
 segment bases are not represented in the O2R scene resource graph. The
 importer replaces those three calls with `G_SPNOOP` and reports them; it does

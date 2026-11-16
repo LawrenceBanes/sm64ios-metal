@@ -17,7 +17,7 @@ from tools.hyrule_importer import (ImportFailure, collision_floor_at, collision_
                                   read_resource_header, safe_archive_path, crc64_resource_path,
                                   parse_display_list, decode_texture_rgba, decode_room_render_data,
                                   emit_native_level_include, oot_angle_to_sm64_degrees,
-                                  choose_hyrule_auxiliary_spawns)
+                                  choose_hyrule_auxiliary_spawns, transform_world_point)
 
 
 def resource_header(resource_type, version=0):
@@ -237,7 +237,7 @@ class HyruleImporterTests(unittest.TestCase):
             generated = output_path.read_text()
             self.assertIn("0x01003006u", generated)  # OTR VTX_HASH lowered to F3DEX2 VTX
             self.assertIn("0xfd100001u", generated)  # OTR SETTIMG_HASH lowered to SETTIMG
-            self.assertIn("220.0f", generated)       # polygon translation and world scale are baked
+            self.assertIn("220", generated)       # polygon translation and world scale are baked
             self.assertIn("const Gfx hyrule_field_opaque_dl[]", generated)
             self.assertIn("COL_TRI_INIT(SURFACE_DEFAULT, 1)", generated)
             self.assertIn("COL_TRI(0, 1, 2)", generated)
@@ -288,11 +288,50 @@ class HyruleImporterTests(unittest.TestCase):
                 output_path, rooms, {array_path: array}, {}, display_lists,
                 [array_path], endian_by_path, None, 2.0, None, "kokiri_forest")
             generated = output_path.read_text()
-            self.assertIn("202.0f", generated)
-            self.assertIn("-398.0f", generated)
+            self.assertIn("202", generated)
+            self.assertIn("-398", generated)
             self.assertIn("const Gfx kokiri_forest_opaque_dl[]", generated)
+            self.assertIn("kokiri_forest_vtx_", generated)
+            self.assertNotIn("hyrule_field_vtx_", generated)
             self.assertEqual(result["opaque_calls"], 2)
             self.assertEqual(result["vertex_array_count"], 2)
+
+    def test_world_transform_applies_consistently_to_render_collision_and_spawns(self):
+        array_path = "scenes/fixture/vertex_array"
+        list_path = "scenes/fixture/room_list"
+        array = parse_vertex_array(vertex_array_body(), ">", array_path)
+        room = {"room": "room0", "mesh": {"polygons": [{
+            "position": [1, 2, 3], "opaque_display_list": list_path}]}}
+        display_lists = {list_path: {"body": display_list_body([
+            f3dex2_wide(0x32, (1 << 12) | (1 << 1), 0, crc64_resource_path(array_path)),
+            f3dex2_command(0xDF),
+        ]), "version": 0}}
+        collision = {"vertices": [[1, 2, 3], [0, 0, 0], [0, 1, 0]],
+                     "polygons": [{"vertex_indices": [0, 1, 2]}]}
+        spawn = {"position": [1, 2, 3], "yaw": 90,
+                 "kart_position": [0, 0, 1], "return_position": [1, 0, 0]}
+        translation = (10.0, 5.0, -3.0)
+        transformed_forward = transform_world_point([0, 0, 1], 1, (0, 0, 0), 90)
+        self.assertAlmostEqual(transformed_forward[0], 1.0)
+        self.assertAlmostEqual(transformed_forward[1], 0.0)
+        self.assertAlmostEqual(transformed_forward[2], 0.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "fixture_runtime.inc.c"
+            emit_native_level_include(
+                output_path, [room], {array_path: array}, {}, display_lists,
+                [array_path], {list_path: ">"}, collision, 2.0, spawn,
+                "fixture_region", translation, 90.0)
+            generated = output_path.read_text(encoding="utf-8")
+            self.assertIn("128, -59, -29", generated)
+            self.assertIn("COL_VERTEX(16, 9, -5)", generated)
+            spawn_header = (output_path.parent / "fixture_region_spawn.h").read_text()
+            self.assertIn("#define FIXTURE_REGION_SPAWN_X 16", spawn_header)
+            self.assertIn("#define FIXTURE_REGION_SPAWN_Y 9", spawn_header)
+            self.assertIn("#define FIXTURE_REGION_SPAWN_Z -5", spawn_header)
+            self.assertIn("#define FIXTURE_REGION_SPAWN_YAW ((s16)-180)", spawn_header)
+            self.assertIn("#define FIXTURE_REGION_KART_X 12", spawn_header)
+            self.assertIn("#define FIXTURE_REGION_KART_Z -3", spawn_header)
 
     def test_import_output_is_deterministic_and_scene_names_are_region_specific(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -319,6 +358,35 @@ class HyruleImporterTests(unittest.TestCase):
             second_files = {path.relative_to(second): path.read_bytes() for path in second.rglob("*")
                             if path.is_file()}
             self.assertEqual(first_files, second_files)
+
+    def test_archive_world_transform_updates_collision_output_and_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "oot.o2r"
+            prefix = "scenes/shared/spot04_scene"
+            vertices = [(-10, -1, -10), (10, 0, -10), (10, 20, 10)]
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(prefix + "/spot04_scene",
+                                 resource_header(0x4F524F4D) + scene_body(prefix + "/CollisionHeader"))
+                archive.writestr(prefix + "/CollisionHeader",
+                                 resource_header(0x4F434F4C) + collision_body(vertices))
+
+            output = root / "transformed"
+            result = import_archive(archive_path, output, prefix, 1.0,
+                                    world_translation=(100.0, 200.0, -50.0),
+                                    world_yaw_degrees=90.0)
+            native = (output / result["native_level_include"]).read_text(encoding="utf-8")
+            self.assertIn("COL_VERTEX(90, 199, -40)", native)
+            self.assertEqual(result["region_bounds"]["min"], [90.0, 199.0, -60.0])
+            self.assertEqual(result["region_bounds"]["max"], [110.0, 220.0, -40.0])
+            self.assertEqual(result["region"]["world_transform"], {
+                "translation": [100.0, 200.0, -50.0],
+                "yaw_degrees": 90.0,
+                "translation_units": "SM64 world units after scale",
+            })
+            obj_path = output / result["collision_outputs"][0]["obj"]
+            self.assertTrue(obj_path.is_file())
+            self.assertIn("v 90.000000 199.000000 -40.000000", obj_path.read_text())
 
     def test_native_level_export_rejects_unrepresentable_spawn(self):
         with tempfile.TemporaryDirectory() as directory:
