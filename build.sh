@@ -88,16 +88,20 @@ fi
     IOS_HYRULE_WORLD="$IOS_HYRULE_WORLD_BUILD" \
     IOS_CONNECTED_WORLD_TEST="$IOS_CONNECTED_WORLD_TEST_BUILD"
 
-GAMEDIR_CP_SRC="build/us_pc/sm64ios"
+GAME_APP_DIR="${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
 if [[ ${EXTERNAL_DATA:-0} -eq 1 ]]; then
-    GAMEDIR_CP_SRC="build/us_pc/."
+    # Copy only runtime data. Staging build/us_pc wholesale included Make's
+    # .o/.d files and generated sources, which SideStore tried to sign.
+    python3 ios/stage_ios_runtime.py build/us_pc "$GAME_APP_DIR" --external-data
+else
+    python3 ios/stage_ios_runtime.py build/us_pc "$GAME_APP_DIR"
 fi
-cp -R "$GAMEDIR_CP_SRC" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
-cp -R "build/us_pc/Base.lproj" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
+cp -R "build/us_pc/Base.lproj" "$GAME_APP_DIR/"
 if [[ -e "build/us_pc/dynos" ]]; then
-    cp -R "build/us_pc/dynos" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}/"
+    cp -R "build/us_pc/dynos" "$GAME_APP_DIR/"
 fi
-rsync -aP --exclude="README.md" "ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"
+# The repository's top-level ios/ directory contains CI tooling, tests, and
+# documentation, not app resources. Runtime UI assets came from Xcode above.
 
 if [[ ${SM64_SKIP_CODESIGN:-0} != 1 ]]; then
     codesign --force --deep --sign "${CODE_SIGN_IDENTITY}" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"

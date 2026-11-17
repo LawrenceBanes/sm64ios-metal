@@ -11,6 +11,28 @@ from pathlib import PurePosixPath
 
 
 CPU_TYPE_ARM64 = 0x0100000C
+BUILD_INTERMEDIATE_SUFFIXES = {
+    ".a", ".bc", ".d", ".dia", ".dsym", ".gcda", ".gcno", ".hmap",
+    ".o", ".pch", ".profdata", ".profraw", ".swiftmodule", ".swiftdoc",
+    ".swiftsourceinfo", ".xcactivitylog", ".xcresult", ".xccheckout",
+    ".xcuserstate", ".stringsdata", ".ds_store",
+}
+BUILD_INTERMEDIATE_COMPONENTS = {
+    "__pycache__", "deriveddata", "intermediates.noindex", "index.noindex",
+    "modulecache.noindex", "sourcepackages", "xcuserdata",
+}
+BUILD_INTERMEDIATE_NAMES = {"basepack.lst", ".ios_world_mode"}
+
+
+def reject_build_intermediates(members: list[str], container: str) -> None:
+    for member in members:
+        path = PurePosixPath(member)
+        if (
+            path.suffix.lower() in BUILD_INTERMEDIATE_SUFFIXES
+            or path.name.lower() in BUILD_INTERMEDIATE_NAMES
+            or any(part.lower() in BUILD_INTERMEDIATE_COMPONENTS for part in path.parts)
+        ):
+            raise ValueError(f"{container} contains build intermediate: {member}")
 
 
 def thin_macho_slice(data: bytes) -> tuple[int, int | None] | None:
@@ -106,6 +128,22 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
         app = "Payload/" + app_roots[0] + "/"
         if app not in names:
             raise ValueError("IPA is missing the app bundle directory entry")
+        app_members = [name[len(app):] for name in names if name.startswith(app)]
+        reject_build_intermediates(app_members, "app bundle")
+        app_file_count = sum(not member.endswith("/") for member in app_members)
+        resource_pack_path = app + "res/base.zip"
+        resource_pack_file_count = None
+        if resource_pack_path in names:
+            try:
+                with zipfile.ZipFile(io.BytesIO(ipa.read(resource_pack_path))) as resource_pack:
+                    bad_member = resource_pack.testzip()
+                    if bad_member:
+                        raise ValueError(f"app resource pack has corrupt member: {bad_member}")
+                    resource_members = resource_pack.namelist()
+                    reject_build_intermediates(resource_members, "app resource pack")
+                    resource_pack_file_count = sum(not member.endswith("/") for member in resource_members)
+            except zipfile.BadZipFile as exc:
+                raise ValueError("app resource pack is corrupt") from exc
         info_path = app + "Info.plist"
         try:
             info = plistlib.loads(ipa.read(info_path))
@@ -153,7 +191,6 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
         if app + "Assets.car" not in names:
             raise ValueError("app bundle is missing the compiled touch-control asset catalog")
         if require_game_textures:
-            resource_pack_path = app + "res/base.zip"
             try:
                 resource_pack_data = ipa.read(resource_pack_path)
             except KeyError as exc:
@@ -214,6 +251,10 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
     print(f"valid iPhoneOS arm64 IPA: {ipa_path}")
     print(f"bundle: {info['CFBundleIdentifier']} ({info.get('CFBundleShortVersionString', 'version unknown')})")
     print(f"executable: {executable_name}; Mach-O slices: {slices}")
+    print(f"app bundle file entries: {app_file_count}")
+    if resource_pack_file_count is not None:
+        print(f"runtime resource pack file entries: {resource_pack_file_count}")
+    print("build intermediates: 0")
     print("signature: unsigned structure check only; SideStore signing and device launch remain unverified")
 
 

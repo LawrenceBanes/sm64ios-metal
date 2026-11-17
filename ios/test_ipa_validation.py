@@ -16,13 +16,17 @@ class IpaValidationTests(unittest.TestCase):
     def test_ipa_workflow_requires_private_assets_and_never_publishes_game_payload(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ios-metal-ipa.yml").read_text()
         script = (Path(__file__).resolve().parent / "build_ios_metal_ci.sh").read_text()
+        build_script = (Path(__file__).resolve().parents[1] / "build.sh").read_text()
         self.assertIn("asset_bundle_release_tag", workflow)
         self.assertIn("SM64_ASSET_PRIVATE_REPOSITORY", workflow)
-        self.assertIn("SM64_ASSET_GH_TOKEN", workflow)
+        self.assertIn("SM64_PRIVATE_BUILD_GH_TOKEN", workflow)
         self.assertIn("github.repository == 'LawrenceBanes/sm64ios-metal'", workflow)
-        self.assertIn("if: ${{ inputs.full_game }}", workflow)
+        self.assertIn("inputs.full_game ||", workflow)
         self.assertNotIn("gh release create", workflow)
         self.assertNotIn("Upload unsigned IPA", workflow)
+        self.assertIn("stage_ios_runtime.py", build_script)
+        self.assertNotIn('cp -R "$GAMEDIR_CP_SRC"', build_script)
+        self.assertNotIn('"ios/" "${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"', build_script)
         self.assertIn("Asset repository is not private", script)
         self.assertIn("Public source repository cannot be the asset repository", script)
         self.assertIn("--require-game-textures", script)
@@ -136,6 +140,38 @@ class IpaValidationTests(unittest.TestCase):
             package_app(app, path)
             with self.assertRaisesRegex(ValueError, "missing its UIKit application scene"):
                 validate(str(path), require_system_deps=False)
+
+    def test_rejects_build_intermediates_in_app_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = self.make_app(root)
+            for relative in (
+                "bin/wdw_skybox.o",
+                "actors/group7_geo.o",
+                "levels/castle_grounds/geo.o",
+                "src/engine/world_region.o",
+                "src/engine/world_region.d",
+                "lib/libtemporary.a",
+            ):
+                path = app / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"build intermediate fixture")
+            ipa_path = root / "intermediates.ipa"
+            package_app(app, ipa_path)
+            with self.assertRaisesRegex(ValueError, "app bundle contains build intermediate"):
+                validate(str(ipa_path), require_system_deps=False)
+
+    def test_rejects_build_intermediates_in_external_resource_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = self.make_app(root, include_game_textures=True)
+            pack_path = app / "res/base.zip"
+            with zipfile.ZipFile(pack_path, "a") as pack:
+                pack.writestr("src/engine/world_region.o", b"build intermediate fixture")
+            ipa_path = root / "resource-intermediate.ipa"
+            package_app(app, ipa_path)
+            with self.assertRaisesRegex(ValueError, "app resource pack contains build intermediate"):
+                validate(str(ipa_path), require_system_deps=False)
 
 
 if __name__ == "__main__":

@@ -211,12 +211,15 @@ build_full_game() {
     python3 ios/package_unsigned_ipa.py "$app" "$ipa" >"$private_dir/packaging.log" 2>&1
     python3 ios/validate_ipa.py "$ipa" --require-system-deps --require-game-textures \
         >"$private_dir/ipa-validation.log" 2>&1
+    local validation_counts
+    validation_counts=$(grep -E '^(app bundle file entries|runtime resource pack file entries|build intermediates):' \
+        "$private_dir/ipa-validation.log")
     local digest
     digest=$(shasum -a 256 "$ipa" | awk '{print $1}')
     upload_private_ipa "$ipa" "$digest" "$private_build_token"
     unset private_build_token
-    printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nPrivate IPA draft release upload: PASS\nIPA SHA-256: %s\n' \
-        "$digest" >"$safe_dir/ios-build-summary.txt"
+    printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nPrivate IPA draft release upload: PASS\n%s\nIPA SHA-256: %s\n' \
+        "$validation_counts" "$digest" >"$safe_dir/ios-build-summary.txt"
     cat "$safe_dir/ios-build-summary.txt"
     echo 'IPA was uploaded only to the configured private draft release; no game app, raw full-build log, or extracted asset is uploaded.'
 }

@@ -47,9 +47,11 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/ci_summarize_build_log.py
+          python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/stage_ios_runtime.py ios/validate_ipa.py ios/ci_summarize_build_log.py
           bash -n ios/build_sdl2_ios.sh ios/build_ios_metal_ci.sh
           python3 -m unittest discover -s ios -p 'test_ci_summarize_build_log.py'
+          python3 -m unittest discover -s ios -p 'test_ipa_validation.py'
+          python3 -m unittest discover -s ios -p 'test_stage_ios_runtime.py'
 
   ios-arm64-ipa:
     needs: linux-checks
