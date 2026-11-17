@@ -2,7 +2,7 @@
 
 ## Result
 
-**Partial:** the manual, asset-free Apple-toolchain job passed on the public repository. The full SM64 app and unsigned IPA have not been built by this workflow because the required private asset source is not configured. No game asset, ROM, IPA, or credential was uploaded by this run.
+**Partial:** the manual, asset-free Apple-toolchain job passed on the public repository. The full SM64 app and unsigned IPA have not been built because local assets have not been approved for transfer to the private build vault. No game asset, ROM, IPA, or credential has been uploaded.
 
 - CI branch: `ci/ios-metal-m57-25c` (isolated from `ios` and Mission 57 engine files)
 - Prepared CI commit integrated into this branch: `6b1f3d7b` (same change as `64a66e2`)
@@ -24,9 +24,9 @@
 
 ## Asset and release safeguards
 
-The source repository is public. The prior workflow's same-repository draft-release asset input and public IPA release/upload path were removed from this branch. The replacement full build accepts only a separate private repository, a read-only token, a draft asset bundle, and a verified checksum. It refuses to use `LawrenceBanes/sm64ios-metal` as an asset repository. Only the bounded, asset-free `safe/` diagnostics directory is uploaded. The raw full-build log, extracted assets, app, and IPA stay runner-local and are removed at job exit. Fork pull requests have no workflow trigger and cannot invoke the private-input step via this branch's configuration.
+The source repository is public. The prior workflow's same-repository asset path and public IPA upload path were removed. An empty private repository, `LawrenceBanes/sm64ios-private-builds`, has been created for the asset bundle and private IPA draft release; no assets or binaries have been uploaded. The public source repository variables `SM64_ASSET_PRIVATE_REPOSITORY` and `SM64_IPA_PRIVATE_REPOSITORY` now point to it. The full build requires two scoped Actions secrets, `SM64_ASSET_GH_TOKEN` (read-only) and `SM64_IPA_RELEASE_GH_TOKEN` (`contents:write`). It refuses to use the public source repo as either private destination, verifies privacy, and uploads the validated IPA and checksum only to a uniquely tagged draft release in the private vault. Only bounded asset-free diagnostics go to public Actions artifacts. Raw logs and extracted assets stay on the runner. This branch has no fork pull-request trigger.
 
-No Actions secrets or variables are currently configured in this repository. A full iOS compilation and IPA validation therefore requires an independently reviewed private asset-transfer setup, including `SM64_ASSET_PRIVATE_REPOSITORY`, `SM64_ASSET_GH_TOKEN`, and an `asset_bundle_release_tag`. The current test did not attempt that step. The optional Hyrule archive also remains unconfigured and untested.
+The two repository variables are prepared, but the two scoped secrets and private draft asset bundle are still missing. After Larry explicitly approves asset transfer, create a draft release in the private vault with `sm64-assets.tar.gz` and `sm64-assets.sha256`, add the two secrets, then manually run `ios-metal-ipa.yml` on `ci/ios-metal-m57-25c` with `full_game=true` and that release tag. The build will use `IOS_CONNECTED_WORLD_TEST=1`, `IOS_HYRULE_WORLD=0`; no O2R archive is required. The optional Hyrule archive remains unconfigured and untested.
 
 The public repository already contains older IPA releases from previous workflows. This mission neither downloaded nor changed those releases; they need a separate ownership and distribution review.
 
@@ -34,4 +34,4 @@ The public repository already contains older IPA releases from previous workflow
 
 No gameplay, physics, collision, Metal renderer behavior, or Mission 57 engine source changed. The branch changed CI workflows, reusable build scripts, safety tests, and build documentation. The current direct iOS backend and MSL compile result does **not** establish that the complete game links, packages, installs, or renders on an iPhone. The unsigned IPA path is implemented and locally syntax-tested but awaits the private inputs and a full macOS run.
 
-The branch remains unmerged. Do not merge into `ios` without separate review: its parent includes the Mission 57 engine commits in addition to the CI work.
+The branch remains unmerged. Do not merge into `ios` without separate review: its parent includes the Mission 57 engine commits in addition to the CI work. The private IPA upload path is newly prepared and has not been exercised yet.

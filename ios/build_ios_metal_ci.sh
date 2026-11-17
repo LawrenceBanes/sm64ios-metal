@@ -209,10 +209,43 @@ build_full_game() {
         >"$private_dir/ipa-validation.log" 2>&1
     local digest
     digest=$(shasum -a 256 "$ipa" | awk '{print $1}')
-    printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nIPA SHA-256: %s\n' \
+    upload_private_ipa "$ipa" "$digest"
+    printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nPrivate IPA draft release upload: PASS\nIPA SHA-256: %s\n' \
         "$digest" >"$safe_dir/ios-build-summary.txt"
     cat "$safe_dir/ios-build-summary.txt"
-    echo 'No game app, IPA, raw full-build log, or extracted asset is uploaded.'
+    echo 'IPA was uploaded only to the configured private draft release; no game app, raw full-build log, or extracted asset is uploaded.'
+}
+
+upload_private_ipa() {
+    local ipa=$1 digest=$2 repository tag visibility checksum_file
+    : "${SM64_IPA_PRIVATE_REPOSITORY:?Set the private owner/repo in the SM64_IPA_PRIVATE_REPOSITORY Actions variable}"
+    : "${SM64_IPA_RELEASE_GH_TOKEN:?Set a contents:write token scoped to the private IPA destination in SM64_IPA_RELEASE_GH_TOKEN}"
+    [[ "$SM64_IPA_PRIVATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+        echo 'Private IPA destination must be owner/repo' >&2
+        return 1
+    }
+    [[ "$SM64_IPA_PRIVATE_REPOSITORY" != LawrenceBanes/sm64ios-metal ]] || {
+        echo 'Public source repository cannot be the IPA destination' >&2
+        return 1
+    }
+    repository=$SM64_IPA_PRIVATE_REPOSITORY
+    visibility=$(GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh api "repos/$repository" --jq '.private')
+    [[ "$visibility" == true ]] || { echo 'IPA destination repository is not private' >&2; return 1; }
+    [[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[0-9]+$ ]] || {
+        echo 'GitHub run identifiers are required to create a unique private draft release' >&2
+        return 1
+    }
+    tag="sm64-ios-unsigned-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+    checksum_file="$private_dir/$(basename "$ipa").sha256"
+    printf '%s  %s\n' "$digest" "$(basename "$ipa")" >"$checksum_file"
+    GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh release create "$tag" \
+        --repo "$repository" --draft \
+        --title "SM64 iOS unsigned test build ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+        --notes "Connected-world test build from commit ${GITHUB_SHA:-unknown}. Unsigned IPA; device behavior remains unverified." \
+        >"$private_dir/private-release-create.log"
+    GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh release upload "$tag" \
+        "$ipa" "$checksum_file" --repo "$repository" \
+        >"$private_dir/private-release-upload.log"
 }
 
 if [[ "$mode" == validate ]]; then

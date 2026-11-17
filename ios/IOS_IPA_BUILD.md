@@ -9,6 +9,6 @@ The reusable `ios/build_ios_metal_ci.sh` supports two modes:
 - `validate`: build SDL2, compile the Objective-C Metal backend for iPhoneOS and simulator, generate MSL shader variants, and compile them with Apple's Metal tools. No game assets are needed.
 - `full`: after `validate` in the same output directory, retrieve a checksummed bundle from a separate authenticated private repository, compile the full Metal app without code signing, package `Payload/sm64ios.app` as an unsigned IPA, and run the structural/architecture/resource validator. Optional Hyrule input is also private and opt-in.
 
-The IPA and raw full-game build log stay on the runner and are removed when the job ends. Only asset-free logs and a bounded build summary are uploaded. This CI does not create a downloadable IPA or establish on-device gameplay. Distribution of an asset-bearing build requires a separate decision and process.
+The raw full-game build log and extracted assets stay on the runner. The IPA and checksum are uploaded only to a uniquely tagged draft release in the configured private repository. Public Actions artifacts contain asset-free logs and a bounded build summary. The private release requires authenticated access; the unsigned IPA needs SideStore signing and does not establish on-device gameplay.
 
 The host-side IPA tests use synthetic fixtures. They verify packaging and validator behavior, not Apple compilation or iPhone installation.
