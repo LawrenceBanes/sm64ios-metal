@@ -26,7 +26,10 @@ cleanup() {
     fi
     rm -rf -- "$private_dir"
     if [[ ${GITHUB_ACTIONS:-} == true ]]; then
-        rm -rf -- "$output_dir/SDL2" "$output_dir/ios-products" "$output_dir/DerivedData"
+        rm -rf -- "$output_dir/SDL2"
+        if [[ "$mode" == full ]]; then
+            rm -rf -- "$output_dir/ios-products" "$output_dir/DerivedData" "$sdl_stage/build"
+        fi
     fi
     exit "$result"
 }
