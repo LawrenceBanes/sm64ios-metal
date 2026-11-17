@@ -33,14 +33,23 @@ class HyruleGateIntegrationTests(unittest.TestCase):
 
     def test_proximity_feedback_is_debug_only_and_does_not_issue_unknown_warp(self):
         mario = (ROOT / "src/game/mario.c").read_text()
-        guard = "#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)"
+        guard = "#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(IOS_HYRULE_GATE_DIAGNOSTICS)"
         self.assertIn(guard, mario)
         self.assertIn("hyrule_gate_contains(m->pos[0], m->pos[1], m->pos[2]", mario)
+        self.assertIn("if (m->floor == NULL)", mario)
         self.assertIn("hyrule_gate_response(\n            true, gateDestinationConfigured, LEVEL_NONE, 0, 0)", mario)
         self.assertIn('"Gate destination is not configured"', mario)
         activation = mario.split("static void mario_ios_update_hyrule_gate_debug", 1)[1].split("#endif", 1)[0]
         self.assertIn("warpIssued=0", activation)
         self.assertNotRegex(activation, r"Kokiri|initiate_warp|level_trigger_warp|initiate_delayed_warp")
+
+    def test_gate_probe_runs_after_geometry_refresh_and_before_action_processing(self):
+        mario = (ROOT / "src/game/mario.c").read_text()
+        execute = mario.split("s32 execute_mario_action(", 1)[1]
+        self.assertLess(execute.index("update_mario_inputs(gMarioState);"),
+                        execute.index("mario_ios_update_hyrule_gate_debug(gMarioState);"))
+        self.assertLess(execute.index("mario_ios_update_hyrule_gate_debug(gMarioState);"),
+                        execute.index("mario_handle_special_floors(gMarioState);"))
 
     def test_existing_hyrule_return_warp_remains_the_only_documented_destination(self):
         script = (ROOT / "levels/hyrule_field/script.c").read_text()

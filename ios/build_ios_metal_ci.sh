@@ -184,20 +184,29 @@ build_full_game() {
         echo 'This CI target requires IOS_CONNECTED_WORLD_TEST=1' >&2
         return 1
     }
+    [[ ${IOS_HYRULE_GATE_DIAGNOSTICS:-0} == 0 || ${IOS_HYRULE_GATE_DIAGNOSTICS:-0} == 1 ]] || {
+        echo 'IOS_HYRULE_GATE_DIAGNOSTICS must be 0 or 1' >&2
+        return 1
+    }
+    [[ ${IOS_HYRULE_GATE_DIAGNOSTICS:-0} == 0 || ${IOS_HYRULE_WORLD:-0} == 1 ]] || {
+        echo 'IOS_HYRULE_GATE_DIAGNOSTICS=1 requires IOS_HYRULE_WORLD=1' >&2
+        return 1
+    }
     download_private_assets
     download_private_hyrule_archive
     local private_build_token=$SM64_PRIVATE_BUILD_GH_TOKEN
     unset SM64_PRIVATE_BUILD_GH_TOKEN
     install_game_tools
     local raw_log="$private_dir/ios-build.log"
+    echo "iOS gate diagnostic compile flag: ${IOS_HYRULE_GATE_DIAGNOSTICS:-0}"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
-        IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
+        IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
         xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
         -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
         -derivedDataPath "$output_dir/DerivedData" \
         SYMROOT="$output_dir/ios-products" CONFIGURATION_BUILD_DIR="$product_dir" \
         SDL2_ROOT="$sdl_stage" SDL2_INCLUDE_DIR="$sdl_stage/include" \
-        IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_CONNECTED_WORLD_TEST=1 \
+        IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
         >"$raw_log" 2>&1; then
         python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-build-summary.txt"

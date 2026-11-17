@@ -44,7 +44,7 @@
 #include "spawn_object.h"
 #include "thread6.h"
 #include "pc/configfile.h"
-#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(IOS_HYRULE_GATE_DIAGNOSTICS)
 #include "game/hyrule_gate.h"
 #include "level_table.h"
 #include "build/hyrule_field_spawn.h"
@@ -1990,7 +1990,7 @@ s32 mario_floor_is_steep(struct MarioState *m) {
     return result;
 }
 
-#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(IOS_HYRULE_GATE_DIAGNOSTICS)
 #define HYRULE_GATE_DIAG_INTERVAL 300
 #define HYRULE_GATE_TRIGGER_RADIUS 700.0f
 #define HYRULE_GATE_VERTICAL_TOLERANCE 500.0f
@@ -2011,6 +2011,14 @@ static void mario_ios_update_hyrule_gate_debug(const struct MarioState *m) {
     if (gCurrLevelNum != LEVEL_HYRULE_FIELD || gCurrentArea == NULL || gCurrentArea->index != 1) {
         sHyruleGateProximity.inside = false;
         sHyruleGateDiagnosticFrames = 0;
+        return;
+    }
+    /* update_mario_inputs() refreshes geometry after wall resolution and may
+     * roll Mario back to a valid graphical position. Never trigger from an
+     * OOB position or stale floor state.
+     */
+    if (m->floor == NULL) {
+        sHyruleGateProximity.inside = false;
         return;
     }
 
@@ -3134,10 +3142,6 @@ s32 execute_mario_action(UNUSED struct Object *o) {
     * Cheat stuff
     */
 
-#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
-    mario_ios_update_hyrule_gate_debug(gMarioState);
-#endif
-
     if (Cheats.EnableCheats)
     {
         if (Cheats.GodMode)
@@ -3159,6 +3163,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         mario_ios_validate_kart_area(gMarioState);
         if (sIOSPortalTraversalCooldown > 0) sIOSPortalTraversalCooldown--;
         update_mario_inputs(gMarioState);
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(IOS_HYRULE_GATE_DIAGNOSTICS)
+        mario_ios_update_hyrule_gate_debug(gMarioState);
+#endif
         {
             const IOSRealityPolicy *policy = ios_reality_global_policy();
             if (policy->movement_multiplier != 1.0f && !mario_ios_is_driving_kart(gMarioState))

@@ -128,10 +128,14 @@ does not identify the gate's intended destination.
 The Hyrule level keeps its existing, separate `bhvFadingWarp` back to Castle
 Grounds. No forward destination is declared by the gate or registered as an
 SM64 level. Kokiri Forest is listed as a future planned region, but that alone
-does not establish it as this gate's destination. In iOS Hyrule debug builds,
-entering the gate-area radius emits a bounded position/floor/proximity
-diagnostic and a brief native status message that the destination is not
-configured. It does not enqueue an invalid warp or invent a destination. A
-forward transition remains blocked until its intended destination and entrance
-are specified and registered; the proximity feedback itself remains
-device-unverified until this diagnostic IPA is tested.
+does not establish it as this gate's destination. An iOS Hyrule diagnostic
+build can opt in with `IOS_HYRULE_GATE_DIAGNOSTICS=1`; the Makefile propagates
+this as a compile define, and the workflow enables it only when an O2R release
+tag is supplied. The probe runs after `update_mario_inputs()` refreshes
+wall/floor collision, and ignores frames with no valid floor. Entering the
+gate-area radius emits a bounded position/floor/proximity diagnostic and a
+brief native status message that the destination is not configured. It does
+not enqueue an invalid warp or invent a destination. A forward transition
+remains blocked until its intended destination and entrance are specified and
+registered; the proximity feedback itself remains device-unverified until this
+diagnostic IPA is tested.
