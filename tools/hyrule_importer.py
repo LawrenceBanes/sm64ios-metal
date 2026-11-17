@@ -1061,7 +1061,8 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     extra_spawn_macros = []
     if spawn is not None:
         for name, key in (("HYRULE_FIELD_KART", "kart_position"),
-                          ("HYRULE_FIELD_RETURN", "return_position")):
+                          ("HYRULE_FIELD_RETURN", "return_position"),
+                          ("HYRULE_FIELD_GATE", "gate_position")):
             position = spawn.get(key)
             if position is None:
                 continue
@@ -1669,6 +1670,17 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                 source_position = start_entries[supported_spawn["index"]]["position"]
                 kart_position, return_position = choose_hyrule_auxiliary_spawns(
                     primary_collision, source_position)
+                # Entrance start 4 is the source scene's forest-side field
+                # entrance. Its position is collision-supported and falls
+                # within the brown gate mesh bounds. Use it as an interaction
+                # anchor, not as a warp destination: Kokiri is not an SM64
+                # runtime level yet.
+                gate_entry = start_entries[4] if len(start_entries) > 4 else None
+                if gate_entry is None:
+                    raise ImportFailure("Hyrule Field gate-area start-position entry 4 is missing")
+                gate_position = gate_entry["position"]
+                if collision_floor_at(primary_collision, *gate_position) is None:
+                    raise ImportFailure("Hyrule Field gate entrance 4 has no nearby collision floor")
                 selected_spawn = {
                     # Keep these in OoT source units; the level-source writer applies --scale once.
                     "position": source_position,
@@ -1676,6 +1688,7 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
                         start_entries[supported_spawn["index"]]["rotation"][1]),
                     "kart_position": kart_position,
                     "return_position": return_position,
+                    "gate_position": gate_position,
                 }
         native_include = output_dir / "render" / "hyrule_field_runtime.inc.c"
         native_summary = emit_native_level_include(

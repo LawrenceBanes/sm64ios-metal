@@ -43,6 +43,11 @@
 #include "spawn_object.h"
 #include "thread6.h"
 #include "pc/configfile.h"
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
+#include "game/hyrule_gate.h"
+#include "level_table.h"
+#include "build/hyrule_field_spawn.h"
+#endif
 #include "pc/cheats.h"
 #ifdef IOS_BUILD
 #include "pc/gfx/gfx_ios_diagnostics.h"
@@ -1984,6 +1989,62 @@ s32 mario_floor_is_steep(struct MarioState *m) {
     return result;
 }
 
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
+#define HYRULE_GATE_DIAG_INTERVAL 300
+#define HYRULE_GATE_TRIGGER_RADIUS 700.0f
+#define HYRULE_GATE_VERTICAL_TOLERANCE 500.0f
+
+static HyruleGateProximityState sHyruleGateProximity;
+static u32 sHyruleGateDiagnosticFrames;
+
+/* The selected imported start position is a useful gate-area proximity
+ * anchor. The scene does not define a destination transition, so keep the
+ * interaction observable and refuse to enqueue an invalid warp.
+ */
+static void mario_ios_update_hyrule_gate_debug(const struct MarioState *m) {
+    HyruleGateProximityEvent event;
+    bool nearGate;
+    const bool gateDestinationConfigured = false;
+
+    if (m == NULL) return;
+    if (gCurrLevelNum != LEVEL_HYRULE_FIELD || gCurrentArea == NULL || gCurrentArea->index != 1) {
+        sHyruleGateProximity.inside = false;
+        sHyruleGateDiagnosticFrames = 0;
+        return;
+    }
+
+    nearGate = hyrule_gate_contains(m->pos[0], m->pos[1], m->pos[2],
+                                   HYRULE_FIELD_GATE_X, HYRULE_FIELD_GATE_Y,
+                                   HYRULE_FIELD_GATE_Z, HYRULE_GATE_TRIGGER_RADIUS,
+                                   HYRULE_GATE_VERTICAL_TOLERANCE);
+    event = hyrule_gate_update_proximity(&sHyruleGateProximity, nearGate);
+    if (event == HYRULE_GATE_ENTERED) {
+        const HyruleGateResponse response = hyrule_gate_response(
+            true, gateDestinationConfigured, LEVEL_NONE, 0, 0);
+        gfx_ios_diag_log("Hyrule gate activated level=%d area=%d mario=(%.1f,%.1f,%.1f) floor=%s floorType=%d floorHeight=%.1f action=0x%08x trigger=proximity destinationConfigured=%d response=%d warpIssued=0",
+            gCurrLevelNum, gCurrentArea->index, m->pos[0], m->pos[1], m->pos[2],
+            m->floor ? "hit" : "miss", m->floor ? m->floor->type : -1,
+            m->floorHeight, m->action, gateDestinationConfigured, response);
+        if (response == HYRULE_GATE_RESPONSE_DESTINATION_UNAVAILABLE) {
+            gfx_ios_portal_status("Gate destination is not configured");
+        }
+    } else if (event == HYRULE_GATE_LEFT) {
+        gfx_ios_diag_log("Hyrule gate proximity left level=%d area=%d mario=(%.1f,%.1f,%.1f)",
+            gCurrLevelNum, gCurrentArea->index, m->pos[0], m->pos[1], m->pos[2]);
+    }
+
+    if ((sHyruleGateDiagnosticFrames++ % HYRULE_GATE_DIAG_INTERVAL) == 0) {
+        const float dx = m->pos[0] - HYRULE_FIELD_GATE_X;
+        const float dz = m->pos[2] - HYRULE_FIELD_GATE_Z;
+        gfx_ios_diag_log("Hyrule gate probe level=%d area=%d mario=(%.1f,%.1f,%.1f) gate=(%d,%d,%d) distanceSquared=%.1f near=%d floor=%s floorType=%d interaction=approach-proximity destinationConfigured=%d warpIssued=0 action=0x%08x",
+            gCurrLevelNum, gCurrentArea->index, m->pos[0], m->pos[1], m->pos[2],
+            HYRULE_FIELD_GATE_X, HYRULE_FIELD_GATE_Y, HYRULE_FIELD_GATE_Z,
+            dx * dx + dz * dz, nearGate, m->floor ? "hit" : "miss",
+            m->floor ? m->floor->type : -1, gateDestinationConfigured, m->action);
+    }
+}
+#endif
+
 /**
  * Finds the floor height relative from Mario given polar displacement.
  */
@@ -3066,6 +3127,10 @@ s32 execute_mario_action(UNUSED struct Object *o) {
     /**
     * Cheat stuff
     */
+
+#if defined(IOS_BUILD) && defined(IOS_HYRULE_WORLD) && defined(DEBUG)
+    mario_ios_update_hyrule_gate_debug(gMarioState);
+#endif
 
     if (Cheats.EnableCheats)
     {

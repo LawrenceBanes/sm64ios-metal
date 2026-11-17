@@ -233,7 +233,8 @@ class HyruleImporterTests(unittest.TestCase):
                 {display_path: {"body": display_body, "version": 0}},
                 [display_path, array_path, texture_path], {display_path: ">"},
                 parse_collision(collision_body(), ">", "fixture/CollisionHeader"),
-                2.0, {"position": [1, 2, 3], "yaw": -90})
+                2.0, {"position": [1, 2, 3], "yaw": -90,
+                      "gate_position": [-5891, -881, 15676]})
             generated = output_path.read_text()
             self.assertIn("0x01003006u", generated)  # OTR VTX_HASH lowered to F3DEX2 VTX
             self.assertIn("0xfd100001u", generated)  # OTR SETTIMG_HASH lowered to SETTIMG
@@ -247,6 +248,9 @@ class HyruleImporterTests(unittest.TestCase):
             self.assertIn("#define HYRULE_FIELD_SPAWN_Y 4", spawn_header)
             self.assertIn("#define HYRULE_FIELD_SPAWN_Z 6", spawn_header)
             self.assertIn("#define HYRULE_FIELD_SPAWN_YAW ((s16)-90)", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_GATE_X -11782", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_GATE_Y -1762", spawn_header)
+            self.assertIn("#define HYRULE_FIELD_GATE_Z 31352", spawn_header)
             compiler = shlex.split(os.environ.get("CC", "cc"))[0]
             if shutil.which(compiler):
                 translation_unit = Path(directory) / "generated.c"

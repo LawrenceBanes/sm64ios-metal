@@ -113,3 +113,25 @@ supplied `oot.o2r`; see `KOKIRI_FOREST_AUDIT.md` for the input convention and
 the Kokiri follow-up plan. The archive itself is not placed in Actions
 artifacts or IPA release assets; only generated game output is compiled into
 the private IPA.
+
+## Mission 58 — Hyrule Field gate status
+
+The brown structure is part of the imported `spot00` room geometry and
+collision. The O2R scene provides exit IDs and start positions but the current
+lowering emits only the static room and collision; it does not import OOT
+transition actors or gate behavior. The generated gate-area proximity anchor
+uses supported Hyrule start-position entry 4 (`[-5891, -881, 15676]` in the
+supplied archive), which is on the nearby collision floor and within the
+brown structure's render-vertex bounds. This anchor is geometric evidence; it
+does not identify the gate's intended destination.
+
+The Hyrule level keeps its existing, separate `bhvFadingWarp` back to Castle
+Grounds. No forward destination is declared by the gate or registered as an
+SM64 level. Kokiri Forest is listed as a future planned region, but that alone
+does not establish it as this gate's destination. In iOS Hyrule debug builds,
+entering the gate-area radius emits a bounded position/floor/proximity
+diagnostic and a brief native status message that the destination is not
+configured. It does not enqueue an invalid warp or invent a destination. A
+forward transition remains blocked until its intended destination and entrance
+are specified and registered; the proximity feedback itself remains
+device-unverified until this diagnostic IPA is tested.

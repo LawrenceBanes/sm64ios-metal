@@ -21,6 +21,7 @@ python3 "$repo_dir/tests/test_hyrule_importer.py"
 python3 "$repo_dir/ios/test_hyrule_gateway.py"
 python3 "$repo_dir/ios/test_connected_world.py"
 python3 "$repo_dir/ios/test_hyrule_asset_workflow.py"
+python3 "$repo_dir/ios/test_hyrule_gate.py"
 python3 "$repo_dir/ios/test_surface_partition_bounds.py"
 CC="$cc" sh "$repo_dir/tests/run_world_region_test.sh"
 CC="$cc" sh "$repo_dir/tests/run_surface_load_bounds_test.sh"
@@ -32,6 +33,11 @@ trap 'rm -f "$portal_test_bin"' EXIT HUP INT TERM
 $cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/test_portal_math.c" -lm -o "$portal_test_bin"
 "$portal_test_bin"
 rm -f "$portal_test_bin"
+hyrule_gate_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-hyrule-gate.XXXXXX")
+$cc -std=c99 -Wall -Wextra -I"$repo_dir/include" -I"$repo_dir/src" \
+    "$repo_dir/tests/test_hyrule_gate.c" -o "$hyrule_gate_test_bin"
+"$hyrule_gate_test_bin"
+rm -f "$hyrule_gate_test_bin"
 trap - EXIT HUP INT TERM
 
 common_flags="-fsyntax-only -std=gnu99 -D_LANGUAGE_C -DF3DEX_GBI_2 -DWAPI_SDL2=1 -DAAPI_SDL2=1 -DCAPI_SDL2=1 -DHAVE_SDL2=1 -I$repo_dir/include -I$repo_dir/src -I$repo_dir"
