@@ -99,7 +99,7 @@ install_game_tools() {
 
 download_private_assets() {
     : "${SM64_ASSET_PRIVATE_REPOSITORY:?Set the private owner/repo in the SM64_ASSET_PRIVATE_REPOSITORY Actions variable}"
-    : "${SM64_ASSET_GH_TOKEN:?Set a read-only token for that private repository in the SM64_ASSET_GH_TOKEN Actions secret}"
+    : "${SM64_PRIVATE_BUILD_GH_TOKEN:?Set a contents:write token scoped to the private build repository in the SM64_PRIVATE_BUILD_GH_TOKEN Actions secret}"
     : "${ASSET_BUNDLE_RELEASE_TAG:?Supply a private draft asset-bundle release tag}"
     [[ "$SM64_ASSET_PRIVATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
         echo 'Private asset repository must be owner/repo' >&2
@@ -114,14 +114,14 @@ download_private_assets() {
         return 1
     }
     local visibility metadata expected actual
-    visibility=$(GH_TOKEN="$SM64_ASSET_GH_TOKEN" gh api \
+    visibility=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh api \
         "repos/$SM64_ASSET_PRIVATE_REPOSITORY" --jq '.private')
     [[ "$visibility" == true ]] || { echo 'Asset repository is not private' >&2; return 1; }
-    metadata=$(GH_TOKEN="$SM64_ASSET_GH_TOKEN" gh release view \
+    metadata=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
         "$ASSET_BUNDLE_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --json isDraft,assets)
     python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and {"sm64-assets.tar.gz", "sm64-assets.sha256"} <= {a["name"] for a in d["assets"]}' "$metadata"
-    GH_TOKEN="$SM64_ASSET_GH_TOKEN" gh release download \
+    GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
         "$ASSET_BUNDLE_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --pattern 'sm64-assets.tar.gz' --pattern 'sm64-assets.sha256' \
         --dir "$private_dir" >/dev/null
@@ -142,11 +142,11 @@ download_private_hyrule_archive() {
         return 1
     }
     local metadata expected actual
-    metadata=$(GH_TOKEN="$SM64_ASSET_GH_TOKEN" gh release view \
+    metadata=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
         "$HYRULE_O2R_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --json isDraft,assets)
     python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and {"oot.o2r", "oot.o2r.sha256"} <= {a["name"] for a in d["assets"]}' "$metadata"
-    GH_TOKEN="$SM64_ASSET_GH_TOKEN" gh release download \
+    GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
         "$HYRULE_O2R_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --pattern 'oot.o2r' --pattern 'oot.o2r.sha256' \
         --dir "$private_dir" >/dev/null
@@ -183,7 +183,8 @@ build_full_game() {
     }
     download_private_assets
     download_private_hyrule_archive
-    unset SM64_ASSET_GH_TOKEN
+    local private_build_token=$SM64_PRIVATE_BUILD_GH_TOKEN
+    unset SM64_PRIVATE_BUILD_GH_TOKEN
     install_game_tools
     local raw_log="$private_dir/ios-build.log"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
@@ -209,7 +210,8 @@ build_full_game() {
         >"$private_dir/ipa-validation.log" 2>&1
     local digest
     digest=$(shasum -a 256 "$ipa" | awk '{print $1}')
-    upload_private_ipa "$ipa" "$digest"
+    upload_private_ipa "$ipa" "$digest" "$private_build_token"
+    unset private_build_token
     printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nPrivate IPA draft release upload: PASS\nIPA SHA-256: %s\n' \
         "$digest" >"$safe_dir/ios-build-summary.txt"
     cat "$safe_dir/ios-build-summary.txt"
@@ -217,9 +219,9 @@ build_full_game() {
 }
 
 upload_private_ipa() {
-    local ipa=$1 digest=$2 repository tag visibility checksum_file
+    local ipa=$1 digest=$2 token=$3 repository tag visibility checksum_file
     : "${SM64_IPA_PRIVATE_REPOSITORY:?Set the private owner/repo in the SM64_IPA_PRIVATE_REPOSITORY Actions variable}"
-    : "${SM64_IPA_RELEASE_GH_TOKEN:?Set a contents:write token scoped to the private IPA destination in SM64_IPA_RELEASE_GH_TOKEN}"
+    [[ -n "$token" ]] || { echo 'Private build token is unavailable for IPA delivery' >&2; return 1; }
     [[ "$SM64_IPA_PRIVATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
         echo 'Private IPA destination must be owner/repo' >&2
         return 1
@@ -228,8 +230,12 @@ upload_private_ipa() {
         echo 'Public source repository cannot be the IPA destination' >&2
         return 1
     }
+    [[ "$SM64_IPA_PRIVATE_REPOSITORY" == "$SM64_ASSET_PRIVATE_REPOSITORY" ]] || {
+        echo 'Asset and IPA storage must use the same repository for this single-token setup' >&2
+        return 1
+    }
     repository=$SM64_IPA_PRIVATE_REPOSITORY
-    visibility=$(GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh api "repos/$repository" --jq '.private')
+    visibility=$(GH_TOKEN="$token" gh api "repos/$repository" --jq '.private')
     [[ "$visibility" == true ]] || { echo 'IPA destination repository is not private' >&2; return 1; }
     [[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[0-9]+$ ]] || {
         echo 'GitHub run identifiers are required to create a unique private draft release' >&2
@@ -238,12 +244,12 @@ upload_private_ipa() {
     tag="sm64-ios-unsigned-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     checksum_file="$private_dir/$(basename "$ipa").sha256"
     printf '%s  %s\n' "$digest" "$(basename "$ipa")" >"$checksum_file"
-    GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh release create "$tag" \
+    GH_TOKEN="$token" gh release create "$tag" \
         --repo "$repository" --draft \
         --title "SM64 iOS unsigned test build ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
         --notes "Connected-world test build from commit ${GITHUB_SHA:-unknown}. Unsigned IPA; device behavior remains unverified." \
         >"$private_dir/private-release-create.log"
-    GH_TOKEN="$SM64_IPA_RELEASE_GH_TOKEN" gh release upload "$tag" \
+    GH_TOKEN="$token" gh release upload "$tag" \
         "$ipa" "$checksum_file" --repo "$repository" \
         >"$private_dir/private-release-upload.log"
 }
