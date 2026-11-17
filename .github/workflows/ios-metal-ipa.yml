@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ci/ios-metal-m57-25c]
+    branches: [ios, ci/ios-metal-m57-25c]
   workflow_dispatch:
     inputs:
       full_game:
