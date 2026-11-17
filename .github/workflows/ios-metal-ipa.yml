@@ -1,21 +1,21 @@
-name: iOS Metal CI (asset-safe)
+name: Native iOS Metal IPA
 
-# This path already exists on the default branch, so GitHub permits a manual
-# dispatch against the isolated CI branch. There are no push or PR triggers.
 on:
+  push:
+    branches: [ci/ios-metal-m57-25c]
   workflow_dispatch:
     inputs:
       full_game:
-        description: Build and validate an unsigned game IPA using a separate private asset repository (never upload it)
+        description: Build, validate, and privately deliver the unsigned game IPA
         type: boolean
         required: true
-        default: false
+        default: true
       asset_bundle_release_tag:
-        description: Draft release tag in the configured private asset repository; required for full_game
+        description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
         required: false
       hyrule_o2r_release_tag:
-        description: Optional private draft O2R release tag; leave empty for the normal connected-world build
+        description: Optional private draft O2R release tag; leave blank for connected Castle Grounds only
         type: string
         required: false
 
@@ -23,14 +23,43 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-metal-ci-${{ github.ref }}
+  group: ios-metal-ipa-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  ios-metal:
-    if: github.repository == 'LawrenceBanes/sm64ios-metal'
+  linux-checks:
+    if: >-
+      github.repository == 'LawrenceBanes/sm64ios-metal' &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libsdl2-dev
+      - name: Run Linux regressions and host checks
+        run: |
+          CC=clang tests/run_linux_checks.sh
+          tests/check_metal_project_wiring.sh
+      - name: Validate Python tools and shell scripts
+        run: |
+          python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/ci_summarize_build_log.py
+          bash -n ios/build_sdl2_ios.sh ios/build_ios_metal_ci.sh
+          python3 -m unittest discover -s ios -p 'test_ci_summarize_build_log.py'
+
+  ios-arm64-ipa:
+    needs: linux-checks
+    if: >-
+      github.repository == 'LawrenceBanes/sm64ios-metal' &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
     runs-on: xcode-27
     timeout-minutes: 90
+    permissions:
+      contents: read
     env:
       SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
       IOS_HYRULE_WORLD: '0'
@@ -41,18 +70,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build pinned SDL2 and validate iOS Metal/MSL
+      - name: Build SDL2 and validate Metal/MSL with Xcode 27
         shell: bash
         run: bash ios/build_ios_metal_ci.sh validate
 
-      - name: Compile full game and validate IPA on runner only
-        if: ${{ inputs.full_game }}
+      - name: Build complete app, package IPA, and upload only to private vault
+        if: ${{ inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
           SM64_IPA_PRIVATE_REPOSITORY: ${{ vars.SM64_IPA_PRIVATE_REPOSITORY }}
           SM64_PRIVATE_BUILD_GH_TOKEN: ${{ secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
-          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
+          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag || vars.SM64_ASSET_BUNDLE_RELEASE_TAG }}
           HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
           IOS_HYRULE_WORLD: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
