@@ -1,51 +1,14 @@
 # Native arm64 iOS IPA build
 
-`.github/workflows/ios-metal-ipa.yml` is the full, manual-only iPhoneOS build. It runs the Metal `sm64ios` Xcode target on the Xcode 27 arm64 GitHub runner, builds SDL2 from a pinned upstream source revision, uses the already-extracted USA assets, creates an unsigned IPA, and validates its layout and Mach-O architecture. The ROM-independent Apple compiler workflow remains separate.
+The current CI entry point and private-asset requirements are documented in [GitHub Actions CI](GITHUB_ACTIONS_CI.md). This file intentionally contains no command that uploads extracted assets or a game IPA to the public source repository.
 
-## Pinned SDL2 dependency
+The pinned SDL2 dependency is commit `5d249570393f7a37e037abf22cd6012a4cc56a71` (SDL 2.32.10). `ios/build_sdl2_ios.sh` applies the project's UIKit scene/orientation patches, builds SDL's iOS static library for arm64, verifies the UIKit entry point and architecture, and stages headers. The full game build additionally needs GNU Make 4+, GNU binutils `gobjcopy`, Xcode 27.1+ with an iPhoneOS 27 SDK, and a private bundle of locally extracted USA game assets.
 
-The workflow installs GNU Make 4+ because the game Makefile uses its shell-assignment syntax, plus GNU binutils for extracting sound-sequence data, then fetches SDL2 commit `5d249570393f7a37e037abf22cd6012a4cc56a71` (SDL 2.32.10) and verifies the checkout before building. Data-only `.s` sound sequences are assembled as temporary x86_64 ELF objects and converted to raw `.m64` blobs with the absolute Homebrew `gobjcopy` path passed into the Xcode script phase; they are not linked into the arm64 iOS executable. `ios/build_sdl2_ios.sh` builds SDL's `Static Library-iOS` target for arm64, checks the archive contains SDL's UIKit entry point and has the right architecture, stages `libSDL2.a`, and copies upstream headers into `include/SDL2`. SDL 2.32.10 has no separate `SDLmain-iOS` target; its static library includes `SDL_uikit_main.c`. Xcode 27 currently supports iOS deployment targets from 15.0 upward, so the app and SDL library use iOS 15.0 as their minimum. The iOS link uses Apple's `libc++` and omits desktop-only `-no-pie`, `-lpthread`, `libstdc++`, and IOKit flags. No SDL binary is committed.
+The reusable `ios/build_ios_metal_ci.sh` supports two modes:
 
-The pinned source release is available from [SDL's upstream release page](https://github.com/libsdl-org/SDL/releases/tag/release-2.32.10). SDL documents its Xcode-based iOS builds in [README-ios](https://github.com/libsdl-org/SDL/blob/release-2.32.10/docs/README-ios.md).
+- `validate`: build SDL2, compile the Objective-C Metal backend for iPhoneOS and simulator, generate MSL shader variants, and compile them with Apple's Metal tools. No game assets are needed.
+- `full`: after `validate` in the same output directory, retrieve a checksummed bundle from a separate authenticated private repository, compile the full Metal app without code signing, package `Payload/sm64ios.app` as an unsigned IPA, and run the structural/architecture/resource validator. Optional Hyrule input is also private and opt-in.
 
-## Private asset handoff
+The IPA and raw full-game build log stay on the runner and are removed when the job ends. Only asset-free logs and a bounded build summary are uploaded. This CI does not create a downloadable IPA or establish on-device gameplay. Distribution of an asset-bearing build requires a separate decision and process.
 
-The ROM stays in the developer checkout. Create an archive from the 1,538 USA-mapped extracted files only:
-
-```sh
-python3 ios/asset_bundle.py create /tmp/sm64-assets.tar.gz
-```
-
-For the simplest transfer, use a temporary **draft release in the private project repository**. It requires no extra hosting account or URL secret. The IPA workflow keeps the draft release after a run so it remains available for retries; remove it manually after you no longer need the bundle:
-
-```sh
-bundle=/tmp/sm64-assets.tar.gz
-python3 ios/asset_bundle.py create "$bundle"
-sha256sum "$bundle" | awk '{print $1}' > /tmp/sm64-assets.sha256
-tag="sm64-assets-$(date -u +%Y%m%dT%H%M%SZ)-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-gh release create "$tag" "$bundle" /tmp/sm64-assets.sha256 \
-  --repo LawrenceBanes/sm64ios-metal \
-  --draft \
-  --title 'Temporary private asset bundle' \
-  --notes 'Temporary private asset bundle for sm64ios-metal IPA build.'
-gh workflow run ios-metal-ipa.yml \
-  --repo LawrenceBanes/sm64ios-metal \
-  --ref ios \
-  -f "asset_bundle_release_tag=$tag"
-```
-
-The manual workflow downloads the two files using its repository-scoped token and validates the SHA-256 and archive contents. The checksum file may contain only the digest or standard `sha256sum` output with the archive filename. Draft releases do not create a Git tag ref. This places the asset bundle in GitHub's private release storage; it is not published and is not attached to the IPA artifact. Confirm the repository remains private. If you prefer an owner-controlled private object store, the workflow also accepts the existing `SM64_ASSET_BUNDLE_URL` and `SM64_ASSET_BUNDLE_SHA256` Actions secrets instead.
-
-The archive is limited to the USA-mapped regular asset files and checked against `assets.json`, then extracted into the temporary runner checkout. The build uses `NOEXTRACT=1` and never needs the ROM. An `always()` cleanup removes extracted files and temporary SDL/build data. Neither archive nor ROM is uploaded as an Actions artifact or committed.
-
-The produced IPA contains the compiled game assets, so keep this repository private. After IPA validation succeeds, every workflow run publishes a **new private prerelease** tagged `ios-unsigned-ipa-<run number>-<attempt>` with the IPA and a `.sha256` checksum file. Reruns get a distinct attempt number and do not replace earlier releases. The Actions artifact remains available for one day for build logs; the release is the durable phone-download link. The release notes identify the source commit and clarify that compilation does not prove on-device rendering. Do not mirror the IPA or asset bundle to a public release or artifact store.
-
-## IPA packaging and checks
-
-`ios/package_unsigned_ipa.py` creates `Payload/<app>.app` and zips it as an unsigned `.ipa`; it does not invoke signing and preserves executable modes. It is portable, so Linux tests exercise the actual packaging routine. `ios/validate_ipa.py` checks the ZIP structure, `Info.plist`, iPhone support, landscape metadata, compiled touch-control `Assets.car`, an arm64 iPhoneOS main executable, arm64 embedded frameworks, absence of provisioning/signature files, and system or embedded dynamic dependencies via `otool`.
-
-The Linux unit tests exercise IPA parsing with synthetic Mach-O headers; that is only a validator test, not a build or install result. A CI IPA passing these checks still needs SideStore signing and a real iPhone install/launch before runtime success can be claimed.
-
-## Current status
-
-The full Xcode 27.1 scene-aware build passed in Actions run `41137642774`, and its IPA passed the updated lifecycle-aware validator. New successful workflow runs now each publish a distinct private prerelease with the unsigned IPA and checksum. The IPA requires SideStore. Device runtime behavior still requires testing on the iPhone.
+The host-side IPA tests use synthetic fixtures. They verify packaging and validator behavior, not Apple compilation or iPhone installation.

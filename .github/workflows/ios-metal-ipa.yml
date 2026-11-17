@@ -1,268 +1,66 @@
-name: Native iOS Metal IPA
+name: iOS Metal CI (asset-safe)
 
+# This path already exists on the default branch, so GitHub permits a manual
+# dispatch against the isolated CI branch. There are no push or PR triggers.
 on:
-  push:
-    branches: [ios]
   workflow_dispatch:
     inputs:
+      full_game:
+        description: Build and validate an unsigned game IPA using a separate private asset repository (never upload it)
+        type: boolean
+        required: true
+        default: false
       asset_bundle_release_tag:
-        description: Temporary private release tag containing sm64-assets.tar.gz and sm64-assets.sha256 (leave empty to use configured HTTPS URL secrets; [build-ipa] pushes use the current draft bundle)
-        required: false
+        description: Draft release tag in the configured private asset repository; required for full_game
         type: string
+        required: false
       hyrule_o2r_release_tag:
-        description: Optional private draft release tag containing oot.o2r and oot.o2r.sha256; enables the opt-in Hyrule Field level
-        required: false
+        description: Optional private draft O2R release tag; leave empty for the normal connected-world build
         type: string
+        required: false
 
 permissions:
   contents: read
 
-jobs:
-  linux-checks:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Linux test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes libsdl2-dev
-      - name: Run Linux checks
-        run: |
-          tests/run_linux_checks.sh
-          tests/check_metal_project_wiring.sh
-      - name: Validate Python tools and shell scripts
-        run: |
-          python3 -m py_compile tools/hyrule_importer.py tests/test_hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/validate_ipa.py ios/test_ipa_validation.py ios/test_asset_checksum.py ios/test_scene_lifecycle.py ios/test_ios_diagnostics.py ios/test_ios_diagnostics_migration.py ios/test_ios_metal_presentation.py ios/test_ios_scene_startup.py ios/test_ios_landscape_geometry.py ios/test_ios_touch_pipeline.py ios/test_texture_cache_reset.py ios/test_render_diagnostics.py ios/test_metal_graphics_foundation.py ios/test_hd_texture_overrides.py ios/test_hyrule_gateway.py ios/test_hyrule_asset_workflow.py ios/patch_sdl2_ios27_orientation.py
-          bash -n ios/build_sdl2_ios.sh
-          python3 ios/test_scene_lifecycle.py
-          python3 ios/test_ios_diagnostics.py
-          python3 ios/test_ios_diagnostics_migration.py
-          python3 ios/test_ios_metal_presentation.py
-          python3 ios/test_ios_scene_startup.py
-          python3 ios/test_ios_landscape_geometry.py
-          python3 ios/test_ios_touch_pipeline.py
-          python3 ios/test_texture_cache_reset.py
-          python3 ios/test_render_diagnostics.py
-          python3 ios/test_hd_texture_overrides.py
-          python3 ios/test_hyrule_gateway.py
-          python3 ios/test_hyrule_asset_workflow.py
-          (cd ios && python3 -m unittest -v test_asset_checksum.py test_ipa_validation.py)
+concurrency:
+  group: ios-metal-ci-${{ github.ref }}
+  cancel-in-progress: false
 
-  ios-arm64-ipa:
-    if: >-
-      github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      github.event.repository.private == true &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+jobs:
+  ios-metal:
+    if: github.repository == 'LawrenceBanes/sm64ios-metal'
     runs-on: xcode-27
     timeout-minutes: 90
-    permissions:
-      contents: write
     env:
       SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
-      ASSET_BUNDLE_URL: ${{ secrets.SM64_ASSET_BUNDLE_URL }}
-      ASSET_BUNDLE_SHA256: ${{ secrets.SM64_ASSET_BUNDLE_SHA256 }}
-      ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
-      HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
+      IOS_HYRULE_WORLD: '0'
+      IOS_CONNECTED_WORLD_TEST: '1'
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify Xcode and iOS 27 SDK
-        run: |
-          xcodebuild -version
-          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
-          echo "iPhoneOS SDK: $sdk_version"
-          [[ "$sdk_version" == 27.* ]]
-      - name: Install GNU Make 4 for game build
-        run: |
-          if ! command -v gmake >/dev/null 2>&1 || ! gmake --version | head -n 1 | grep -Eq 'GNU Make ([4-9]|[1-9][0-9])\.'; then
-            brew install make
-          fi
-          gmake --version | head -n 1
-      - name: Install GNU binutils for sound-data extraction
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build pinned SDL2 and validate iOS Metal/MSL
         shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v gobjcopy >/dev/null 2>&1; then
-            brew install binutils
-          fi
-          binutils_prefix=$(brew --prefix binutils)
-          gobjcopy_path="$binutils_prefix/bin/gobjcopy"
-          if [[ ! -x "$gobjcopy_path" ]]; then
-            gobjcopy_path=$(find "$binutils_prefix" -type f -name gobjcopy -perm -u+x -print -quit)
-          fi
-          [[ -x "$gobjcopy_path" ]] || { echo "gobjcopy not found under $binutils_prefix" >&2; exit 1; }
-          "$gobjcopy_path" --version | head -n 1
-          echo "IOS_OBJCOPY=$gobjcopy_path" >> "$GITHUB_ENV"
-      - name: Check private asset configuration
+        run: bash ios/build_ios_metal_ci.sh validate
+
+      - name: Compile full game and validate IPA on runner only
+        if: ${{ inputs.full_game }}
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "push" && -z "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
-            ASSET_BUNDLE_RELEASE_TAG=sm64-assets-20261031-04
-            echo "ASSET_BUNDLE_RELEASE_TAG=$ASSET_BUNDLE_RELEASE_TAG" >> "$GITHUB_ENV"
-            echo "Using the existing temporary private asset draft for this explicitly marked IPA build."
-          fi
-          if [[ -n "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
-            [[ "$ASSET_BUNDLE_RELEASE_TAG" =~ ^sm64-assets-[A-Za-z0-9._-]+$ ]] || { echo "Temporary asset release tag must start with sm64-assets-." >&2; exit 1; }
-            release_metadata=$(gh release view "$ASSET_BUNDLE_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body)
-            python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and d["body"] == "Temporary private asset bundle for sm64ios-metal IPA build."' "$release_metadata"
-            echo "Using asset bundle from temporary release in this private repository."
-          elif [[ -z "$ASSET_BUNDLE_URL" || -z "$ASSET_BUNDLE_SHA256" ]]; then
-            echo "Supply a temporary private asset release tag or configure SM64_ASSET_BUNDLE_URL and SM64_ASSET_BUNDLE_SHA256." >&2
-            echo "Never commit ROMs or extracted assets." >&2
-            exit 1
-          fi
-          if [[ -z "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
-            [[ "$ASSET_BUNDLE_URL" == https://* ]] || { echo "Asset URL must use HTTPS." >&2; exit 1; }
-            [[ "$ASSET_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Asset SHA-256 secret must contain 64 hex characters." >&2; exit 1; }
-          fi
-          if [[ -n "$HYRULE_O2R_RELEASE_TAG" ]]; then
-            [[ "$HYRULE_O2R_RELEASE_TAG" =~ ^hyrule-o2r-[A-Za-z0-9._-]+$ ]] || { echo "OoT archive release tag must start with hyrule-o2r-." >&2; exit 1; }
-            hyrule_release_metadata=$(gh release view "$HYRULE_O2R_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,body)
-            python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and d["body"] == "Temporary private Ocarina archive for Hyrule-enabled iOS IPA build."' "$hyrule_release_metadata"
-            echo "Validated the optional Ocarina archive is stored in a private draft release."
-          fi
-      - name: Download private extracted assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [[ -n "$ASSET_BUNDLE_RELEASE_TAG" ]]; then
-            gh release download "$ASSET_BUNDLE_RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern 'sm64-assets.tar.gz' \
-              --pattern 'sm64-assets.sha256' \
-              --dir "$RUNNER_TEMP"
-            ASSET_BUNDLE_SHA256=$(python3 ios/asset_checksum.py "$RUNNER_TEMP/sm64-assets.sha256" sm64-assets.tar.gz)
-          else
-            curl --fail --silent --show-error --location --retry 3 "$ASSET_BUNDLE_URL" -o "$RUNNER_TEMP/sm64-assets.tar.gz"
-          fi
-          [[ "$ASSET_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Asset SHA-256 is missing or malformed." >&2; exit 1; }
-          python3 - "$RUNNER_TEMP/sm64-assets.tar.gz" "$ASSET_BUNDLE_SHA256" <<'PY'
-          import hashlib, pathlib, sys
-          digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest()
-          if digest.lower() != sys.argv[2].lower():
-              raise SystemExit("private asset bundle SHA-256 mismatch")
-          print("private asset bundle checksum verified")
-          PY
-          python3 ios/asset_bundle.py extract "$RUNNER_TEMP/sm64-assets.tar.gz" --root "$GITHUB_WORKSPACE"
-      - name: Download and validate optional private OoT archive
-        if: ${{ env.HYRULE_O2R_RELEASE_TAG != '' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release download "$HYRULE_O2R_RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'oot.o2r' \
-            --pattern 'oot.o2r.sha256' \
-            --dir "$RUNNER_TEMP"
-          archive_sha=$(python3 ios/asset_checksum.py "$RUNNER_TEMP/oot.o2r.sha256" oot.o2r)
-          python3 - "$RUNNER_TEMP/oot.o2r" "$archive_sha" <<'PY'
-          import hashlib, pathlib, sys, zipfile
-          archive = pathlib.Path(sys.argv[1])
-          if archive.stat().st_size > 512 * 1024 * 1024:
-              raise SystemExit("oot.o2r exceeds the 512 MiB private asset limit")
-          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          if digest.lower() != sys.argv[2].lower():
-              raise SystemExit("oot.o2r SHA-256 mismatch")
-          with zipfile.ZipFile(archive) as bundle:
-              bad_member = bundle.testzip()
-              if bad_member is not None:
-                  raise SystemExit(f"oot.o2r contains a corrupt ZIP member: {bad_member}")
-              names = set(bundle.namelist())
-              if "scenes/shared/spot00_scene/spot00_scene" not in names:
-                  raise SystemExit("oot.o2r is missing the Hyrule Field spot00 scene resource")
-          print("Private OoT archive checksum and Hyrule Field resource verified")
-          PY
-          echo "HYRULE_O2R_PATH=$RUNNER_TEMP/oot.o2r" >> "$GITHUB_ENV"
-          echo "IOS_HYRULE_WORLD=1" >> "$GITHUB_ENV"
-      - name: Fetch pinned SDL2 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git init "$RUNNER_TEMP/SDL2"
-          git -C "$RUNNER_TEMP/SDL2" remote add origin https://github.com/libsdl-org/SDL.git
-          git -C "$RUNNER_TEMP/SDL2" fetch --depth 1 origin "$SDL2_REVISION"
-          git -C "$RUNNER_TEMP/SDL2" checkout --detach FETCH_HEAD
-          test "$(git -C "$RUNNER_TEMP/SDL2" rev-parse HEAD)" = "$SDL2_REVISION"
-      - name: Build SDL2 arm64 iOS static libraries
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/ios-products/Release-iphoneos"
-          ios/build_sdl2_ios.sh \
-            "$RUNNER_TEMP/SDL2" \
-            "$RUNNER_TEMP/ios-products/Release-iphoneos" \
-            "$RUNNER_TEMP/sdl2-stage" 2>&1 | tee "$RUNNER_TEMP/sdl2-build.log"
-      - name: Build native iOS Metal app and create unsigned IPA
-        shell: bash
-        run: |
-          set -euo pipefail
-          PRODUCT_DIR="$RUNNER_TEMP/ios-products/Release-iphoneos"
-          SDL_STAGE="$RUNNER_TEMP/sdl2-stage"
-          SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 xcodebuild \
-            -project sm64ios/sm64ios.xcodeproj \
-            -scheme sm64ios \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            SYMROOT="$RUNNER_TEMP/ios-products" \
-            CONFIGURATION_BUILD_DIR="$PRODUCT_DIR" \
-            SDL2_ROOT="$SDL_STAGE" \
-            SDL2_INCLUDE_DIR="$SDL_STAGE/include" \
-          IOS_OBJCOPY="$IOS_OBJCOPY" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
-          python3 ios/package_unsigned_ipa.py "$PRODUCT_DIR/sm64ios.app" "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa"
-      - name: Validate IPA layout, app metadata, bundled fallback textures, arm64 slices, and linked dependencies
-        run: python3 ios/validate_ipa.py "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" --require-system-deps --require-game-textures
-      - name: Publish this build as a new private prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_tag="ios-unsigned-ipa-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          checksum_file="$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa.sha256"
-          sha256sum "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" > "$checksum_file"
-          gh release create "$release_tag" \
-            "$RUNNER_TEMP/sm64ios-arm64-unsigned.ipa" \
-            "$checksum_file" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Unsigned iOS IPA — build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
-            --notes "Validated unsigned arm64 iOS IPA from commit ${GITHUB_SHA}. Download the IPA and checksum below. Install with SideStore; this release does not establish successful on-device rendering." \
-            --prerelease
-          echo "Published private release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${release_tag}"
-          cat "$checksum_file"
-      - name: Upload private IPA and build logs
+          SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
+          SM64_ASSET_GH_TOKEN: ${{ secrets.SM64_ASSET_GH_TOKEN }}
+          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag }}
+          HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
+          IOS_HYRULE_WORLD: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
+        run: bash ios/build_ios_metal_ci.sh full
+
+      - name: Upload asset-free diagnostics only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sm64ios-arm64-unsigned-ipa
-          path: |
-            ${{ runner.temp }}/sm64ios-arm64-unsigned.ipa
-            ${{ runner.temp }}/sdl2-build.log
-            ${{ runner.temp }}/ios-build.log
-          if-no-files-found: ignore
-          retention-days: 1
-      - name: Remove local ROM-derived assets and temporary dependency files
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          python3 ios/asset_bundle.py clean --root "$GITHUB_WORKSPACE"
-          rm -f "$RUNNER_TEMP/sm64-assets.tar.gz"
-          rm -rf "$RUNNER_TEMP/SDL2" "$RUNNER_TEMP/sdl2-stage" "$RUNNER_TEMP/DerivedData" "$RUNNER_TEMP/ios-products"
-          rm -f "$RUNNER_TEMP/oot.o2r" "$RUNNER_TEMP/oot.o2r.sha256"
-          rm -rf "$GITHUB_WORKSPACE/build/hyrule_field_import"
-          rm -f "$GITHUB_WORKSPACE/build/hyrule_field_generated.inc.c" "$GITHUB_WORKSPACE/build/hyrule_field_spawn.h"
-          rm -rf "$GITHUB_WORKSPACE/build/us_pc"
+          name: ios-metal-safe-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/sm64-ios-ci/safe/
+          if-no-files-found: warn
+          retention-days: 7

@@ -13,14 +13,19 @@ from validate_ipa import validate
 
 
 class IpaValidationTests(unittest.TestCase):
-    def test_ipa_workflow_preserves_private_asset_release_for_retries(self) -> None:
+    def test_ipa_workflow_requires_private_assets_and_never_publishes_game_payload(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ios-metal-ipa.yml").read_text()
+        script = (Path(__file__).resolve().parent / "build_ios_metal_ci.sh").read_text()
         self.assertIn("asset_bundle_release_tag", workflow)
-        self.assertNotIn("gh release delete", workflow)
-        self.assertIn("branches: [ios]", workflow)
-        self.assertIn("contains(github.event.head_commit.message, '[build-ipa]')", workflow)
-        self.assertIn("ASSET_BUNDLE_RELEASE_TAG=sm64-assets-20261031-04", workflow)
-        self.assertIn("--require-game-textures", workflow)
+        self.assertIn("SM64_ASSET_PRIVATE_REPOSITORY", workflow)
+        self.assertIn("SM64_ASSET_GH_TOKEN", workflow)
+        self.assertIn("github.repository == 'LawrenceBanes/sm64ios-metal'", workflow)
+        self.assertIn("if: ${{ inputs.full_game }}", workflow)
+        self.assertNotIn("gh release create", workflow)
+        self.assertNotIn("Upload unsigned IPA", workflow)
+        self.assertIn("Asset repository is not private", script)
+        self.assertIn("Public source repository cannot be the asset repository", script)
+        self.assertIn("--require-game-textures", script)
 
     def make_app(self, path: Path, cpu_type: int = 0x0100000C, platform: int = 2,
                  include_game_textures: bool = False) -> Path:

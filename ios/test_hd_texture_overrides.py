@@ -22,6 +22,7 @@ def main() -> None:
     metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
     main_source = (ROOT / "src/pc/pc_main.m").read_text()
     workflow = (ROOT / ".github/workflows/ios-metal-ipa.yml").read_text()
+    ci_script = (ROOT / "ios/build_ios_metal_ci.sh").read_text()
 
     for token in (
         "gfx_hd_texture_dimensions_compatible",
@@ -55,9 +56,10 @@ def main() -> None:
     require("configPrecacheRes = false;" in main_source and
             "bundled-original fallback" in main_source,
             "iOS must load active textures lazily and avoid walking the full pack")
-    require("EXTERNAL_DATA=1 xcodebuild" in workflow,
+    require("EXTERNAL_DATA=1" in ci_script and "xcodebuild" in ci_script and
+            "--require-game-textures" in ci_script,
             "iOS IPA must retain canonical external texture names and bundle originals")
-    require("RENDER96" not in workflow,
+    require("RENDER96" not in workflow + ci_script,
             "third-party pack artwork must not be downloaded or packaged by CI")
 
     print("iOS HD texture override integration checks passed")
