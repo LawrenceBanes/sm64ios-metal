@@ -21,7 +21,8 @@ Run `tests/run_linux_checks.sh`. It tests portable shader generation and scene-c
 
 Set the Xcode build setting `IOS_HAT_MOVEMENT=1`, or run
 `IOS_HAT_MOVEMENT=1 bash build_ios.sh` on the configured Mac. The default is
-`0`. This option works with either Hyrule setting.
+`0`. This option works with either Hyrule setting. For a manually dispatched
+full-game build, select the workflow's `hat_movement` input.
 
 - Tap **HAT** below the on-screen **B**, or press the controller's top face
   button (SDL **Y**, Xbox **Y**, PlayStation **Triangle**). A custom mapping

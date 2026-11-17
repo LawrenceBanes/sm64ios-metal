@@ -14,6 +14,11 @@ on:
         description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
         required: false
+      hat_movement:
+        description: Enable hat throw and bounce for an iPhone test build
+        type: boolean
+        required: false
+        default: false
       hyrule_o2r_release_tag:
         description: Optional private draft O2R release tag; leave blank for connected Castle Grounds only
         type: string
@@ -87,6 +92,7 @@ jobs:
           HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
           IOS_HYRULE_WORLD: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HYRULE_GATE_DIAGNOSTICS: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
+          IOS_HAT_MOVEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.hat_movement && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
 
       - name: Upload asset-free diagnostics only

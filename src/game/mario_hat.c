@@ -223,9 +223,6 @@ void mario_hat_execute_throw(struct MarioState *m) {
 
 void mario_hat_update(struct MarioState *m) {
     const bool grounded = ground_action_can_throw(m->action);
-    if (grounded && m->floor != NULL && m->pos[1] <= m->floorHeight + 4.0f) {
-        sHat.bouncedThisAirTime = false;
-    }
     if (!can_keep_hat_out(m)) {
         cancel_hat(m);
         return;
@@ -262,10 +259,17 @@ void mario_hat_finish_frame(struct MarioState *m) {
     }
 }
 
-bool mario_hat_try_bounce(struct MarioState *m, const float previous[3]) {
+void mario_hat_on_landing(const struct MarioState *m) {
+    if (m == gMarioState) {
+        sHat.bouncedThisAirTime = false;
+    }
+}
+
+bool mario_hat_try_bounce(struct MarioState *m, const float previous[3],
+                          float startTime, float endTime) {
     if (m != gMarioState || !mario_hat_is_away() || !normal_air_action(m->action)
         || !can_keep_hat_out(m)
-        || !ios_hat_bounce(&sHat, previous, m->pos, &m->vel[1], hat_path_blocked)) {
+        || !ios_hat_bounce(&sHat, previous, m->pos, startTime, endTime, &m->vel[1], hat_path_blocked)) {
         return false;
     }
 

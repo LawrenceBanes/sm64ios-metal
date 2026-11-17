@@ -146,14 +146,14 @@ define level_rules =
 endef
 
 # The generated level rule/header tables depend on build-time options as well
-# as their source files. Track both opt-in world modes so a reused build
-# directory cannot silently keep stale level, geometry, or collision objects.
+# as their source files. Track the world and gate options so a reused build
+# directory cannot silently keep objects compiled for a different mode.
 .PHONY: FORCE
 FORCE:
 
 $(BUILD_DIR)/.ios_world_mode: FORCE
 	@mkdir -p "$(BUILD_DIR)"
-	@printf '%s %s\n' '$(IOS_HYRULE_WORLD)' '$(IOS_CONNECTED_WORLD_TEST)' > "$@.tmp"
+	@printf '%s %s %s\n' '$(IOS_HYRULE_WORLD)' '$(IOS_CONNECTED_WORLD_TEST)' '$(IOS_HYRULE_GATE_DIAGNOSTICS)' > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
 # These objects embed the partition dimensions and/or opt-in collision scans.

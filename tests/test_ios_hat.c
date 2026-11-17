@@ -21,7 +21,7 @@ static struct MarioBodyState body;
 static struct Controller controller;
 static struct Surface ground;
 static struct GraphNode model;
-static bool poolFull, obstructed;
+static bool poolFull, obstructed, floorMissing;
 static unsigned bounces, throws;
 static f32 floorY;
 
@@ -50,7 +50,7 @@ void play_sound(s32 bits, f32 *pos) {
 
 f32 find_floor(f32 x, f32 y, f32 z, struct Surface **floor) {
     (void)x; (void)y; (void)z;
-    *floor = &ground;
+    *floor = floorMissing ? NULL : &ground;
     return floorY;
 }
 
@@ -97,7 +97,7 @@ static struct MarioState *fixture(void) {
     gCurrentArea = &area;
     sWarpDest.type = WARP_TYPE_NOT_WARPING;
     sDelayedWarpOp = WARP_OP_NONE;
-    poolFull = obstructed = false;
+    poolFull = obstructed = floorMissing = false;
     floorY = 0.0f;
     throws = bounces = 0;
     gLoadedGraphNodes[MODEL_MARIOS_CAP] = &model;
@@ -121,8 +121,8 @@ static void throw_hat(struct MarioState *m) {
     controller.buttonPressed = 0;
 }
 
-static bool bounce_from_above(struct MarioState *m) {
-    m->action = ACT_JUMP;
+static bool bounce_from_above(struct MarioState *m, u32 action) {
+    m->action = action;
     m->pos[0] = hatObject.oPosX - 5.0f;
     m->pos[1] = hatObject.oPosY + 25.0f;
     m->pos[2] = hatObject.oPosZ;
@@ -132,6 +132,13 @@ static bool bounce_from_above(struct MarioState *m) {
     assert(perform_air_step(m, 0) == AIR_STEP_NONE);
     assert(m->vel[0] == 20.0f && m->vel[2] == -4.0f);
     return m->vel[1] == IOS_HAT_BOUNCE_IMPULSE;
+}
+
+static void land_on_floor(struct MarioState *m) {
+    m->pos[1] = m->floorHeight + 3.0f;
+    m->vel[0] = m->vel[2] = 0.0f;
+    m->vel[1] = -20.0f;
+    assert(perform_air_step(m, 0) == AIR_STEP_LANDED);
 }
 
 static void test_gameplay(void) {
@@ -144,15 +151,15 @@ static void test_gameplay(void) {
     assert(m->actionTimer == 9 && m->prevAction == ACT_WALKING);
     assert(m->input == (INPUT_A_PRESSED | INPUT_B_PRESSED));
     assert(m->flags == (MARIO_NORMAL_CAP | MARIO_CAP_ON_HEAD));
-    assert(!bounce_from_above(m)); // A cap still inside the thrower's reach cannot bounce.
+    assert(!bounce_from_above(m, ACT_JUMP)); // A cap still inside the thrower's reach cannot bounce.
     for (int i = 0; i < 16; ++i) mario_hat_update(m);
     obstructed = true;
-    assert(!bounce_from_above(m)); // The cap is within range but behind a surface.
+    assert(!bounce_from_above(m, ACT_JUMP)); // The cap is within range but behind a surface.
     obstructed = false;
-    assert(bounce_from_above(m));
+    assert(bounce_from_above(m, ACT_JUMP));
     assert(m->action == ACT_JUMP && m->peakHeight == m->pos[1]);
     assert(bounces == 1);
-    assert(!bounce_from_above(m)); // Already returning.
+    assert(!bounce_from_above(m, ACT_JUMP)); // Already returning.
     for (int i = 0; i < 32; ++i) mario_hat_update(m);
     assert(!mario_hat_is_away() && hatObject.activeFlags == ACTIVE_FLAG_DEACTIVATED);
 
@@ -165,15 +172,69 @@ static void test_gameplay(void) {
     assert(mario_hat_is_away() && hatObject.oPosY == 149.0f && hatObject.oPosX > startX);
     assert(m->vel[1] == -4.0f);
     for (int i = 0; i < 16; ++i) mario_hat_update(m);
-    assert(!bounce_from_above(m)); // No extra bounce after a midair rethrow.
+    assert(!bounce_from_above(m, ACT_JUMP)); // No extra bounce after a midair rethrow.
     for (int i = 0; i < 64; ++i) mario_hat_update(m);
     assert(!mario_hat_is_away() && throws == 2 && bounces == 1);
 
+    land_on_floor(m);
     m->action = ACT_JUMP_LAND;
-    m->pos[1] = 0.0f;
     throw_hat(m);
     for (int i = 0; i < 16; ++i) mario_hat_update(m);
-    assert(bounce_from_above(m) && bounces == 2);
+    assert(bounce_from_above(m, ACT_JUMP) && bounces == 2);
+}
+
+static void test_rapid_jump(u32 landingAction, u32 nextAirAction, bool missingFloor) {
+    struct MarioState *m = fixture();
+    throw_hat(m);
+    for (int i = 0; i < 16; ++i) mario_hat_update(m);
+    assert(bounce_from_above(m, ACT_JUMP));
+    for (int i = 0; i < 32; ++i) mario_hat_update(m);
+
+    floorMissing = missingFloor;
+    land_on_floor(m);
+    floorMissing = false;
+    // Model a landing handler that immediately takes the next jump input.
+    m->action = landingAction;
+    m->input = INPUT_A_PRESSED | INPUT_Z_DOWN;
+    mario_hat_update(m);
+    assert(m->action == landingAction);
+    m->action = nextAirAction;
+    m->input = INPUT_A_DOWN;
+    m->vel[1] = 48.0f;
+    for (int i = 0; i < 5; ++i) {
+        assert(perform_air_step(m, 0) == AIR_STEP_NONE);
+    }
+    throw_hat(m);
+    for (int i = 0; i < 16; ++i) mario_hat_update(m);
+    assert(bounce_from_above(m, nextAirAction) == !missingFloor);
+}
+
+static void test_crossing_paths(bool shouldBounce) {
+    struct MarioState *m = fixture();
+    m->action = ACT_WALKING;
+    m->forwardVel = 32.0f;
+    throw_hat(m);
+    for (int i = 0; i < 4; ++i) mario_hat_update(m);
+    const f32 hatStartZ = hatObject.oPosZ;
+    mario_hat_update(m);
+    const f32 hatEndZ = hatObject.oPosZ;
+
+    // The feet cross the cap plane five eighths into the tick, in the third
+    // quarter step. Mario moves against the cap's outward direction.
+    const f32 contactZ = hatStartZ + (hatEndZ - hatStartZ) * 0.625f;
+    const f32 separation = shouldBounce ? -(IOS_HAT_BOUNCE_RADIUS - 4.0f)
+                                        : IOS_HAT_BOUNCE_RADIUS + 4.0f;
+    m->action = ACT_JUMP;
+    m->pos[1] = hatObject.oPosY + 40.0f;
+    m->pos[2] = contactZ + separation + 25.0f; // 40 units/tick times 5/8.
+    m->vel[1] = -32.0f;
+    m->vel[2] = -40.0f;
+
+    // Using only the final cap position gives the opposite result.
+    assert((fabsf(contactZ + separation - hatEndZ) <= IOS_HAT_BOUNCE_RADIUS) != shouldBounce);
+    assert(perform_air_step(m, 0) == AIR_STEP_NONE);
+    assert(bounces == (shouldBounce ? 1u : 0u));
+    assert(m->vel[2] == -40.0f);
 }
 
 // Exercise the normal held-A jump and air steering at two approach speeds.
@@ -285,8 +346,8 @@ static void test_trajectory(void) {
     const float insideStart[3] = { 0.0f, 125.0f, hat.pos[2] };
     const float insideEnd[3] = { 0.0f, 75.0f, hat.pos[2] };
     float velocity = -65.0f;
-    assert(!ios_hat_bounce(&hat, outsideStart, outsideEnd, &velocity, NULL));
-    assert(!ios_hat_bounce(&hat, insideEnd, insideStart, &velocity, NULL));
+    assert(!ios_hat_bounce(&hat, outsideStart, outsideEnd, 0.0f, 1.0f, &velocity, NULL));
+    assert(!ios_hat_bounce(&hat, insideEnd, insideStart, 0.0f, 1.0f, &velocity, NULL));
     assert(velocity == -65.0f);
 
     for (int tick = 0; tick < 18; ++tick) ios_hat_step(&hat, target, NULL);
@@ -299,6 +360,12 @@ static void test_trajectory(void) {
 int main(void) {
     test_trajectory();
     test_gameplay();
+    test_rapid_jump(ACT_BACKFLIP_LAND, ACT_BACKFLIP, false);
+    test_rapid_jump(ACT_SIDE_FLIP_LAND, ACT_DOUBLE_JUMP, false);
+    test_rapid_jump(ACT_LONG_JUMP_LAND, ACT_LONG_JUMP, false);
+    test_rapid_jump(ACT_LONG_JUMP_LAND, ACT_LONG_JUMP, true); // Out-of-bounds fallback.
+    test_crossing_paths(true);
+    test_crossing_paths(false);
     test_jump_onto_hat(0.0f);
     test_jump_onto_hat(32.0f);
     test_air_throw_into_bounce();

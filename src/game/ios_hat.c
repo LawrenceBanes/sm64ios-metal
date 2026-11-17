@@ -27,6 +27,7 @@ bool ios_hat_launch(struct IOSHat *hat, const float pos[3], float x, float z,
     }
 
     memcpy(hat->pos, pos, sizeof(hat->pos));
+    memcpy(hat->previousPos, pos, sizeof(hat->previousPos));
     hat->directionX = x / directionLength;
     hat->directionZ = z / directionLength;
     // A running jump covers more ground before the feet come back down.
@@ -49,6 +50,7 @@ static void recover_hat(struct IOSHat *hat) {
 }
 
 void ios_hat_step(struct IOSHat *hat, const float target[3], IOSHatBlocked blocked) {
+    memcpy(hat->previousPos, hat->pos, sizeof(hat->previousPos));
     if (hat->phase == IOS_HAT_THROWN) {
         if (hat->ticks < hat->decelTicks) {
             const float speed = hat->launchSpeed * (1.0f - hat->ticks / (float)hat->decelTicks);
@@ -85,21 +87,33 @@ void ios_hat_step(struct IOSHat *hat, const float target[3], IOSHatBlocked block
 }
 
 bool ios_hat_bounce(struct IOSHat *hat, const float from[3], const float to[3],
-                    float *velocityY, IOSHatBlocked blocked) {
-    const float top = hat->pos[1] + HAT_TOP;
+                    float startTime, float endTime, float *velocityY, IOSHatBlocked blocked) {
     if (hat->phase != IOS_HAT_THROWN || hat->ticks < ARM_TICKS || hat->bouncedThisAirTime
-        || !(*velocityY < 0.0f) || !(from[1] >= top && to[1] <= top && from[1] > to[1])) {
+        || !(*velocityY < 0.0f)) {
         return false;
     }
 
-    // Test the horizontal position at the instant the feet cross the cap.
-    const float fraction = (from[1] - top) / (from[1] - to[1]);
-    const float contact[3] = { from[0] + (to[0] - from[0]) * fraction, top,
-                               from[2] + (to[2] - from[2]) * fraction };
-    const float x = contact[0] - hat->pos[0];
-    const float z = contact[2] - hat->pos[2];
+    // Match the hat's movement to this portion of Mario's simulation tick.
+    const float hatDeltaY = hat->pos[1] - hat->previousPos[1];
+    const float previousTop = hat->previousPos[1] + HAT_TOP;
+    const float startHeight = from[1] - (previousTop + hatDeltaY * startTime);
+    const float endHeight = to[1] - (previousTop + hatDeltaY * endTime);
+    if (!(startHeight >= 0.0f && endHeight <= 0.0f && startHeight > endHeight)) {
+        return false;
+    }
+
+    const float fraction = startHeight / (startHeight - endHeight);
+    const float contactTime = startTime + (endTime - startTime) * fraction;
+    float hatContact[3], marioContact[3];
+    for (int axis = 0; axis < 3; ++axis) {
+        hatContact[axis] = hat->previousPos[axis] + (hat->pos[axis] - hat->previousPos[axis]) * contactTime;
+        marioContact[axis] = from[axis] + (to[axis] - from[axis]) * fraction;
+    }
+
+    const float x = marioContact[0] - hatContact[0];
+    const float z = marioContact[2] - hatContact[2];
     if (!(x * x + z * z <= IOS_HAT_BOUNCE_RADIUS * IOS_HAT_BOUNCE_RADIUS)
-        || (blocked != NULL && blocked(contact, hat->pos))) {
+        || (blocked != NULL && blocked(marioContact, hatContact))) {
         return false;
     }
 

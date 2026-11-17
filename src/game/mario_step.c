@@ -447,6 +447,10 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
             m->pos[2] = nextPos[2];
             m->floor = floor;
             m->floorHeight = floorHeight;
+#ifdef IOS_HAT_MOVEMENT
+            // Only a floor we actually landed on starts a new airtime.
+            mario_hat_on_landing(m);
+#endif
         }
 
         //! When ceilHeight - floorHeight <= 160, the step result says that
@@ -680,7 +684,7 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
         quarterStepResult = perform_air_quarter_step(m, intendedPos, stepArg);
 #ifdef IOS_HAT_MOVEMENT
         if (stepResult == AIR_STEP_NONE && quarterStepResult == AIR_STEP_NONE && m->wall == NULL
-            && mario_hat_try_bounce(m, previousPos)) {
+            && mario_hat_try_bounce(m, previousPos, i * 0.25f, (i + 1) * 0.25f)) {
             hatBounce = true;
             break;
         }
