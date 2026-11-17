@@ -23,6 +23,7 @@
 #include "level_update.h"
 #include "main.h"
 #include "mario.h"
+#include "mario_hat.h"
 #include "mario_actions_airborne.h"
 #include "mario_actions_automatic.h"
 #include "mario_actions_cutscene.h"
@@ -3034,6 +3035,11 @@ u32 update_and_return_cap_flags(struct MarioState *m) {
 void mario_update_hitbox_and_cap_model(struct MarioState *m) {
     struct MarioBodyState *bodyState = m->marioBodyState;
     s32 flags = update_and_return_cap_flags(m);
+#ifdef IOS_HAT_MOVEMENT
+    if (m == gMarioState && mario_hat_is_away()) {
+        flags &= ~MARIO_CAP_ON_HEAD;
+    }
+#endif
 
     if (flags & MARIO_VANISH_CAP) {
         bodyState->modelState = MODEL_STATE_NOISE_ALPHA;
@@ -3165,6 +3171,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         if (gMarioState->floor == NULL) {
             mario_ios_restore_kart_to_last_ground();
             mario_ios_clear_kart_mount(gMarioState);
+#ifdef IOS_HAT_MOVEMENT
+            mario_hat_reset();
+#endif
             return 0;
         }
 
@@ -3204,7 +3213,15 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         // The function can loop through many action shifts in one frame,
         // which can lead to unexpected sub-frame behavior. Could potentially hang
         // if a loop of actions were found, but there has not been a situation found.
+#ifdef IOS_HAT_MOVEMENT
+        mario_hat_update(gMarioState);
+#endif
         while (inLoop) {
+#ifdef IOS_HAT_MOVEMENT
+            if (gMarioState->action == ACT_IOS_HAT_THROW) {
+                mario_hat_execute_throw(gMarioState);
+            }
+#endif
             switch (gMarioState->action & ACT_GROUP_MASK) {
                 case ACT_GROUP_STATIONARY:
                     inLoop = mario_execute_stationary_action(gMarioState);
@@ -3258,6 +3275,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         set_submerged_cam_preset_and_spawn_bubbles(gMarioState);
         update_mario_health(gMarioState);
         update_mario_info_for_cam(gMarioState);
+#ifdef IOS_HAT_MOVEMENT
+        mario_hat_finish_frame(gMarioState);
+#endif
         mario_update_hitbox_and_cap_model(gMarioState);
         if (mario_ios_is_riding_yoshi(gMarioState)) {
             // Keep collision, floor, and camera coordinates at ground level while
@@ -3302,6 +3322,10 @@ void init_mario(void) {
     struct Object *capObject;
 
     unused80339F10 = 0;
+
+#ifdef IOS_HAT_MOVEMENT
+    mario_hat_reset();
+#endif
 
     ios_reality_global_init();
 

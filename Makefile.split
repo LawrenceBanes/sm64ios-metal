@@ -170,6 +170,17 @@ $(BUILD_DIR)/levels/castle_grounds/leveldata.o \
 $(BUILD_DIR)/levels/castle_grounds/geo.o \
 $(BUILD_DIR)/levels/castle_grounds/script.o: $(BUILD_DIR)/.ios_world_mode
 
+# Keep compiled input and gameplay code in sync when the hat option changes.
+$(BUILD_DIR)/.ios_hat_mode: FORCE
+	@mkdir -p "$(BUILD_DIR)"
+	@printf '%s %s\n' '$(TARGET_IOS)' '$(IOS_HAT_MOVEMENT)' > "$@.tmp"
+	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
+
+$(addprefix $(BUILD_DIR)/,src/game/ios_hat.o src/game/mario_hat.o src/game/mario.o \
+  src/game/mario_step.o src/game/area.o src/game/level_update.o src/game/game_init.o \
+  src/pc/controller/controller_sdl2.o src/pc/controller/controller_touchscreen.o \
+  src/ios/ios/TouchControlsViewController.o): $(BUILD_DIR)/.ios_hat_mode
+
 $(BUILD_DIR)/level_rules.mk: $(BUILD_DIR)/.ios_world_mode
 
 ifneq ($(MAKECMDGOALS),clean)

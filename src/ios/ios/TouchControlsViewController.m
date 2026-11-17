@@ -155,6 +155,9 @@ static int ios_next_touch_id = 1;
     void (*touch_up_callback)(void* event);
     
     GestureRecognizer *gestureRecognizer;
+#ifdef IOS_HAT_MOVEMENT
+    OverlayImageView *hatButton;
+#endif
     bool hidden;
 }
 
@@ -199,6 +202,21 @@ static int ios_next_touch_id = 1;
     self.m_group_main.transform = CGAffineTransformMakeScale(scale, scale);
     self.m_group_cbuttons.transform = CGAffineTransformMakeScale(scale, scale);
     
+#ifdef IOS_HAT_MOVEMENT
+    // The lower left slot in the A/B/Z cluster is unused.
+    hatButton = [[[OverlayImageView alloc] initWithFrame:CGRectMake(0, 72, 64, 64)] autorelease];
+    hatButton.image = [UIImage imageNamed:@"touch_button"];
+    hatButton.buttonTag = HAT_BUTTON;
+    [self.m_group_main addSubview:hatButton];
+
+    UILabel *label = [[[UILabel alloc] initWithFrame:hatButton.bounds] autorelease];
+    label.text = @"HAT";
+    label.textColor = [UIColor whiteColor];
+    label.font = [UIFont boldSystemFontOfSize:17.0];
+    label.textAlignment = NSTextAlignmentCenter;
+    [hatButton addSubview:label];
+#endif
+
     [self setTouchscreenImageViews];
 }
 
@@ -223,6 +241,9 @@ static int ios_next_touch_id = 1;
     [imageViews addObject:self.m_iv_a];
     [imageViews addObject:self.m_iv_b];
     [imageViews addObject:self.m_iv_z];
+#ifdef IOS_HAT_MOVEMENT
+    [imageViews addObject:hatButton];
+#endif
     [imageViews addObject:self.m_iv_up];
     [imageViews addObject:self.m_iv_down];
     [imageViews addObject:self.m_iv_left];

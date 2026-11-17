@@ -387,7 +387,11 @@ void adjust_analog_stick(struct Controller *controller) {
 // input list until it is complete. called every frame.
 void run_demo_inputs(void) {
     // eliminate the unused bits.
+#ifdef IOS_HAT_MOVEMENT
+    gControllers[0].controllerData->button &= (VALID_BUTTONS | HAT_BUTTON);
+#else
     gControllers[0].controllerData->button &= VALID_BUTTONS;
+#endif
 
     /*
         Check if a demo inputs list

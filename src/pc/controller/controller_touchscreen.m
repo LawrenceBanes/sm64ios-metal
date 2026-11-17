@@ -77,6 +77,9 @@ int joystick_size = 128;
 static HapticsController *haptics = nil;
 static uint64_t ios_controller_touch_down_count;
 static uint64_t ios_controller_touch_read_count;
+#ifdef IOS_HAT_MOVEMENT
+static bool hat_tap_pending;
+#endif
 
 #define TRIGGER_DETECT(size) (((pos.x + size > event->x) && (pos.x < event->x)) && ((pos.y + size > event->y) && (pos.y < event->y)))
 
@@ -122,6 +125,9 @@ void touch_down(struct TouchEvent* event) {
                     case Button:
                         ControlElements[i].touchID = event->touchID;
                         ControlElements[i].imageView.image = BUTTON_IMAGE_DARK;
+#ifdef IOS_HAT_MOVEMENT
+                        if (ControlElements[i].buttonID == HAT_BUTTON) hat_tap_pending = true;
+#endif
                         break;
                 }
             }
@@ -139,6 +145,10 @@ void touch_down(struct TouchEvent* event) {
 void touch_motion(struct TouchEvent* event) {
     CGRect frame;
     for(int i = 0; i < ControlElementsLength; i++) {
+#ifdef IOS_HAT_MOVEMENT
+        // Jump and attack drags across the hat control do not throw.
+        if (ControlElements[i].buttonID == HAT_BUTTON) continue;
+#endif
         frame = ControlElements[i].imageView.frame;
         CGFloat scale = ((float)configTouchUiScale/100.0);
         CGPoint pos = [ControlElements[i].imageView convertPoint:CGPointZero toView:tcvc.view];
@@ -254,6 +264,12 @@ void touchscreen_set_imageviews(NSMutableArray *imageViews) {
 }
 
 static void touchscreen_read(OSContPad *pad) {
+#ifdef IOS_HAT_MOVEMENT
+    if (hat_tap_pending) {
+        pad->button |= HAT_BUTTON;
+        hat_tap_pending = false;
+    }
+#endif
     uint64_t read_sequence = ++ios_controller_touch_read_count;
     int active_controls = 0;
     s32 joystick_touch = FALSE;

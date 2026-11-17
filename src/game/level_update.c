@@ -15,6 +15,7 @@
 #include "save_file.h"
 #include "sound_init.h"
 #include "mario.h"
+#include "mario_hat.h"
 #include "camera.h"
 #include "object_list_processor.h"
 #include "ingame_menu.h"
@@ -50,7 +51,6 @@
 #define PLAY_MODE_CHANGE_LEVEL 4
 #define PLAY_MODE_FRAME_ADVANCE 5
 
-#define WARP_TYPE_NOT_WARPING 0
 #define WARP_TYPE_CHANGE_LEVEL 1
 #define WARP_TYPE_CHANGE_AREA 2
 #define WARP_TYPE_SAME_AREA 3
@@ -579,6 +579,9 @@ void check_instant_warp(void) {
             struct InstantWarp *warp = &gCurrentArea->instantWarps[index];
 
             if (warp->id != 0) {
+#ifdef IOS_HAT_MOVEMENT
+                mario_hat_reset();
+#endif
                 gMarioState->pos[0] += warp->displacement[0];
                 gMarioState->pos[1] += warp->displacement[1];
                 gMarioState->pos[2] += warp->displacement[2];
@@ -649,6 +652,9 @@ s16 music_changed_through_warp(s16 arg) {
  * Set the current warp type and destination level/area/node.
  */
 void initiate_warp(s16 destLevel, s16 destArea, s16 destWarpNode, s32 arg3) {
+#ifdef IOS_HAT_MOVEMENT
+    mario_hat_reset();
+#endif
     if (destWarpNode >= WARP_NODE_CREDITS_MIN) {
         sWarpDest.type = WARP_TYPE_CHANGE_LEVEL;
     } else if (destLevel != gCurrLevelNum) {
@@ -734,6 +740,9 @@ s16 level_trigger_warp(struct MarioState *m, s32 warpOp) {
     s32 val04 = TRUE;
 
     if (sDelayedWarpOp == WARP_OP_NONE) {
+#ifdef IOS_HAT_MOVEMENT
+        mario_hat_reset();
+#endif
         m->invincTimer = -1;
         sDelayedWarpArg = 0;
         sDelayedWarpOp = warpOp;

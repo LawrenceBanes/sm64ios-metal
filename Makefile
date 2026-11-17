@@ -30,6 +30,7 @@ TARGET_WEB ?= 0
 # Build for iOS devices
 TARGET_IOS ?= 1
 IOS_HYRULE_WORLD ?= 0
+IOS_HAT_MOVEMENT ?= 0
 IOS_CONNECTED_WORLD_TEST ?= 0
 
 # Makeflag to enable OSX fixes
@@ -239,6 +240,9 @@ endif
 
 ifeq ($(TARGET_IOS),1)
      VERSION_CFLAGS += -DIOS_BUILD
+  ifeq ($(IOS_HAT_MOVEMENT),1)
+     VERSION_CFLAGS += -DIOS_HAT_MOVEMENT
+  endif
 endif
 
 VERSION_ASFLAGS := --defsym AVOID_UB=1

@@ -140,6 +140,9 @@ typedef struct {
 
 #define A_BUTTON	CONT_A
 #define B_BUTTON	CONT_B
+#ifdef IOS_HAT_MOVEMENT
+#define HAT_BUTTON      0x0040 // Port input, separate from END_DEMO (0x0080).
+#endif
 #define L_TRIG		CONT_L
 #define R_TRIG		CONT_R
 #define Z_TRIG		CONT_G

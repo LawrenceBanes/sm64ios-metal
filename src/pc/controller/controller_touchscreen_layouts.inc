@@ -69,6 +69,9 @@ static struct ControlElement ControlElementsDefault[] = {
 {.type = Button, .name = "A", .buttonID = A_BUTTON},
 {.type = Button, .name = "B", .buttonID = B_BUTTON},
 {.type = Button, .name = "Z", .buttonID = Z_TRIG},
+#ifdef IOS_HAT_MOVEMENT
+{.type = Button, .name = "Hat", .buttonID = HAT_BUTTON},
+#endif
 {.type = Button, .name = "L", .buttonID = L_TRIG},
 {.type = Button, .name = "R", .buttonID = R_TRIG},
 {.type = Button, .name = "Up", .buttonID = U_CBUTTONS},

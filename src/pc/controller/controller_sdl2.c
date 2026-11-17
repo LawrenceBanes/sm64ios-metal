@@ -228,13 +228,25 @@ static void controller_sdl_read(OSContPad *pad) {
     update_button(VK_RTRIGGER - VK_BASE_SDL_GAMEPAD, rtrig > AXIS_THRESHOLD);
 
     u32 buttons_down = 0;
+#ifdef IOS_HAT_MOVEMENT
+    bool hat_button_available = true;
+#endif
     for (u32 i = 0; i < num_joy_binds; ++i) {
+#ifdef IOS_HAT_MOVEMENT
+        if (joy_binds[i][0] == SDL_CONTROLLER_BUTTON_Y) hat_button_available = false;
+#endif
         if (joy_buttons[joy_binds[i][0]]) {
             buttons_down |= joy_binds[i][1];
             set_current_input(SDL2);
         }
     }
 
+#ifdef IOS_HAT_MOVEMENT
+    if (hat_button_available && joy_buttons[SDL_CONTROLLER_BUTTON_Y]) {
+        buttons_down |= HAT_BUTTON;
+        set_current_input(SDL2);
+    }
+#endif
     pad->button |= buttons_down;
 
     const u32 xstick = buttons_down & STICK_XMASK;

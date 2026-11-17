@@ -4,6 +4,7 @@
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
 #include "mario.h"
+#include "mario_hat.h"
 #include "audio/external.h"
 #include "game_init.h"
 #include "interaction.h"
@@ -661,15 +662,29 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
     s32 i;
     s32 quarterStepResult;
     s32 stepResult = AIR_STEP_NONE;
+#ifdef IOS_HAT_MOVEMENT
+    bool hatBounce = false;
+#endif
 
     m->wall = NULL;
 
     for (i = 0; i < 4; i++) {
+#ifdef IOS_HAT_MOVEMENT
+        Vec3f previousPos;
+        vec3f_copy(previousPos, m->pos);
+#endif
         intendedPos[0] = m->pos[0] + m->vel[0] / 4.0f;
         intendedPos[1] = m->pos[1] + m->vel[1] / 4.0f;
         intendedPos[2] = m->pos[2] + m->vel[2] / 4.0f;
 
         quarterStepResult = perform_air_quarter_step(m, intendedPos, stepArg);
+#ifdef IOS_HAT_MOVEMENT
+        if (stepResult == AIR_STEP_NONE && quarterStepResult == AIR_STEP_NONE && m->wall == NULL
+            && mario_hat_try_bounce(m, previousPos)) {
+            hatBounce = true;
+            break;
+        }
+#endif
 
         //! On one qf, hit OOB/ceil/wall to store the 2 return value, and continue
         // getting 0s until your last qf. Graze a wall on your last qf, and it will
@@ -692,8 +707,13 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
 
     m->terrainSoundAddend = mario_get_terrain_sound_addend(m);
 
-    if (m->action != ACT_FLYING) {
-        apply_gravity(m);
+#ifdef IOS_HAT_MOVEMENT
+    if (!hatBounce)
+#endif
+    {
+        if (m->action != ACT_FLYING) {
+            apply_gravity(m);
+        }
     }
     apply_vertical_wind(m);
 

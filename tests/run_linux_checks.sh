@@ -26,6 +26,7 @@ python3 "$repo_dir/ios/test_surface_partition_bounds.py"
 CC="$cc" sh "$repo_dir/tests/run_world_region_test.sh"
 CC="$cc" sh "$repo_dir/tests/run_surface_load_bounds_test.sh"
 CC="$cc" "$repo_dir/tests/run_ios_kart_physics_test.sh"
+CC="$cc" sh "$repo_dir/tests/run_ios_hat_test.sh"
 CC="$cc" "$repo_dir/tests/run_ios_reality_test.sh"
 python3 "$repo_dir/tests/check_ios_reality_integration.py"
 portal_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-portal-math.XXXXXX")

@@ -14,6 +14,7 @@
 #include "ingame_menu.h"
 #include "screen_transition.h"
 #include "mario.h"
+#include "mario_hat.h"
 #include "mario_actions_cutscene.h"
 #include "print.h"
 #include "hud.h"
@@ -202,6 +203,10 @@ void load_obj_warp_nodes(void) {
 void clear_areas(void) {
     s32 i;
 
+#ifdef IOS_HAT_MOVEMENT
+    mario_hat_reset();
+#endif
+
 #if defined(IOS_CONNECTED_WORLD_TEST)
     {
         struct WorldPoint origin = {0, 0, 0};
@@ -239,7 +244,6 @@ void clear_areas(void) {
 
 void clear_area_graph_nodes(void) {
     s32 i;
-
     if (gCurrentArea != NULL) {
         geo_call_global_function_nodes(&gCurrentArea->unk04->node, GEO_CONTEXT_AREA_UNLOAD);
         gCurrentArea = NULL;
@@ -312,6 +316,9 @@ void load_area(s32 index) {
 }
 
 void unload_area(void) {
+#ifdef IOS_HAT_MOVEMENT
+    mario_hat_reset();
+#endif
     if (gCurrentArea != NULL) {
 #if defined(IOS_CONNECTED_WORLD_TEST)
         {
@@ -339,6 +346,9 @@ void load_mario_area(void) {
 }
 
 void unload_mario_area(void) {
+#ifdef IOS_HAT_MOVEMENT
+    mario_hat_reset();
+#endif
     if (gCurrentArea != NULL && (gCurrentArea->flags & 0x01)) {
         unload_objects_from_area(0, gMarioSpawnInfo->activeAreaIndex);
 
