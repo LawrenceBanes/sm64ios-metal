@@ -1,0 +1,69 @@
+name: iOS Metal unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-metal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'LawrenceBanes/sm64ios-metal'
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CM_BUILD_DIR: ${{ github.workspace }}
+      SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
+      ASSET_BUNDLE_RELEASE_TAG: sm64-assets-20261031-04
+      IOS_HYRULE_WORLD: '0'
+      IOS_CONNECTED_WORLD_TEST: '1'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          command -v gh
+          test -n "${{ secrets.SM64_ASSET_GH_TOKEN }}" || {
+            echo 'Missing SM64_ASSET_GH_TOKEN secret' >&2
+            exit 1
+          }
+
+      - name: Build and validate unsigned IPA
+        shell: bash
+        env:
+          SM64_ASSET_GH_TOKEN: ${{ secrets.SM64_ASSET_GH_TOKEN }}
+        run: bash ios/build_codemagic_connected_world.sh
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-metal-diagnostics
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            build/codemagic-connected-world/toolchain.log
+            build/codemagic-connected-world/sdl2-build.log
+            build/codemagic-connected-world/metal-validation.log
+            build/codemagic-connected-world/ios-build.log
+            build/codemagic-connected-world/ipa.sha256
+
+      - name: Upload unsigned IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sm64ios-connected-world-arm64-unsigned
+          retention-days: 1
+          if-no-files-found: error
+          path: build/codemagic-connected-world/sm64ios-connected-world-arm64-unsigned.ipa
