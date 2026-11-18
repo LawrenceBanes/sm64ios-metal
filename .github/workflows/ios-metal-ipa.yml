@@ -14,6 +14,11 @@ on:
         description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
         required: false
+      connected_world:
+        description: Connect Castle Grounds and Hyrule in one area (requires the private O2R tag)
+        type: boolean
+        required: false
+        default: false
       hat_movement:
         description: Enable hat throw and bounce for an iPhone test build
         type: boolean
@@ -70,6 +75,7 @@ jobs:
     env:
       SDL2_REVISION: 5d249570393f7a37e037abf22cd6012a4cc56a71
       IOS_HYRULE_WORLD: '0'
+      IOS_CONNECTED_WORLD: '0'
       IOS_CONNECTED_WORLD_TEST: '1'
     steps:
       - name: Checkout source without persisted credentials
@@ -93,6 +99,7 @@ jobs:
           IOS_HYRULE_WORLD: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HYRULE_GATE_DIAGNOSTICS: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HAT_MOVEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.hat_movement && '1' || '0' }}
+          IOS_CONNECTED_WORLD: ${{ github.event_name == 'workflow_dispatch' && inputs.connected_world && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
 
       - name: Upload asset-free diagnostics only

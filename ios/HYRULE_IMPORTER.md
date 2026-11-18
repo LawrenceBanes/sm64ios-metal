@@ -187,3 +187,33 @@ On device, install the local build from [BUILDING.md](BUILDING.md) and:
 
 The host tests exercise compiled geometry wiring and collision math without
 launching UIKit, Metal, scene objects or an iPhone game session.
+
+### Audit corrections
+
+The workflow's `connected_world` input is off by default. The opted build
+requires a private Hyrule tag and passes the flag to both Xcode's environment
+and its command line settings. The local runner regression follows the
+setting through the Xcode shell phase and real Make flags into the compiled
+Castle geometry. See [CI inputs](GITHUB_ACTIONS_CI.md#full-game-build-private-inputs-required).
+
+With the actual import, the host harness also walked next to both crest edges,
+pushed against each crest and inlet rail, and jumped across the crest in both
+directions on both sides. Each jump landed back on the deck and resumed
+walking. These checks cover accidental exits from the tested paths. The low
+rails are not intended to contain a deliberate jump over the side.
+
+The three omitted calls depend on runtime segments set by
+[Shipwright's Hyrule Field draw configuration](https://github.com/HarbourMasters/Shipwright/blob/develop/soh/src/code/z_scene_table.c#L940-L979).
+The archive and render manifest identify their callers:
+
+| Source display list suffix | Segment | Effect currently omitted |
+| --- | --- | --- |
+| `014E28` | `0x08` | Animated two-tile scrolling. The caller's 46 translucent triangles remain in the render output. |
+| `015100` | `0x09` | A faster two-tile scroll. The caller's six translucent triangles remain. |
+| `012C38` | `0x0A` | A six-triangle overlay from `012B20`, faded in outside daytime. The daytime branch of the source effect draws nothing. |
+
+The first two calls affect visible material animation and can leave different
+tile offsets. The last affects a small time-dependent visual detail. These
+calls do not load actors or supply terrain collision. The importer retains the
+no-ops and the original collision alignment. Check the translucent materials
+and the area around the overlay on device if visual fidelity matters.

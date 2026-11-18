@@ -59,15 +59,16 @@ C
 fi
 
 common="-std=gnu99 -DF3DEX_GBI_2E"
-for mode in 000 100 110 111; do
+for mode in 0000 1000 1100 1110 1111; do
     case "$mode" in
-        000) hyrule=0; connected=0; hat=0 ;;
-        100) hyrule=1; connected=0; hat=0 ;;
-        110) hyrule=1; connected=1; hat=0 ;;
-        111) hyrule=1; connected=1; hat=1 ;;
+        0000) hyrule=0; connected=0; hat=0; test_world=0 ;;
+        1000) hyrule=1; connected=0; hat=0; test_world=0 ;;
+        1100) hyrule=1; connected=1; hat=0; test_world=0 ;;
+        1110) hyrule=1; connected=1; hat=1; test_world=0 ;;
+        1111) hyrule=1; connected=1; hat=1; test_world=1 ;;
     esac
     make --no-print-directory -pn clean NOEXTRACT=1 TARGET_IOS=1 TARGET_OS_IOS=1 RENDER_API=METAL \
-        IOS_CONNECTED_WORLD_TEST=0 IOS_HYRULE_WORLD="$hyrule" IOS_HYRULE_GATE_DIAGNOSTICS="$hyrule" \
+        IOS_CONNECTED_WORLD_TEST="$test_world" IOS_HYRULE_WORLD="$hyrule" IOS_HYRULE_GATE_DIAGNOSTICS="$hyrule" \
         IOS_CONNECTED_WORLD="$connected" IOS_HAT_MOVEMENT="$hat" > "$scratch/make-vars"
     flags=$(awk '/^VERSION_CFLAGS := / { sub(/^VERSION_CFLAGS := /, ""); print; exit }' "$scratch/make-vars")
     test -n "$flags"
@@ -93,7 +94,8 @@ for mode in 000 100 110 111; do
         ! grep -q '0x28090000' "$scratch/castle.i" || exit 1
         ! grep -q '0x28010000' "$scratch/field.i" || exit 1
     fi
-    printf 'Hyrule %s / connected %s / hat %s: compiled and checked warp isolation\n' "$hyrule" "$connected" "$hat"
+    printf 'Hyrule %s / connected %s / hat %s / legacy test %s: compiled and checked warp isolation\n' \
+        "$hyrule" "$connected" "$hat" "$test_world"
 done
 if make --no-print-directory -pn clean NOEXTRACT=1 IOS_HYRULE_WORLD=0 IOS_CONNECTED_WORLD=1 \
         >"$scratch/invalid" 2>&1; then
@@ -110,7 +112,7 @@ for old_world in 0 1; do
     if [ "$old_world" = 1 ]; then old_flag=-DIOS_CONNECTED_WORLD_TEST; fi
     $cc $common $physics_flags $old_flag $gate_flag -Iinclude -Isrc -I"$scratch" -I. -ffunction-sections -fdata-sections \
         tests/test_hyrule_connection.c src/engine/surface_collision.c src/engine/surface_load.c src/engine/math_util.c \
-        src/game/mario.c src/game/mario_step.c src/game/mario_actions_moving.c \
+        src/game/mario.c src/game/mario_step.c src/game/mario_actions_moving.c src/game/ios_reality.c \
         -Wl,--gc-sections,--wrap=mario_ios_portal_surface_passable,--wrap=mario_get_terrain_sound_addend -lm -o "$scratch/route"
     "$scratch/route"
 done

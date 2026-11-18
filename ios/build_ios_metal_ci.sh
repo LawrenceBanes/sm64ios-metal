@@ -1,22 +1,5 @@
 #!/usr/bin/env bash
 # Asset-free Metal/SDL2 validation, with an optional private full-game build.
-set -euo pipefail
-
-mode=${1:-validate}
-[[ "$mode" == validate || "$mode" == full ]] || {
-    echo 'usage: ios/build_ios_metal_ci.sh validate|full' >&2
-    exit 2
-}
-
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-cd "$repo_dir"
-output_dir=${CI_OUTPUT_DIR:-"${RUNNER_TEMP:-$repo_dir/build}/sm64-ios-ci"}
-safe_dir="$output_dir/safe"
-private_dir="$output_dir/private"
-product_dir="$output_dir/ios-products/Release-iphoneos"
-sdl_stage="$output_dir/sdl2-stage"
-sdl_revision=${SDL2_REVISION:-5d249570393f7a37e037abf22cd6012a4cc56a71}
-mkdir -p "$safe_dir" "$private_dir" "$product_dir"
 
 cleanup() {
     local result=$?
@@ -33,7 +16,6 @@ cleanup() {
     fi
     exit "$result"
 }
-trap cleanup EXIT
 
 check_toolchain() {
     {
@@ -192,6 +174,16 @@ build_full_game() {
         echo 'IOS_HYRULE_GATE_DIAGNOSTICS=1 requires IOS_HYRULE_WORLD=1' >&2
         return 1
     }
+    local connected_world=${IOS_CONNECTED_WORLD:-0}
+    [[ "$connected_world" == 0 || "$connected_world" == 1 ]] || {
+        echo 'IOS_CONNECTED_WORLD must be 0 or 1' >&2
+        return 1
+    }
+    if [[ "$connected_world" == 1 &&
+          ( ${IOS_HYRULE_WORLD:-0} != 1 || -z ${HYRULE_O2R_RELEASE_TAG:-} ) ]]; then
+        echo 'IOS_CONNECTED_WORLD=1 requires the private Hyrule O2R release tag and IOS_HYRULE_WORLD=1' >&2
+        return 1
+    fi
     local hat_movement=${IOS_HAT_MOVEMENT:-0}
     [[ "$hat_movement" == 0 || "$hat_movement" == 1 ]] || {
         echo 'IOS_HAT_MOVEMENT must be 0 or 1' >&2
@@ -205,16 +197,17 @@ build_full_game() {
     local raw_log="$private_dir/ios-build.log"
     echo "iOS gate diagnostic compile flag: ${IOS_HYRULE_GATE_DIAGNOSTICS:-0}"
     echo "iOS hat movement compile flag: $hat_movement"
+    echo "iOS connected world compile flag: $connected_world"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
-        IOS_HAT_MOVEMENT="$hat_movement" \
+        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" \
         xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
         -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
         -derivedDataPath "$output_dir/DerivedData" \
         SYMROOT="$output_dir/ios-products" CONFIGURATION_BUILD_DIR="$product_dir" \
         SDL2_ROOT="$sdl_stage" SDL2_INCLUDE_DIR="$sdl_stage/include" \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 \
-        IOS_HAT_MOVEMENT="$hat_movement" \
+        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
         >"$raw_log" 2>&1; then
         python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-build-summary.txt"
@@ -277,8 +270,32 @@ upload_private_ipa() {
         >"$private_dir/private-release-upload.log"
 }
 
-if [[ "$mode" == validate ]]; then
-    validate_asset_free
-else
-    build_full_game
+main() {
+    set -euo pipefail
+    mode=${1:-validate}
+    [[ "$mode" == validate || "$mode" == full ]] || {
+        echo 'usage: ios/build_ios_metal_ci.sh validate|full' >&2
+        exit 2
+    }
+
+    repo_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+    cd "$repo_dir"
+    output_dir=${CI_OUTPUT_DIR:-"${RUNNER_TEMP:-$repo_dir/build}/sm64-ios-ci"}
+    safe_dir="$output_dir/safe"
+    private_dir="$output_dir/private"
+    product_dir="$output_dir/ios-products/Release-iphoneos"
+    sdl_stage="$output_dir/sdl2-stage"
+    sdl_revision=${SDL2_REVISION:-5d249570393f7a37e037abf22cd6012a4cc56a71}
+    mkdir -p "$safe_dir" "$private_dir" "$product_dir"
+    trap cleanup EXIT
+
+    if [[ "$mode" == validate ]]; then
+        validate_asset_free
+    else
+        build_full_game
+    fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
 fi

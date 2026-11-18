@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,22 +86,26 @@ s32 __wrap_mario_ios_portal_surface_passable(const struct Surface *s, f32 x, f32
 }
 u32 __wrap_mario_get_terrain_sound_addend(struct MarioState *m) { (void)m; return 0; }
 
-static void walk(f32 startX, f32 endX, f32 z) {
-    struct Object mario = { 0 };
-    struct Area area = { .index = 1, .terrainType = TERRAIN_GRASS };
-    struct MarioState state = { .action = ACT_WALKING, .marioObj = &mario, .area = &area };
-    gMarioState = &state;
+static void start_mario(struct MarioState *state, f32 x, f32 lookupY, f32 z) {
+    static struct Object mario;
+    static struct Area area = { .index = 1, .terrainType = TERRAIN_GRASS };
+    *state = (struct MarioState) { .action = ACT_WALKING, .marioObj = &mario, .area = &area };
+    gMarioState = state;
     gMarioObject = gCurrentObject = &mario;
-    state.pos[0] = startX;
-    state.pos[1] = 270.0f;
-    state.pos[2] = z;
+    state->pos[0] = x;
+    state->pos[2] = z;
+    state->floorHeight = find_floor(x, lookupY, z, &state->floor);
+    assert(state->floor != NULL);
+    state->pos[1] = state->floorHeight;
+}
+
+static void walk(f32 startX, f32 endX, f32 z, f32 lookupY) {
+    struct MarioState state;
+    start_mario(&state, startX, lookupY, z);
     state.faceAngle[1] = endX < startX ? -0x4000 : 0x4000;
     state.intendedYaw = state.faceAngle[1];
     state.intendedMag = 32.0f;
     state.forwardVel = 16.0f;
-    state.floorHeight = find_floor(startX, 270.0f, z, &state.floor);
-    assert(state.floor != NULL);
-    state.pos[1] = state.floorHeight;
     for (int i = 0; i < 850; ++i) {
         const f32 before = state.pos[0];
         const f32 beforeY = state.pos[1];
@@ -119,6 +124,52 @@ static void walk(f32 startX, f32 endX, f32 z) {
         if ((state.pos[0] - endX) * state.vel[0] >= 0.0f) return;
     }
     abort();
+}
+
+static void push_into_rail(f32 x, f32 deckY, f32 halfWidth, int side) {
+    const f32 centerZ = HYRULE_CONNECTION_Z;
+    struct MarioState state;
+    start_mario(&state, x, deckY + 16.0f, centerZ + side * (halfWidth - 70.0f));
+    state.faceAngle[1] = side < 0 ? (s16)0x8000 : 0;
+    state.vel[2] = 16.0f * side;
+    bool hitRail = false;
+    for (int i = 0; i < 16; ++i) {
+        const s32 step = perform_ground_step(&state);
+        assert(step == GROUND_STEP_NONE || step == GROUND_STEP_HIT_WALL);
+        assert(fabsf(state.pos[1] - deckY) < 2.0f);
+        assert((state.pos[2] - centerZ) * side < halfWidth - 24.0f);
+        hitRail |= step == GROUND_STEP_HIT_WALL;
+    }
+    assert(hitRail);
+}
+
+static void jump_across_crest(int direction, int side) {
+    struct MarioState state;
+    const f32 startX = direction < 0 ? -7940.0f : -8410.0f;
+    const f32 z = HYRULE_CONNECTION_Z + side * 650.0f;
+    start_mario(&state, startX, 1850.0f, z);
+    assert(state.pos[1] > 1700.0f);
+    state.action = ACT_JUMP;
+    state.faceAngle[1] = direction < 0 ? -0x4000 : 0x4000;
+    state.input = INPUT_A_DOWN;
+    state.vel[0] = 19.0f * direction;
+    state.vel[1] = 42.0f;
+    bool landed = false;
+    f32 peak = state.pos[1];
+
+    for (int i = 0; i < 48 && !landed; ++i) {
+        const s32 step = perform_air_step(&state, 0);
+        assert(step == AIR_STEP_NONE || step == AIR_STEP_LANDED);
+        assert(fabsf(state.pos[2] - z) < 2.0f);
+        assert(state.pos[1] > 1600.0f);
+        peak = fmaxf(peak, state.pos[1]);
+        landed = step == AIR_STEP_LANDED;
+    }
+    assert(landed && peak > 1900.0f);
+    assert(fabsf(state.pos[1] - state.floorHeight) < 0.01f);
+    assert(direction < 0 ? state.pos[0] < -8300.0f : state.pos[0] > -8060.0f);
+    state.action = ACT_WALKING;
+    assert(perform_ground_step(&state) == GROUND_STEP_NONE);
 }
 
 static void check_frame_transform(void) {
@@ -142,11 +193,20 @@ int main(void) {
     assert(gNumStaticSurfaces < 6500 && gNumStaticSurfaceNodes < 24576);
     printf("Static collision: %d surfaces, %d nodes; no rejects (%zu/%zu bytes each)\n",
            gNumStaticSurfaces, gNumStaticSurfaceNodes, sizeof(struct Surface), sizeof(struct SurfaceNode));
-    for (int offset = -72; offset <= 72; offset += 72) {
-        walk(-4400, -14600, 1460 + offset);
-        walk(-14600, -4400, 1460 + offset);
+    for (int offset = -92; offset <= 92; offset += 92) {
+        walk(-4400, -14600, HYRULE_CONNECTION_Z + offset, 270.0f);
+        walk(-14600, -4400, HYRULE_CONNECTION_Z + offset, 270.0f);
     }
-    puts("Castle and field inlet: 3 lanes traversed both ways using stock walking speed and ground steps");
+    for (int side = -1; side <= 1; side += 2) {
+        const f32 edgeZ = HYRULE_CONNECTION_Z + side * 686.0f;
+        walk(-8070, -8275, edgeZ, 1840.0f);
+        walk(-8275, -8070, edgeZ, 1840.0f);
+        push_into_rail(-8180.0f, 1830.0f, 740.0f, side);
+        push_into_rail(HYRULE_CONNECTION_X - 900.0f, 260.0f, 144.0f, side);
+        jump_across_crest(-1, side);
+        jump_across_crest(1, side);
+    }
+    puts("Castle and field inlet: both directions, both walkway edges, rail contacts, and crest jump landings passed");
     gMarioState = NULL;
     gCurrentObject = gMarioObject = NULL;
 #ifdef VALIDATE_IMPORTED_GATE

@@ -1012,8 +1012,8 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                     raise ImportFailure(f"native Gfx lowering: nested list {target} lacks polygon variant")
                 lines.append(_gfx_initializer((w0 & 0x00FFFFFF) | 0xDE000000, target_symbol))
             elif opcode == 0xDE:
-                # O2R keeps three original segmented calls in this room. Their
-                # segment base table is not present in the selected resources.
+                # These pointers depend on the source scene's live segment
+                # bindings. Keep the omission explicit rather than guessing a target.
                 omitted_segmented_calls += 1
                 lines.append(_gfx_initializer(0xE0000000))
             elif opcode in (0x35, 0x36, 0x42):
