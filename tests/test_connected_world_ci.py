@@ -67,6 +67,7 @@ gmake() {
 }
 xcodebuild() {
     printf '%s\n' "${IOS_CONNECTED_WORLD-unset}" > "$PWD/xcode-env"
+    printf '%s\n' "${IOS_O2R_SCENE_RUNTIME-unset}" > "$PWD/xcode-o2r-env"
     printf '%s\n' "$@" > "$PWD/xcode-args"
     local setting
     for setting; do
@@ -91,7 +92,7 @@ class ConnectedWorldCITests(unittest.TestCase):
             workflow,
         )
 
-    def run_build_path(self, connected, hyrule, with_tag):
+    def run_build_path(self, connected, hyrule, with_tag, scene_runtime=0):
         fixture = tempfile.TemporaryDirectory(prefix="sm64-connected-build-")
         self.addCleanup(fixture.cleanup)
         work = Path(fixture.name)
@@ -99,6 +100,7 @@ class ConnectedWorldCITests(unittest.TestCase):
             **os.environ, "SOURCE_ROOT": str(ROOT), "HOST_CC": os.environ.get("CC", "clang"),
             "IOS_HYRULE_WORLD": str(hyrule), "IOS_HYRULE_GATE_DIAGNOSTICS": str(hyrule),
             "IOS_HAT_MOVEMENT": str(hyrule), "IOS_CONNECTED_WORLD_TEST": "1",
+            "IOS_O2R_SCENE_RUNTIME": str(scene_runtime),
         }
         for key in ("HYRULE_O2R_PATH", "HYRULE_O2R_RELEASE_TAG", "IOS_CONNECTED_WORLD"):
             env.pop(key, None)
@@ -114,7 +116,9 @@ class ConnectedWorldCITests(unittest.TestCase):
     def test_combined_xcode_configuration_reaches_compilation(self):
         work, result = self.run_build_path(1, 1, True)
         self.assertEqual((work / "xcode-env").read_text().strip(), "1", result.stderr)
+        self.assertEqual((work / "xcode-o2r-env").read_text().strip(), "0", result.stderr)
         self.assertIn("IOS_CONNECTED_WORLD=1", (work / "xcode-args").read_text().splitlines())
+        self.assertIn("IOS_O2R_SCENE_RUNTIME=0", (work / "xcode-args").read_text().splitlines())
         self.assertIn("--connected-world", (work / "importer-args").read_text().splitlines())
         flags = (work / "compiler-flags").read_text().split()
         for flag in ("-DIOS_CONNECTED_WORLD", "-DIOS_CONNECTED_WORLD_TEST", "-DIOS_HYRULE_WORLD",
@@ -127,8 +131,10 @@ class ConnectedWorldCITests(unittest.TestCase):
     def test_ordinary_compile_defaults_off(self):
         work, result = self.run_build_path(None, 0, False)
         self.assertEqual((work / "xcode-env").read_text().strip(), "0", result.stderr)
+        self.assertEqual((work / "xcode-o2r-env").read_text().strip(), "0", result.stderr)
         self.assertIn("IOS_CONNECTED_WORLD=0", (work / "xcode-args").read_text().splitlines())
         self.assertNotIn("-DIOS_CONNECTED_WORLD", (work / "compiler-flags").read_text().split())
+        self.assertNotIn("-DIOS_O2R_SCENE_RUNTIME", (work / "compiler-flags").read_text().split())
         symbols = subprocess.check_output(["nm", "-u", work / "geo.o"], text=True)
         self.assertNotIn("hyrule_field_opaque_dl", symbols)
 
@@ -138,6 +144,12 @@ class ConnectedWorldCITests(unittest.TestCase):
                 work, result = self.run_build_path(1, hyrule, has_tag)
                 self.assertIn("IOS_CONNECTED_WORLD=1 requires the private Hyrule O2R release tag", result.stderr)
                 self.assertFalse((work / "xcode-args").exists())
+
+    def test_scene_runtime_opt_in_reaches_ios_compiler(self):
+        work, result = self.run_build_path(None, 0, False, scene_runtime=1)
+        self.assertEqual((work / "xcode-o2r-env").read_text().strip(), "1", result.stderr)
+        self.assertIn("IOS_O2R_SCENE_RUNTIME=1", (work / "xcode-args").read_text().splitlines())
+        self.assertIn("-DIOS_O2R_SCENE_RUNTIME", (work / "compiler-flags").read_text().split())
 
 
 if __name__ == "__main__":

@@ -307,6 +307,27 @@ enum WorldRegionResult world_region_activate(u32 id) {
     return WORLD_REGION_OK;
 }
 
+enum WorldRegionResult world_region_unregister(u32 id) {
+    struct WorldRegionSlot *slot = find_slot(id);
+    u32 index, node;
+    if (slot == NULL) return WORLD_REGION_NOT_FOUND;
+    index = (u32)(slot - sRegions);
+    if (slot->info.active) {
+        for (node = 0; node < slot->info.nodeCount; node++) {
+            detach_node(&slot->nodes[node]);
+        }
+    }
+    free(slot->nodes);
+    free(slot->surfaces);
+    if (index + 1 < sRegionCount) {
+        memmove(&sRegions[index], &sRegions[index + 1],
+                (sRegionCount - index - 1) * sizeof(sRegions[0]));
+    }
+    sRegionCount--;
+    memset(&sRegions[sRegionCount], 0, sizeof(sRegions[0]));
+    return WORLD_REGION_OK;
+}
+
 enum WorldRegionResult world_region_deactivate(u32 id) {
     struct WorldRegionSlot *slot = find_slot(id);
     u32 i;

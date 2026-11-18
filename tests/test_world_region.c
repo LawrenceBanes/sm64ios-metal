@@ -175,11 +175,38 @@ static void test_winding_and_rebased_window(void) {
     world_region_reset(origin);
 }
 
+static void test_unregister_releases_owned_partition_nodes(void) {
+    struct WorldPoint zero = {0, 0, 0};
+    struct WorldRegionDesc desc = region(9, westVertices);
+    struct WorldRegionDesc neighbor = region(10, eastVertices);
+    struct WorldRegionInfo info;
+    world_region_reset(zero);
+    assert(world_region_register(&desc) == WORLD_REGION_OK);
+    assert(world_region_register(&neighbor) == WORLD_REGION_OK);
+    assert(world_region_activate(desc.id) == WORLD_REGION_OK);
+    assert(world_region_activate(neighbor.id) == WORLD_REGION_OK);
+    assert(cell_count(-1500, 0, SPATIAL_PARTITION_FLOORS) > 0);
+    assert(cell_count(1000, 0, SPATIAL_PARTITION_FLOORS) > 0);
+    assert(world_region_unregister(desc.id) == WORLD_REGION_OK);
+    assert(world_region_count() == 1);
+    assert(!world_region_info(desc.id, &info));
+    assert(cell_count(-1500, 0, SPATIAL_PARTITION_FLOORS) == 0);
+    assert(world_region_unregister(desc.id) == WORLD_REGION_NOT_FOUND);
+    assert(world_region_info(neighbor.id, &info) && info.active);
+    assert(cell_count(1000, 0, SPATIAL_PARTITION_FLOORS) > 0);
+    assert(world_region_unregister(neighbor.id) == WORLD_REGION_OK);
+    assert(world_region_count() == 0);
+    assert(cell_count(1000, 0, SPATIAL_PARTITION_FLOORS) == 0);
+    assert(world_region_register(&desc) == WORLD_REGION_OK);
+    world_region_reset(zero);
+}
+
 int main(void) {
     test_coordinate_limits();
     test_seam_and_lifecycle();
     test_rejection_is_atomic();
     test_winding_and_rebased_window();
+    test_unregister_releases_owned_partition_nodes();
     puts("world region collision/lifecycle: passed");
     return 0;
 }

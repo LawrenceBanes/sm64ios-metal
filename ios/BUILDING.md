@@ -49,6 +49,11 @@ HYRULE_O2R_PATH=/absolute/path/to/oot.o2r \
   IOS_HYRULE_WORLD=1 IOS_CONNECTED_WORLD=1 IOS_HYRULE_GATE_DIAGNOSTICS=1 build
 ```
 
+The generic O2R scene-runtime foundation is separately opt-in with
+`IOS_O2R_SCENE_RUNTIME=1`. It is disabled in ordinary builds and does not by
+itself load scene data; see [O2R_SCENE_RUNTIME.md](O2R_SCENE_RUNTIME.md) for
+the provider contract and current limitations.
+
 Set `IOS_HAT_MOVEMENT=1` independently to test hats on this build. The connected
 flag defaults to `0`, which keeps the legacy warp pair for Hyrule builds.
 The standalone `bash build_ios.sh` route accepts the same settings as environment

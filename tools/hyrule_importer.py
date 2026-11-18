@@ -956,7 +956,8 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     texture_symbols = {}
     lines = ["/* Generated from the user-provided O2R archive. Do not commit this file. */",
              "#include <ultra64.h>", "#include <stdint.h>",
-             "#include \"types.h\"", "#include \"surface_terrains.h\"", ""]
+             "#include \"types.h\"", "#include \"surface_terrains.h\"",
+             "#include \"src/pc/gfx/gfx_render_section.h\"", ""]
 
     for path in sorted(referenced_textures):
         descriptor, payload, _, _ = texture_payloads[path]
@@ -1052,11 +1053,14 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
     for render_pass, public_name in (("opaque", "hyrule_field_opaque_dl"),
                                      ("translucent", "hyrule_field_translucent_dl")):
         lines.append(f"const Gfx {public_name}[] = {{")
+        section = f"GFX_RENDER_HYRULE_{render_pass.upper()}"
+        lines.append(f"    GFX_RENDER_SECTION_BEGIN({section}),")
         lines.append("    gsSPDisplayList(hyrule_field_begin_dl),")
         for path, polygon, draw_pass in draw_calls:
             if draw_pass != render_pass:
                 continue
             lines.append(_gfx_initializer(0xDE000000, symbols[(path, polygon)]))
+        lines.append(f"    GFX_RENDER_SECTION_END({section}),")
         lines.append("    gsSPDisplayList(hyrule_field_end_dl),")
         mode = "G_RM_AA_ZB_OPA_SURF" if render_pass == "opaque" else "G_RM_AA_ZB_XLU_SURF"
         lines.append(f"    gsDPSetRenderMode({mode}, {mode}2),")

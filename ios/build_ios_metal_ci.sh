@@ -189,6 +189,11 @@ build_full_game() {
         echo 'IOS_HAT_MOVEMENT must be 0 or 1' >&2
         return 1
     }
+    local scene_runtime=${IOS_O2R_SCENE_RUNTIME:-0}
+    [[ "$scene_runtime" == 0 || "$scene_runtime" == 1 ]] || {
+        echo 'IOS_O2R_SCENE_RUNTIME must be 0 or 1' >&2
+        return 1
+    }
     download_private_assets
     download_private_hyrule_archive
     local private_build_token=$SM64_PRIVATE_BUILD_GH_TOKEN
@@ -198,16 +203,17 @@ build_full_game() {
     echo "iOS gate diagnostic compile flag: ${IOS_HYRULE_GATE_DIAGNOSTICS:-0}"
     echo "iOS hat movement compile flag: $hat_movement"
     echo "iOS connected world compile flag: $connected_world"
+    echo "iOS O2R scene runtime compile flag: $scene_runtime"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
-        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" \
+        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" IOS_O2R_SCENE_RUNTIME="$scene_runtime" \
         xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
         -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
         -derivedDataPath "$output_dir/DerivedData" \
         SYMROOT="$output_dir/ios-products" CONFIGURATION_BUILD_DIR="$product_dir" \
         SDL2_ROOT="$sdl_stage" SDL2_INCLUDE_DIR="$sdl_stage/include" \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 \
-        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" \
+        IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" IOS_O2R_SCENE_RUNTIME="$scene_runtime" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
         >"$raw_log" 2>&1; then
         python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-build-summary.txt"

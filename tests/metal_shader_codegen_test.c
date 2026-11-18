@@ -122,6 +122,25 @@ int main(void) {
     assert(strstr(source, "vertex_id [[vertex_id]]") != NULL);
     assert(strstr(source, "o.barycentric=") != NULL);
 
+    /* RDP's alpha combiner has a constant-one selector that the packed 3-bit
+     * shader mux format cannot represent. The iOS Metal option must preserve
+     * the constant even when the other alpha muxes do not form a single-source
+     * expression; ordinary variants must continue evaluating their alpha mux. */
+    uint8_t const_one_rgb[4] = { SHADER_TEXEL0, 0, 0, 0 };
+    uint8_t const_one_alpha[4] = { SHADER_INPUT_1, 0, SHADER_INPUT_1, SHADER_INPUT_1 };
+    id = shader(const_one_rgb, const_one_alpha, SHADER_OPT_ALPHA | SHADER_OPT_ALPHA_ONE);
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(features.opt_const_alpha_one);
+    assert(!features.do_single[1]);
+    assert(!features.color_alpha_same);
+    assert(strstr(source, "float4 color=float4("));
+    assert(strstr(source, ", 1.0);\n") != NULL);
+    id &= ~SHADER_OPT_ALPHA_ONE;
+    assert(gfx_metal_build_shader(id, source, sizeof(source), &features));
+    assert(!features.opt_const_alpha_one);
+    assert(strstr(source, ", 1.0);\n") == NULL);
+    assert_dense_vertex_attributes(source, &features);
+
     /* No-texture variants still accept per-draw diagnostic parameters and
      * provide explicit outputs for UV and texture-ID inspection. */
     id = shader(flat_rgb, flat_alpha, 0);

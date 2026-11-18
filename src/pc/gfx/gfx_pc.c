@@ -23,6 +23,7 @@
 #include "gfx_cc.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
+#include "gfx_render_section.h"
 #include "gfx_scene_capture.h"
 #include "gfx_screen_config.h"
 #include "gfx_texture_cache_util.h"
@@ -135,6 +136,56 @@ static bool gfx_render_diagnostics_enabled(void) {
 #endif
 }
 
+#if defined(TARGET_OS_IOS)
+/* Sample whole display-list sections, including triangles that never reach
+ * the backend. Metal's draw snapshots cannot account for those rejects. */
+static struct {
+    uint16_t id;
+    uint32_t input, clipped, cull_front, cull_back, cull_both, missing_binding, queued;
+    uint32_t textured, blend, alpha_cutout, depth_test, depth_write;
+    uint32_t first_shader, first_geometry_mode, first_other_mode;
+    unsigned clip_planes;
+} gfx_render_section;
+static unsigned gfx_render_section_frame;
+static bool gfx_render_section_sample;
+
+static void gfx_render_section_new_frame(void) {
+    memset(&gfx_render_section, 0, sizeof(gfx_render_section));
+    if (!gfx_render_diagnostics_enabled()) {
+        gfx_render_section_frame = 0;
+        gfx_render_section_sample = false;
+        return;
+    }
+    ++gfx_render_section_frame;
+    gfx_render_section_sample = gfx_render_section_frame <= 4 || gfx_render_section_frame % 120 == 0;
+}
+
+static void gfx_render_section_tag(uint32_t tag) {
+    if (!gfx_render_section_sample) return;
+    uint16_t id = (uint16_t)tag;
+    if ((tag & GFX_RENDER_SECTION_TAG_MASK) == GFX_RENDER_SECTION_BEGIN_TAG) {
+        memset(&gfx_render_section, 0, sizeof(gfx_render_section));
+        gfx_render_section.id = id;
+    } else if ((tag & GFX_RENDER_SECTION_TAG_MASK) == GFX_RENDER_SECTION_END_TAG &&
+               id && id == gfx_render_section.id) {
+        gfx_ios_diag_log("Render section id=%u sampleFrame=%u input=%u queued=%u clipped=%u clipPlaneMask=0x%x frontCull=%u backCull=%u bothCull=%u missingBinding=%u textured=%u blend=%u alphaCutout=%u depthTest=%u depthWrite=%u firstShader=0x%08x firstGeometryMode=0x%08x firstOtherMode=0x%08x",
+            (unsigned)id, gfx_render_section_frame, gfx_render_section.input,
+            gfx_render_section.queued, gfx_render_section.clipped, gfx_render_section.clip_planes,
+            gfx_render_section.cull_front, gfx_render_section.cull_back, gfx_render_section.cull_both,
+            gfx_render_section.missing_binding, gfx_render_section.textured, gfx_render_section.blend,
+            gfx_render_section.alpha_cutout, gfx_render_section.depth_test, gfx_render_section.depth_write,
+            gfx_render_section.first_shader, gfx_render_section.first_geometry_mode,
+            gfx_render_section.first_other_mode);
+        gfx_render_section.id = 0;
+    }
+}
+
+#define GFX_RENDER_SECTION_INCREMENT(field) \
+    do { if (gfx_render_section.id) ++gfx_render_section.field; } while (0)
+#else
+#define GFX_RENDER_SECTION_INCREMENT(field) ((void)0)
+#endif
+
 static struct ColorCombiner color_combiner_pool[64];
 static uint8_t color_combiner_pool_size;
 
@@ -185,6 +236,7 @@ static struct RDP {
     
     uint32_t other_mode_l, other_mode_h;
     uint32_t combine_mode;
+    bool combine_alpha_one;
     
     struct RGBA env_color, prim_color, fog_color, fill_color;
     struct XYWidthHeight viewport, scissor;
@@ -1156,10 +1208,16 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     struct LoadedVertex *v3 = &rsp.loaded_vertices[vtx3_idx];
     struct LoadedVertex *v_arr[3] = {v1, v2, v3};
     
-    //if (rand()%2) return;
-    
-    if (v1->clip_rej & v2->clip_rej & v3->clip_rej) {
+    GFX_RENDER_SECTION_INCREMENT(input);
+    unsigned clip_planes = v1->clip_rej & v2->clip_rej & v3->clip_rej;
+    if (clip_planes) {
         // The whole triangle lies outside the visible area
+#if defined(TARGET_OS_IOS)
+        if (gfx_render_section.id) {
+            ++gfx_render_section.clipped;
+            gfx_render_section.clip_planes |= clip_planes;
+        }
+#endif
         return;
     }
     
@@ -1178,13 +1236,19 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         
         switch (rsp.geometry_mode & G_CULL_BOTH) {
             case G_CULL_FRONT:
-                if (cross <= 0) return;
+                if (cross <= 0) {
+                    GFX_RENDER_SECTION_INCREMENT(cull_front);
+                    return;
+                }
                 break;
             case G_CULL_BACK:
-                if (cross >= 0) return;
+                if (cross >= 0) {
+                    GFX_RENDER_SECTION_INCREMENT(cull_back);
+                    return;
+                }
                 break;
             case G_CULL_BOTH:
-                // Why is this even an option?
+                GFX_RENDER_SECTION_INCREMENT(cull_both);
                 return;
         }
     }
@@ -1236,6 +1300,12 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     if (use_alpha) cc_id |= SHADER_OPT_ALPHA;
+#if defined(TARGET_OS_IOS) && TARGET_OS_IOS
+    /* The generated combiner packs each mux into 3 bits. That format has no
+     * token for RDP's constant ONE, so preserve a constant-one alpha formula
+     * out-of-band for the Metal shader. */
+    if (use_alpha && !texture_edge && rdp.combine_alpha_one) cc_id |= SHADER_OPT_ALPHA_ONE;
+#endif
     if (use_fog) cc_id |= SHADER_OPT_FOG;
     if (texture_edge) cc_id |= SHADER_OPT_TEXTURE_EDGE;
     if (use_noise) cc_id |= SHADER_OPT_NOISE;
@@ -1286,6 +1356,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         }
     }
     if (!textures_ready) {
+        GFX_RENDER_SECTION_INCREMENT(missing_binding);
         gfx_texture_cache_failed_binding_count++;
         if (GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() &&
             (gfx_texture_cache_failed_binding_count <= 4 || gfx_texture_cache_failed_binding_count % 120 == 0)) {
@@ -1295,6 +1366,20 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     bool use_texture = used_textures[0] || used_textures[1];
+#if defined(TARGET_OS_IOS)
+    if (gfx_render_section.id) {
+        if (gfx_render_section.queued++ == 0) {
+            gfx_render_section.first_shader = comb->shader_id;
+            gfx_render_section.first_geometry_mode = rsp.geometry_mode;
+            gfx_render_section.first_other_mode = rdp.other_mode_l;
+        }
+        gfx_render_section.textured += use_texture;
+        gfx_render_section.blend += use_alpha;
+        gfx_render_section.alpha_cutout += texture_edge;
+        gfx_render_section.depth_test += depth_test;
+        gfx_render_section.depth_write += z_upd;
+    }
+#endif
     uint32_t tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
     uint32_t tex_height = (rdp.texture_tile.lrt - rdp.texture_tile.ult + 4) / 4;
 
@@ -1722,8 +1807,14 @@ static inline uint32_t color_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d
            (color_comb_component(d) << 9);
 }
 
-static void gfx_dp_set_combine_mode(uint32_t rgb, uint32_t alpha) {
+static void gfx_dp_set_combine_mode(uint32_t rgb, uint32_t alpha, bool alpha_one) {
     rdp.combine_mode = rgb | (alpha << 12);
+    rdp.combine_alpha_one = alpha_one;
+}
+
+static bool gfx_alpha_combiner_is_constant_one(uint32_t a, uint32_t b,
+                                                uint32_t c, uint32_t d) {
+    return d == G_ACMUX_1 && (a == b || c == G_ACMUX_0);
 }
 
 static void gfx_dp_set_env_color(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -1829,13 +1920,14 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
 
 static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls, int16_t ult, int16_t dsdx, int16_t dtdy, bool flip) {
     uint32_t saved_combine_mode = rdp.combine_mode;
+    bool saved_combine_alpha_one = rdp.combine_alpha_one;
     if ((rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_COPY) {
         // Per RDP Command Summary Set Tile's shift s and this dsdx should be set to 4 texels
         // Divide by 4 to get 1 instead
         dsdx >>= 2;
         
         // Color combiner is turned off in copy mode
-        gfx_dp_set_combine_mode(color_comb(0, 0, 0, G_CCMUX_TEXEL0), color_comb(0, 0, 0, G_ACMUX_TEXEL0));
+        gfx_dp_set_combine_mode(color_comb(0, 0, 0, G_CCMUX_TEXEL0), color_comb(0, 0, 0, G_ACMUX_TEXEL0), false);
         
         // Per documentation one extra pixel is added in this modes to each edge
         lrx += 1 << 2;
@@ -1877,6 +1969,7 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
     
     gfx_draw_rectangle(ulx, uly, lrx, lry);
     rdp.combine_mode = saved_combine_mode;
+    rdp.combine_alpha_one = saved_combine_alpha_one;
 }
 
 static void gfx_dp_fill_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry) {
@@ -1898,9 +1991,11 @@ static void gfx_dp_fill_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t
     }
     
     uint32_t saved_combine_mode = rdp.combine_mode;
-    gfx_dp_set_combine_mode(color_comb(0, 0, 0, G_CCMUX_SHADE), color_comb(0, 0, 0, G_ACMUX_SHADE));
+    bool saved_combine_alpha_one = rdp.combine_alpha_one;
+    gfx_dp_set_combine_mode(color_comb(0, 0, 0, G_CCMUX_SHADE), color_comb(0, 0, 0, G_ACMUX_SHADE), false);
     gfx_draw_rectangle(ulx, uly, lrx, lry);
     rdp.combine_mode = saved_combine_mode;
+    rdp.combine_alpha_one = saved_combine_alpha_one;
 }
 
 static void gfx_dp_set_z_image(void *z_buf_address) {
@@ -1932,6 +2027,11 @@ static void gfx_run_dl(Gfx* cmd) {
         uint32_t opcode = cmd->words.w0 >> 24;
         
         switch (opcode) {
+#if defined(TARGET_OS_IOS)
+            case G_NOOP:
+                gfx_render_section_tag(cmd->words.w1);
+                break;
+#endif
             // RSP commands:
             case G_MTX:
 #ifdef F3DEX_GBI_2
@@ -2062,12 +2162,17 @@ static void gfx_run_dl(Gfx* cmd) {
                 gfx_dp_set_fill_color(cmd->words.w1);
                 break;
             case G_SETCOMBINE:
+            {
+                uint32_t alpha_a = C0(12, 3), alpha_b = C1(12, 3);
+                uint32_t alpha_c = C0(9, 3), alpha_d = C1(9, 3);
                 gfx_dp_set_combine_mode(
                     color_comb(C0(20, 4), C1(28, 4), C0(15, 5), C1(15, 3)),
-                    color_comb(C0(12, 3), C1(12, 3), C0(9, 3), C1(9, 3)));
+                    color_comb(alpha_a, alpha_b, alpha_c, alpha_d),
+                    gfx_alpha_combiner_is_constant_one(alpha_a, alpha_b, alpha_c, alpha_d));
                     /*color_comb(C0(5, 4), C1(24, 4), C0(0, 5), C1(6, 3)),
                     color_comb(C1(21, 3), C1(3, 3), C1(18, 3), C1(0, 3)));*/
                 break;
+            }
             // G_SETPRIMCOLOR, G_CCMUX_PRIMITIVE, G_ACMUX_PRIMITIVE, is used by Goddard
             // G_CCMUX_TEXEL1, LOD_FRACTION is used in Bowser room 1
             case G_TEXRECT:
@@ -2220,6 +2325,9 @@ void gfx_run(Gfx *commands) {
     
     double t0 = gfx_wapi->get_time();
     gfx_rapi->start_frame();
+#if defined(TARGET_OS_IOS)
+    gfx_render_section_new_frame();
+#endif
     gfx_run_dl(commands);
     gfx_flush();
     double t1 = gfx_wapi->get_time();

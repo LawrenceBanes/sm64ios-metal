@@ -10,6 +10,7 @@ void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
     cc_features->opt_fog = (shader_id & SHADER_OPT_FOG) != 0;
     cc_features->opt_texture_edge = (shader_id & SHADER_OPT_TEXTURE_EDGE) != 0;
     cc_features->opt_noise = (shader_id & SHADER_OPT_NOISE) != 0;
+    cc_features->opt_const_alpha_one = (shader_id & SHADER_OPT_ALPHA_ONE) != 0;
 
     cc_features->used_textures[0] = false;
     cc_features->used_textures[1] = false;
@@ -37,5 +38,6 @@ void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
     cc_features->do_multiply[1] = cc_features->c[1][1] == 0 && cc_features->c[1][3] == 0;
     cc_features->do_mix[0] = cc_features->c[0][1] == cc_features->c[0][3];
     cc_features->do_mix[1] = cc_features->c[1][1] == cc_features->c[1][3];
-    cc_features->color_alpha_same = (shader_id & 0xfff) == ((shader_id >> 12) & 0xfff);
+    cc_features->color_alpha_same = !cc_features->opt_const_alpha_one
+        && (shader_id & 0xfff) == ((shader_id >> 12) & 0xfff);
 }

@@ -207,7 +207,8 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         write_text(&w, "float4 color=float4(");
         write_formula(&w, features, 0, false, false);
         write_text(&w, ", ");
-        write_formula(&w, features, 1, true, true);
+        if (features->opt_const_alpha_one) write_text(&w, "1.0");
+        else write_formula(&w, features, 1, true, true);
         write_text(&w, ");\n");
     } else if (features->opt_alpha) {
         write_text(&w, "float4 color=");

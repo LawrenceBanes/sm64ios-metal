@@ -75,6 +75,9 @@ struct WorldRegionInfo {
  * is the one used by legacy SM64 collision, camera, and movement this area. */
 void world_region_reset(struct WorldPoint activeOrigin);
 enum WorldRegionResult world_region_register(const struct WorldRegionDesc *desc);
+/* Remove an inactive or active region and release its owned surfaces/nodes.
+ * This is the release operation used when a scene provider unloads a room. */
+enum WorldRegionResult world_region_unregister(u32 id);
 enum WorldRegionResult world_region_activate(u32 id);
 enum WorldRegionResult world_region_deactivate(u32 id);
 /* Activates nearby regions first, then retires distant ones. maxStep is the
