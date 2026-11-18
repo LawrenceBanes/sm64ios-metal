@@ -36,6 +36,15 @@ xcrun --sdk iphonesimulator clang "${common[@]}" -isysroot "$simulator_sdk" -arc
     -mios-simulator-version-min=13.2 "${sources[@]}" "${frameworks[@]}" \
     -o "$simulator_dir/MetalBackendValidation"
 
+echo "Checking scene-package provider, Gfx bridge, and area hooks against the iOS SDK."
+xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \
+    -mios-version-min=15.0 -fsyntax-only -DNON_MATCHING=1 -DAVOID_UB=1 \
+    -DIOS_BUILD=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 -DIOS_O2R_SCENE_RUNTIME=1 \
+    "$repo_dir/src/engine/world_scene.c" "$repo_dir/src/engine/world_scene_file.c" \
+    "$repo_dir/src/engine/world_region.c" "$repo_dir/src/engine/surface_load.c" \
+    "$repo_dir/src/pc/gfx/gfx_pc.c" "$repo_dir/src/game/area.c" \
+    "$repo_dir/src/game/rendering_graph_node.c"
+
 echo "Generating representative shader variants."
 host_sdk=$(xcrun --sdk macosx --show-sdk-path)
 xcrun --sdk macosx clang -isysroot "$host_sdk" -std=gnu11 \

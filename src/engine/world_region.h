@@ -42,6 +42,7 @@ struct WorldRegionDesc {
     const struct WorldRegionTriangle *triangles;
     u32 triangleCount;
     const void *renderList;
+    const void *translucentList;
     u32 neighbors[WORLD_REGION_MAX_NEIGHBORS];
     u8 neighborCount;
     void *owner;
@@ -68,6 +69,7 @@ struct WorldRegionInfo {
     u32 nodeCount;
     s32 active;
     const void *renderList;
+    const void *translucentList;
     u32 neighbors[WORLD_REGION_MAX_NEIGHBORS];
     u8 neighborCount;
     void *owner;

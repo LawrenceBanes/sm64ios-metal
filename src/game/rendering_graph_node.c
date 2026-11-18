@@ -335,9 +335,11 @@ static void geo_process_camera(struct GraphNodeCamera *node) {
         if (area_scene_package_id()) {
             for (u32 i = 0; i < world_region_count(); ++i) {
                 struct WorldRegionInfo region;
-                if (world_region_info_at(i, &region) && region.externallyManaged
-                    && region.active && region.renderList) {
-                    geo_append_display_list((void *)region.renderList, LAYER_OPAQUE);
+                if (world_region_info_at(i, &region) && region.externallyManaged && region.active) {
+                    if (region.renderList)
+                        geo_append_display_list((void *)region.renderList, LAYER_OPAQUE);
+                    if (region.translucentList)
+                        geo_append_display_list((void *)region.translucentList, LAYER_TRANSPARENT);
                 }
             }
         }

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Write a WSC1 package from original, authored scene JSON."""
+"""Write a WSC1 or WSC2 package from original, authored scene JSON."""
 import argparse
 import json
 from pathlib import Path
 import re
 import struct
 import sys
+
+if __package__:
+    from .hyrule_importer import write_rgba_png
+else:
+    from hyrule_importer import write_rgba_png
 
 MAX_BYTES = 4 * 1024 * 1024
 TEXTURE_NAME = re.compile(r"scenes/[a-z0-9_-]+\.rgba16\Z")
@@ -39,6 +44,68 @@ def unique_records(records, label, minimum=0):
     return set(ids)
 
 
+def texture_descriptor(record):
+    if record is None:
+        return 0, 0, b""
+    width = integer(record["width"], 4, 2048, "texture width")
+    height = integer(record["height"], 1, 512, "texture height")
+    name = record["name"]
+    if len(name) >= 96 or not TEXTURE_NAME.fullmatch(name) or width % 4 or width * height > 2048:
+        raise ValueError("invalid scene texture name or dimensions")
+    return width, height, name.encode("ascii")
+
+
+def decode_indexed_rgba(record):
+    """Expand packed CI4/CI8 using an explicit RGBA5551 or IA88 palette."""
+    width, height, _ = texture_descriptor(record)
+    bits = integer(record["index_bits"], 4, 8, "index bits")
+    if bits not in (4, 8):
+        raise ValueError("only four- and eight-bit indices are supported")
+    raw_indices = bytes.fromhex(record["indices"])
+    raw_palette = bytes.fromhex(record["palette"])
+    if len(raw_indices) != width * height * bits // 8:
+        raise ValueError("packed index byte count does not match dimensions")
+    if not 2 <= len(raw_palette) <= 2 * (1 << bits) or len(raw_palette) % 2:
+        raise ValueError("palette byte count exceeds the index format or contains a partial entry")
+
+    fmt = record["palette_format"]
+    if fmt not in ("rgba5551", "ia88"):
+        raise ValueError("unsupported palette format")
+    palette = []
+    for i in range(0, len(raw_palette), 2):
+        high, low = raw_palette[i:i + 2]
+        if fmt == "ia88":
+            palette.append(bytes((high, high, high, low)))
+        else:
+            packed = high << 8 | low
+            rgb = [(packed >> shift) & 31 for shift in (11, 6, 1)]
+            palette.append(bytes([((component << 3) | (component >> 2)) for component in rgb]
+                                 + [255 if packed & 1 else 0]))
+
+    pixels = bytearray()
+    for i in range(width * height):
+        index = raw_indices[i] if bits == 8 else (raw_indices[i // 2] >> (0 if i % 2 else 4)) & 15
+        if index >= len(palette):
+            raise ValueError(f"palette index {index} at texel {i} is out of range")
+        pixels.extend(palette[index])
+    return bytes(pixels)
+
+
+def indexed_textures(scene):
+    assets = {}
+    for record in array(scene.get("indexed_textures", []), 0, 1024, "indexed textures"):
+        width, height, name = texture_descriptor(record)
+        if name in assets:
+            raise ValueError("duplicate indexed texture name")
+        assets[name] = (width, height, decode_indexed_rgba(record))
+    for room in scene["rooms"]:
+        for batch in room.get("batches", [room]):
+            width, height, name = texture_descriptor(batch.get("texture"))
+            if name in assets and assets[name][:2] != (width, height):
+                raise ValueError("material dimensions differ from its indexed texture")
+    return assets
+
+
 def encode_scene(scene):
     scene_id = identifier(scene["id"], "scene ID", 1)
     rooms = array(scene["rooms"], 1, 16, "rooms")
@@ -47,7 +114,9 @@ def encode_scene(scene):
     entrance_ids = unique_records(entrances, "entrance ID")
     exits = array(scene.get("exits", []), 0, 4096, "exits")
     unique_records(exits, "exit ID")
-    output = bytearray(struct.pack("<4sI3H", b"WSC1", scene_id, len(rooms), len(entrances), len(exits)))
+    version = integer(scene.get("version", 1), 1, 2, "scene version")
+    magic = b"WSC2" if version == 2 else b"WSC1"
+    output = bytearray(struct.pack("<4sI3H", magic, scene_id, len(rooms), len(entrances), len(exits)))
     bounds = {}
 
     def append(fmt, *values):
@@ -65,32 +134,62 @@ def encode_scene(scene):
         neighbors = [identifier(n, "neighbor") for n in neighbors]
         if room["id"] in neighbors or len(set(neighbors)) != len(neighbors) or set(neighbors) - room_ids:
             raise ValueError("invalid room neighbors")
-        render = array(room["render_vertices"], 3, 3 * 8192, "render vertices")
-        if len(render) % 3:
-            raise ValueError("render vertices must form complete triangles")
         collision = array(room["collision_vertices"], 3, 16384, "collision vertices")
         triangles = array(room["collision_triangles"], 1, 8192, "collision triangles")
-        width, height, texture = 0, 0, b""
-        if "texture" in room:
-            record = room["texture"]
-            width = integer(record["width"], 4, 2048, "texture width")
-            height = integer(record["height"], 1, 512, "texture height")
-            name = record["name"]
-            if len(name) >= 96 or not TEXTURE_NAME.fullmatch(name) or width % 4 or width * height > 2048:
-                raise ValueError("invalid room texture name or dimensions")
-            texture = name.encode("ascii")
-        append("<I6h7H", room["id"], *low, *high, len(neighbors), len(render) // 3,
-               len(collision), len(triangles), width, height, len(texture))
-        output.extend(texture)
-        for neighbor in neighbors:
-            append("<I", neighbor)
-        for vertex in render:
-            pos = vector(vertex["position"], -32768, 32767, 3, "render position")
-            uv = vector(vertex.get("uv", [0, 0]), -32768, 32767, 2, "render UV")
-            color = vector(vertex.get("color", [255, 255, 255, 255]), 0, 255, 4, "render color")
-            if not inside(pos, low, high):
-                raise ValueError("render vertex outside room bounds")
-            append("<5h4B", *pos, *uv, *color)
+
+        def render_vertices(vertices):
+            for vertex in vertices:
+                pos = vector(vertex["position"], -32768, 32767, 3, "render position")
+                uv = vector(vertex.get("uv", [0, 0]), -32768, 32767, 2, "render UV")
+                color = vector(vertex.get("color", [255, 255, 255, 255]), 0, 255, 4, "render color")
+                if not inside(pos, low, high):
+                    raise ValueError("render vertex outside room bounds")
+                append("<5h4B", *pos, *uv, *color)
+
+        def read_render(batch):
+            render = array(batch["render_vertices"], 3, 3 * 8192, "render vertices")
+            if len(render) % 3:
+                raise ValueError("render vertices must form complete triangles")
+            return render
+
+        if version == 1:
+            if "batches" in room or "states" in room:
+                raise ValueError("material batches and draw-state slots require scene version 2")
+            render = read_render(room)
+            width, height, texture = texture_descriptor(room.get("texture"))
+            append("<I6h7H", room["id"], *low, *high, len(neighbors), len(render) // 3,
+                   len(collision), len(triangles), width, height, len(texture))
+            output.extend(texture)
+            for neighbor in neighbors:
+                append("<I", neighbor)
+            render_vertices(render)
+        else:
+            if "render_vertices" in room or "texture" in room:
+                raise ValueError("scene version 2 stores rendering in batches")
+            batches = array(room["batches"], 1, 64, "batches")
+            states = array(room.get("states", []), 0, 64, "draw-state slots")
+            append("<I6h5H", room["id"], *low, *high, len(neighbors), len(batches),
+                   len(collision), len(triangles), len(states))
+            for neighbor in neighbors:
+                append("<I", neighbor)
+            for state in states:
+                scroll = vector(state.get("scroll", [0, 0]), -32768, 32767, 2, "scroll rates")
+                tint = vector(state.get("tint", [255, 255, 255, 255]), 0, 255, 4, "tint")
+                append("<2h4B", *scroll, *tint)
+            total = 0
+            for batch in batches:
+                render = read_render(batch)
+                total += len(render) // 3
+                if total > 8192:
+                    raise ValueError("combined room rendering exceeds the triangle limit")
+                draw_pass = batch.get("pass", "opaque")
+                if draw_pass not in ("opaque", "translucent"):
+                    raise ValueError("invalid scene render pass")
+                state = integer(batch.get("state", 0), 0, len(states), "draw-state slot")
+                width, height, texture = texture_descriptor(batch.get("texture"))
+                append("<6H", draw_pass == "translucent", state, len(render) // 3, width, height, len(texture))
+                output.extend(texture)
+                render_vertices(render)
         for vertex in collision:
             pos = vector(vertex, -32768, 32767, 3, "collision position")
             if not inside(pos, low, high):
@@ -128,9 +227,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--texture-root", type=Path, help="Documents root for authored indexed PNGs")
     args = parser.parse_args()
     try:
-        package = encode_scene(json.loads(args.input.read_text(encoding="utf-8")))
+        scene = json.loads(args.input.read_text(encoding="utf-8"))
+        package = encode_scene(scene)
+        textures = indexed_textures(scene)
+        if textures and args.texture_root is None:
+            raise ValueError("indexed textures require --texture-root")
+        for name, (width, height, pixels) in textures.items():
+            write_rgba_png(args.texture_root / "gfx" / (name.decode("ascii") + ".png"), width, height, pixels)
         args.output.write_bytes(package)
     except (OSError, KeyError, TypeError, ValueError) as error:
         print(f"world-scene-package: {error}", file=sys.stderr)

@@ -196,6 +196,7 @@ enum WorldRegionResult world_region_register(const struct WorldRegionDesc *desc)
     memset(&info, 0, sizeof(info));
     info.id = desc->id;
     info.renderList = desc->renderList;
+    info.translucentList = desc->translucentList;
     info.owner = desc->owner;
     info.externallyManaged = desc->externallyManaged;
     info.neighborCount = desc->neighborCount;

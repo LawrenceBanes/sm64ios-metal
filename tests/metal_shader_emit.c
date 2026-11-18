@@ -62,6 +62,7 @@ int main(int argc, char **argv) {
     }
     const uint8_t flat[4] = {0, 0, 0, SHADER_INPUT_1};
     const uint8_t rgba[4] = {SHADER_TEXEL0, 0, SHADER_INPUT_1, 0};
+    const uint8_t constant[4] = {0, 0, 0, 0};
     const uint8_t dual[4] = {SHADER_TEXEL0, SHADER_TEXEL1, SHADER_INPUT_1, SHADER_TEXEL0};
     const uint8_t alpha_dual[4] = {SHADER_TEXEL0, SHADER_TEXEL1, SHADER_INPUT_1, SHADER_INPUT_2};
     return emit(argv[1], "untextured", flat, flat, 0) &&
@@ -70,6 +71,9 @@ int main(int argc, char **argv) {
            emit(argv[1], "dual_texture", dual, alpha_dual, SHADER_OPT_ALPHA) &&
            emit(argv[1], "alpha_noise", flat, flat, SHADER_OPT_ALPHA | SHADER_OPT_NOISE) &&
            emit(argv[1], "alpha_texel", rgba, rgba, SHADER_OPT_ALPHA) &&
+           emit(argv[1], "scene_vertex_alpha", flat, flat, SHADER_OPT_ALPHA) &&
+           emit(argv[1], "scene_constant_alpha_one", rgba, constant,
+                SHADER_OPT_ALPHA | SHADER_OPT_ALPHA_ONE) &&
            emit_shader_id(argv[1], "device_failure_01200200", 0x01200200u) &&
            emit_shader_id(argv[1], "device_failure_00000045", 0x00000045u) &&
            emit_shader_id(argv[1], "device_failure_00000200", 0x00000200u) &&

@@ -1,5 +1,6 @@
 """Round-trip original scene fixtures through the native package provider."""
 import copy
+import json
 import os
 from pathlib import Path
 import shlex
@@ -11,7 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.hyrule_importer import write_rgba_png
-from tools.world_scene_package import encode_scene
+from tools.world_scene_package import decode_indexed_rgba, encode_scene
 
 
 def room(room_id, x, neighbors, textured=False):
@@ -42,7 +43,46 @@ def make_pair():
     )
 
 
+def material_scene():
+    first, _ = make_pair()
+    first.update(id=21, version=2, exits=[])
+    west, east = first["rooms"]
+    vertices = west.pop("render_vertices")
+    west.pop("texture")
+    for vertex in vertices:
+        vertex["color"] = [255, 255, 255, 128]
+    texture = {"name": "scenes/indexed.rgba16", "width": 4, "height": 2}
+    west["states"] = [{"scroll": [32, -16], "tint": [255, 128, 0, 96]}]
+    west["batches"] = [
+        {"render_vertices": vertices, "pass": "translucent", "texture": texture, "state": 1},
+        {"render_vertices": vertices, "pass": "opaque", "texture": texture},
+        {"render_vertices": vertices, "pass": "translucent"},
+    ]
+    east["batches"] = [{"render_vertices": east.pop("render_vertices")}]
+    first["indexed_textures"] = [{**texture, "index_bits": 8, "indices": "0001020001000201",
+                                  "palette_format": "rgba5551", "palette": "f80107c04211"}]
+    return first
+
+
 class ScenePackageTest(unittest.TestCase):
+    def test_palette_formats_and_bounds(self):
+        base = {"name": "scenes/unit.rgba16", "width": 4, "height": 1,
+                "index_bits": 4, "indices": "0101", "palette_format": "ia88", "palette": "6480ff00"}
+        self.assertEqual(decode_indexed_rgba(base), bytes([100, 100, 100, 128, 255, 255, 255, 0] * 2))
+        rgba8 = material_scene()["indexed_textures"][0]
+        self.assertEqual(decode_indexed_rgba(rgba8)[:12], bytes([255, 0, 0, 255, 0, 255, 0, 0, 66, 66, 66, 255]))
+        for edit in ({"indices": "ff"}, {"indices": "f101"}, {"palette": "abcdff"},
+                     {"index_bits": 5}, {"palette_format": "unknown"}, {"palette": "abcd" * 17}):
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                decode_indexed_rgba({**base, **edit})
+
+    def test_author_rejects_bad_state_index_and_pass(self):
+        for field, value in (("state", 2), ("pass", "shadow")):
+            scene = material_scene()
+            scene["rooms"][0]["batches"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                encode_scene(scene)
+
     def test_rejects_invalid_authored_input(self):
         scene, _ = make_pair()
         for key, value in (
@@ -72,11 +112,25 @@ class ScenePackageTest(unittest.TestCase):
             degenerate["rooms"][0]["collision_vertices"] = [[400, 0, -200], [500, 0, -200], [600, 0, -200]]
             (work / "scenes/14.wsc").write_bytes(encode_scene(degenerate))
             write_rgba_png(work / "gfx/scenes/a.rgba16.png", 4, 1, bytes([12, 34, 56, 255] * 4))
+            content = material_scene()
+            authored = work / "authored.json"
+            authored.write_text(json.dumps(content), encoding="utf-8")
+            subprocess.run([sys.executable, ROOT / "tools/world_scene_package.py", authored,
+                            work / "scenes/21.wsc", "--texture-root", work], check=True)
+            self.assertEqual((work / "scenes/21.wsc").read_bytes(), encode_scene(content))
+            bad = bytearray(encode_scene({**content, "id": 22}))
+            # First room's first batch follows package/room headers, one
+            # neighbor and one draw-state slot. Forge an out-of-range slot.
+            bad[14 + 26 + 4 + 8 + 2] = 2
+            (work / "scenes/22.wsc").write_bytes(bad)
+            bad_asset = copy.deepcopy({**content, "id": 23})
+            bad_asset["rooms"][0]["batches"][0]["texture"]["height"] = 1
+            (work / "scenes/23.wsc").write_bytes(encode_scene(bad_asset))
             executable = work / "scene-test"
             sources = ["tests/test_world_scene_package.c", "src/engine/world_scene_file.c",
                        "src/engine/world_scene.c", "src/engine/world_region.c", "src/engine/surface_collision.c",
                        "src/pc/gfx/gfx_cc.c", "src/pc/gfx/gfx_scene_capture.c", "src/pc/platform.c",
-                       "src/game/area.c"]
+                       "src/game/area.c", "src/pc/gfx/gfx_metal_shader.c"]
             sources.extend(sorted((ROOT / "src/pc/fs").glob("*.c")))
             subprocess.run(shlex.split(os.environ.get("CC", "clang")) + [
                 "-std=gnu99", "-O1", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",

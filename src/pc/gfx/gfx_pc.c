@@ -30,6 +30,9 @@
 #include "gfx_texture_override.h"
 #ifdef IOS_O2R_SCENE_RUNTIME
 #include "engine/world_scene_file.h"
+static const struct WorldSceneDrawState *scene_draw_state;
+static bool inside_scene_display_list;
+static u32 scene_render_frame;
 #endif
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
 #include "gfx_metal.h"
@@ -732,17 +735,34 @@ static bool load_texture(const char *fullpath) {
 
 #ifdef IOS_O2R_SCENE_RUNTIME
 /* Package materials use a separate, bounded namespace in Documents. */
-static void load_scene_texture(const char *path, int width, int height) {
+static uint8_t *decode_scene_png(const char *path, int width, int height) {
+    static const u8 signature[] = {137, 'P', 'N', 'G', 13, 10, 26, 10};
     uint64_t length;
     uint8_t *png = fs_load_write_file(path, 256 * 1024, &length);
     uint8_t *rgba = NULL;
     int w, h;
-    if (png && stbi_info_from_memory(png, (int)length, &w, &h, NULL)
-        && w == width && h == height) {
+    if (png && length >= sizeof(signature) && !memcmp(png, signature, sizeof(signature))
+        && stbi_info_from_memory(png, (int)length, &w, &h, NULL) && w == width && h == height) {
         rgba = stbi_load_from_memory(png, (int)length, &w, &h, NULL, 4);
+        if (rgba && (w != width || h != height)) {
+            stbi_image_free(rgba);
+            rgba = NULL;
+        }
     }
     free(png);
-    if (rgba && w == width && h == height) gfx_rapi->upload_texture(rgba, w, h);
+    return rgba;
+}
+
+bool gfx_validate_scene_texture(const char *path, int width, int height) {
+    uint8_t *rgba = decode_scene_png(path, width, height);
+    if (!rgba) return false;
+    stbi_image_free(rgba);
+    return true;
+}
+
+static void load_scene_texture(const char *path, int width, int height) {
+    uint8_t *rgba = decode_scene_png(path, width, height);
+    if (rgba) gfx_rapi->upload_texture(rgba, width, height);
     else {
         fprintf(stderr, "scene texture missing or invalid: %s\n", path);
         gfx_rapi->upload_texture(missing_hyrule_texture, 2, 2);
@@ -1259,7 +1279,36 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         } else {
             d->color.a = v->cn[3];
         }
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (scene_draw_state) {
+            const u8 *tint = scene_draw_state->tint;
+            d->color.r = (d->color.r * tint[0] + 127) / 255;
+            d->color.g = (d->color.g * tint[1] + 127) / 255;
+            d->color.b = (d->color.b * tint[2] + 127) / 255;
+            d->color.a = (d->color.a * tint[3] + 127) / 255;
+        }
+#endif
     }
+}
+
+static void gfx_tile_uv(const struct LoadedVertex *vertex, u32 width, u32 height,
+                        float *outU, float *outV) {
+    float u = (vertex->u - rdp.texture_tile.uls * 8) / 32.0f;
+    float v = (vertex->v - rdp.texture_tile.ult * 8) / 32.0f;
+    if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
+        u += 0.5f;
+        v += 0.5f;
+    }
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (scene_draw_state && width && height) {
+        /* WSC2 samplers repeat. Reduce the shift before conversion so long
+         * sessions retain subtexel precision and negative rates still wrap. */
+        u += ((s64)scene_draw_state->scrollS * scene_render_frame % (32 * (s64)width)) / 32.0f;
+        v += ((s64)scene_draw_state->scrollT * scene_render_frame % (32 * (s64)height)) / 32.0f;
+    }
+#endif
+    *outU = u / width;
+    *outV = v / height;
 }
 
 static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
@@ -1449,14 +1498,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             if (use_texture && tex_width > 0 && tex_height > 0) {
                 float uv[3][2];
                 for (int i = 0; i < 3; ++i) {
-                    float u = (v_arr[i]->u - rdp.texture_tile.uls * 8) / 32.0f;
-                    float v = (v_arr[i]->v - rdp.texture_tile.ult * 8) / 32.0f;
-                    if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
-                        u += 0.5f;
-                        v += 0.5f;
-                    }
-                    uv[i][0] = u / tex_width;
-                    uv[i][1] = v / tex_height;
+                    gfx_tile_uv(v_arr[i], tex_width, tex_height, &uv[i][0], &uv[i][1]);
                 }
                 GFX_TEXTURE_CACHE_DIAG_LOG("gfx source render snapshot triangle=%llu combiner=0x%08x shader=0x%08x textures=(%d,%d) inputs=%u fog=%d alpha=%d cacheOccupancy=%u cacheHighWater=%u cacheCapacity=%u rollovers=%u clip0=(%.4f,%.4f,%.4f,%.4f) clip1=(%.4f,%.4f,%.4f,%.4f) clip2=(%.4f,%.4f,%.4f,%.4f) rawUV0=(%.3f,%.3f) rawUV1=(%.3f,%.3f) rawUV2=(%.3f,%.3f) normalizedUV0=(%.5f,%.5f) normalizedUV1=(%.5f,%.5f) normalizedUV2=(%.5f,%.5f) tileOrigin=(%u,%u) tileSize=%ux%u",
                     (unsigned long long)snapshot_id, cc_id, comb->shader_id,
@@ -1513,14 +1555,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             memcpy(capture.vertices[i].position, v->local_position, sizeof(v->local_position));
             memcpy(capture.vertices[i].normal, v->normal, sizeof(v->normal));
             if (use_texture && tex_width > 0 && tex_height > 0) {
-                float u = (v->u - rdp.texture_tile.uls * 8) / 32.0f;
-                float tex_v = (v->v - rdp.texture_tile.ult * 8) / 32.0f;
-                if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
-                    u += 0.5f;
-                    tex_v += 0.5f;
-                }
-                capture.vertices[i].uv[0] = u / tex_width;
-                capture.vertices[i].uv[1] = tex_v / tex_height;
+                gfx_tile_uv(v, tex_width, tex_height, &capture.vertices[i].uv[0], &capture.vertices[i].uv[1]);
             } else {
                 capture.vertices[i].uv[0] = v->u;
                 capture.vertices[i].uv[1] = v->v;
@@ -1570,15 +1605,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         buf_vbo[buf_vbo_len++] = w;
         
         if (use_texture) {
-            float u = (v_arr[i]->u - rdp.texture_tile.uls * 8) / 32.0f;
-            float v = (v_arr[i]->v - rdp.texture_tile.ult * 8) / 32.0f;
-            if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
-                // Linear filter adds 0.5f to the coordinates
-                u += 0.5f;
-                v += 0.5f;
-            }
-            buf_vbo[buf_vbo_len++] = u / tex_width;
-            buf_vbo[buf_vbo_len++] = v / tex_height;
+            gfx_tile_uv(v_arr[i], tex_width, tex_height, &buf_vbo[buf_vbo_len], &buf_vbo[buf_vbo_len + 1]);
+            buf_vbo_len += 2;
         }
         
         if (use_fog) {
@@ -2086,14 +2114,20 @@ static void gfx_run_dl(Gfx *cmd);
 
 static void gfx_run_scene_dl(Gfx *cmd) {
     struct RDP saved_rdp = rdp;
+    const struct WorldSceneDrawState *saved_state = scene_draw_state;
+    bool saved_scope = inside_scene_display_list;
     u32 geometry_mode = rsp.geometry_mode;
     u16 scale_s = rsp.texture_scaling_factor.s;
     u16 scale_t = rsp.texture_scaling_factor.t;
     struct LoadedVertex vertices[sizeof(rsp.loaded_vertices) / sizeof(rsp.loaded_vertices[0])];
     memcpy(vertices, rsp.loaded_vertices, sizeof(vertices));
     gfx_flush();
+    scene_draw_state = NULL;
+    inside_scene_display_list = true;
     gfx_run_dl(cmd + 1);
     gfx_flush();
+    scene_draw_state = saved_state;
+    inside_scene_display_list = saved_scope;
     rdp = saved_rdp;
     rdp.textures_changed[0] = rdp.textures_changed[1] = true;
     rsp.geometry_mode = geometry_mode;
@@ -2109,9 +2143,18 @@ static void gfx_run_dl(Gfx* cmd) {
         uint32_t opcode = cmd->words.w0 >> 24;
         
         switch (opcode) {
-#if defined(TARGET_OS_IOS)
+#if defined(TARGET_OS_IOS) || defined(IOS_O2R_SCENE_RUNTIME)
             case G_NOOP:
+#ifdef IOS_O2R_SCENE_RUNTIME
+                if (inside_scene_display_list && cmd->words.w0 == WORLD_SCENE_STATE_OPCODE) {
+                    gfx_flush();
+                    scene_draw_state = (const struct WorldSceneDrawState *)cmd->words.w1;
+                    break;
+                }
+#endif
+#if defined(TARGET_OS_IOS)
                 gfx_render_section_tag(cmd->words.w1);
+#endif
                 break;
 #endif
             // RSP commands:
@@ -2415,6 +2458,9 @@ void gfx_run(Gfx *commands) {
     
     double t0 = gfx_wapi->get_time();
     gfx_rapi->start_frame();
+#ifdef IOS_O2R_SCENE_RUNTIME
+    ++scene_render_frame;
+#endif
 #if defined(TARGET_OS_IOS)
     gfx_render_section_new_frame();
 #endif

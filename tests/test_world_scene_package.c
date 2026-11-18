@@ -5,6 +5,7 @@
 #include "engine/surface_load.h"
 #include "game/area.h"
 #include "game/object_list_processor.h"
+#include "pc/gfx/gfx_metal_shader.h"
 
 SpatialPartitionCell gStaticSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
 SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
@@ -77,11 +78,22 @@ s32 mario_ios_portal_surface_passable(const struct Surface *surface, f32 x, f32 
 }
 
 struct ShaderProgram { u32 id; };
-static struct ShaderProgram shader;
+static struct ShaderProgram shaders[32];
+static unsigned shaderCount;
 static unsigned triangles, textures;
+static bool check_materials;
 
-static struct ShaderProgram *lookup(u32 id) { return shader.id == id ? &shader : NULL; }
-static struct ShaderProgram *create(u32 id) { shader.id = id; return &shader; }
+static struct ShaderProgram *lookup(u32 id) {
+    for (unsigned i = 0; i < shaderCount; ++i) {
+        if (shaders[i].id == id) return &shaders[i];
+    }
+    return NULL;
+}
+static struct ShaderProgram *create(u32 id) {
+    assert(shaderCount < sizeof(shaders) / sizeof(shaders[0]));
+    shaders[shaderCount].id = id;
+    return &shaders[shaderCount++];
+}
 static void bind_shader(struct ShaderProgram *program) { (void)program; }
 static void shader_info(struct ShaderProgram *program, u8 *inputs, bool used[2]) {
     struct CCFeatures f;
@@ -99,13 +111,42 @@ static void sampler(int tile, bool linear, u32 s, u32 t) {
     (void)linear; (void)s; (void)t;
 }
 static void upload(const u8 *rgba, int width, int height) {
-    assert(width == 4 && height == 1);
-    assert(rgba[0] == 12 && rgba[1] == 34 && rgba[2] == 56 && rgba[3] == 255);
+    if (check_materials) {
+        static const u8 expected[] = {
+            255, 0, 0, 255, 0, 255, 0, 0, 66, 66, 66, 255, 255, 0, 0, 255,
+            0, 255, 0, 0, 255, 0, 0, 255, 66, 66, 66, 255, 0, 255, 0, 0,
+        };
+        assert(width == 4 && height == 2 && memcmp(rgba, expected, sizeof(expected)) == 0);
+    } else {
+        assert(width == 4 && height == 1);
+        assert(rgba[0] == 12 && rgba[1] == 34 && rgba[2] == 56 && rgba[3] == 255);
+    }
     textures++;
 }
 static void draw(float *data, size_t length, size_t count) {
     assert(count == 1 && length > 0);
     for (size_t i = 0; i < length; ++i) assert(isfinite(data[i]));
+    if (check_materials) {
+        struct CCFeatures features;
+        char msl[8192];
+        assert(gfx_metal_build_shader(rendering_state.shader_program->id, msl, sizeof(msl), &features));
+        assert(rendering_state.depth_test);
+        assert(rendering_state.depth_mask == (triangles == 0));
+        assert(rendering_state.alpha_blend == (triangles != 0));
+        assert(features.used_textures[0] == (triangles < 2));
+        if (triangles == 0) {
+            assert(data[4] == 0 && data[5] == 0);
+        } else if (triangles == 1) {
+            assert(features.opt_alpha && features.color_alpha_same);
+            assert(strstr(msl, "float4 color=texel0 * in.input1;"));
+            assert(data[4] == 0.75f && data[5] == -0.75f);
+            assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
+            assert(data[8] == 0 && fabsf(data[9] - 48.0f / 255.0f) < 1e-6f);
+        } else {
+            assert(triangles == 2 && data[4] == 1 && data[5] == 1 && data[6] == 1);
+            assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
+        }
+    }
     triangles += count;
 }
 
@@ -118,12 +159,7 @@ static struct GfxRenderingAPI recorder = {
     .set_viewport = rectangle, .set_scissor = rectangle, .draw_triangles = draw,
 };
 
-static void replay_first_room(void) {
-    struct WorldRegionInfo region;
-    assert(world_region_info_at(0, &region) && region.active);
-    assert(region.renderList);
-    Gfx frame[] = {gsSPDisplayList(NULL), gsSPEndDisplayList()};
-    frame[0].words.w1 = (uintptr_t)region.renderList;
+static void prepare_projection(void) {
     const float projection[4][4] = {
         {0.001f,0,0,0},{0,0,0,0},{0,-0.001f,0,0},{0,0,0,1}
     };
@@ -138,12 +174,62 @@ static void replay_first_room(void) {
     rsp.geometry_mode = G_ZBUFFER | G_FOG;
     rsp.texture_scaling_factor.s = 17;
     rdp.combine_mode = 0x1234;
+}
+
+static void replay_first_room(void) {
+    struct WorldRegionInfo region;
+    assert(world_region_info_at(0, &region) && region.active);
+    assert(region.renderList && !region.translucentList);
+    Gfx frame[] = {gsSPDisplayList(NULL), gsSPEndDisplayList()};
+    frame[0].words.w1 = (uintptr_t)region.renderList;
+    prepare_projection();
     gfx_run_dl(frame);
     assert(rsp.geometry_mode == (G_ZBUFFER | G_FOG));
     assert(rsp.texture_scaling_factor.s == 17);
     assert(rdp.combine_mode == 0x1234);
     assert(buf_vbo_len == 0);
     assert(triangles == 1 && textures == 1);
+}
+
+static void check_wsc2_rendering(struct WorldSceneRuntime *runtime) {
+    assert(world_scene_open(runtime, 21, 0, NULL) == WORLD_SCENE_OK);
+    struct WorldRegionInfo region;
+    assert(world_region_info_at(0, &region) && region.active);
+    assert(region.renderList && region.translucentList);
+    Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
+    frame[0].words.w1 = (uintptr_t)region.renderList;
+    frame[1].words.w1 = (uintptr_t)region.translucentList;
+    prepare_projection();
+    rdp.other_mode_h = G_TF_POINT;
+    scene_render_frame = 3;
+    check_materials = true;
+    triangles = textures = 0;
+    gfx_run_dl(frame);
+    assert(triangles == 3 && textures == 1);
+    assert(!scene_draw_state && !inside_scene_display_list);
+    assert(rsp.geometry_mode == (G_ZBUFFER | G_FOG) && rdp.combine_mode == 0x1234);
+    assert(world_scene_transition(runtime, 22, 0, NULL) == WORLD_SCENE_PROVIDER_FAILED);
+    assert(world_scene_transition(runtime, 23, 0, NULL) == WORLD_SCENE_PROVIDER_FAILED);
+    assert(world_scene_active_id(runtime) == 21 && world_region_count() == 1);
+    struct Surface *floor;
+    assert(find_floor(-150, 80, -100, &floor) == 0 && floor);
+    triangles = 0;
+    gfx_run_dl(frame);
+    assert(triangles == 3 && textures == 1);
+    assert(world_scene_transition(runtime, 21, 1, NULL) == WORLD_SCENE_OK);
+    for (u32 i = 0; i < gfx_texture_cache.pool_pos; ++i) {
+        assert(strcmp((const char *)gfx_texture_cache.pool[i].texture_addr, "scenes/indexed.rgba16") != 0);
+    }
+    assert(world_scene_transition(runtime, 21, 0, NULL) == WORLD_SCENE_OK);
+    assert(world_region_info_at(0, &region) && region.active);
+    frame[0].words.w1 = (uintptr_t)region.renderList;
+    frame[1].words.w1 = (uintptr_t)region.translucentList;
+    triangles = 0;
+    gfx_run_dl(frame);
+    assert(triangles == 3 && textures == 2);
+    world_scene_close(runtime);
+    assert(!world_region_count());
+    check_materials = false;
 }
 
 static void check_area_hooks(void) {
@@ -203,6 +289,7 @@ int main(int argc, char **argv) {
     assert(world_region_count() == 0);
     assert(find_floor(-150, 80, -100, &floor) == -11000.0f && !floor);
     check_area_hooks();
+    check_wsc2_rendering(&runtime);
     puts("Scene packages: render, texture upload, collision, room transitions and rollback passed");
     return 0;
 }
