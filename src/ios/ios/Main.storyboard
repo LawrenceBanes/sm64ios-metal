@@ -719,21 +719,26 @@
                                             <rect key="frame" x="0.0" y="0.0" width="716" height="43.666667938232422"/>
                                             <autoresizingMask key="autoresizingMask"/>
                                             <subviews>
-                                                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" fixedFrame="YES" text="Version" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="nzu-5q-lQS">
+                                                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Version" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="nzu-5q-lQS">
                                                     <rect key="frame" x="20" y="10.999999999999972" width="57" height="21"/>
-                                                    <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
                                                     <fontDescription key="fontDescription" type="system" pointSize="17"/>
                                                     <nil key="textColor"/>
                                                     <nil key="highlightedColor"/>
                                                 </label>
-                                                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" fixedFrame="YES" text="x.x.x" textAlignment="right" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="zzI-i0-36f">
-                                                    <rect key="frame" x="648" y="11" width="48" height="21"/>
-                                                    <autoresizingMask key="autoresizingMask" flexibleMinX="YES" widthSizable="YES" flexibleMinY="YES" flexibleMaxY="YES"/>
+                                                <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text=" " textAlignment="right" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" minimumScaleFactor="0.7" translatesAutoresizingMaskIntoConstraints="NO" id="zzI-i0-36f">
+                                                    <rect key="frame" x="498" y="11" width="198" height="21"/>
                                                     <fontDescription key="fontDescription" type="system" pointSize="17"/>
                                                     <nil key="textColor"/>
                                                     <nil key="highlightedColor"/>
                                                 </label>
                                             </subviews>
+                                            <constraints>
+                                                <constraint firstItem="nzu-5q-lQS" firstAttribute="leading" secondItem="EEJ-eS-egu" secondAttribute="leading" constant="20" id="0oK-pv-fPz"/>
+                                                <constraint firstItem="nzu-5q-lQS" firstAttribute="centerY" secondItem="EEJ-eS-egu" secondAttribute="centerY" id="P7G-4O-LRb"/>
+                                                <constraint firstItem="zzI-i0-36f" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="nzu-5q-lQS" secondAttribute="trailing" constant="12" id="fpU-F2-qMm"/>
+                                                <constraint firstItem="zzI-i0-36f" firstAttribute="trailing" secondItem="EEJ-eS-egu" secondAttribute="trailing" constant="-20" id="quS-55-LCf"/>
+                                                <constraint firstItem="zzI-i0-36f" firstAttribute="centerY" secondItem="nzu-5q-lQS" secondAttribute="centerY" id="9Yp-0w-IuH"/>
+                                            </constraints>
                                         </tableViewCellContentView>
                                     </tableViewCell>
                                 </cells>
@@ -879,7 +884,7 @@
                             <outlet property="delegate" destination="8tu-zU-u30" id="w59-fi-Msi"/>
                         </connections>
                     </tableView>
-                    <navigationItem key="navigationItem" title="Settings" id="aLT-Df-Wkv"/>
+                    <navigationItem key="navigationItem" title="SHITBOX LABZ INC. Settings" id="aLT-Df-Wkv"/>
                     <connections>
                         <outlet property="hapticsSwitch" destination="aLV-JW-HNX" id="pGc-6E-nwU"/>
                         <outlet property="hudSwitch" destination="XSD-Cz-zGI" id="XdF-Vj-fxc"/>
@@ -1268,13 +1273,13 @@
                             <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" spacing="10" translatesAutoresizingMaskIntoConstraints="NO" id="r0O-1J-ABY">
                                 <rect key="frame" x="260" y="105.33333333333333" width="324" height="179.33333333333337"/>
                                 <subviews>
-                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Super Mario 64 iOS" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="zZI-w4-TZg">
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="SHITBOX LABZ INC." textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" minimumScaleFactor="0.7" translatesAutoresizingMaskIntoConstraints="NO" id="zZI-w4-TZg">
                                         <rect key="frame" x="0.0" y="0.0" width="324" height="37"/>
                                         <fontDescription key="fontDescription" style="UICTFontTextStyleTitle0"/>
                                         <nil key="textColor"/>
                                         <nil key="highlightedColor"/>
                                     </label>
-                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Version 1.0.0" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="mDi-Ps-9mB">
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Version" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="mDi-Ps-9mB">
                                         <rect key="frame" x="0.0" y="47.000000000000014" width="324" height="20.333333333333329"/>
                                         <fontDescription key="fontDescription" type="system" pointSize="17"/>
                                         <color key="textColor" systemColor="secondaryLabelColor"/>

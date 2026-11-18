@@ -11,6 +11,14 @@ from pathlib import PurePosixPath
 
 
 CPU_TYPE_ARM64 = 0x0100000C
+SHITBOX_IDENTITY = {
+    "CFBundleDisplayName": "SHITBOX LABZ INC.",
+    "CFBundleName": "ShitboxDev",
+    "CFBundleIdentifier": "com.larry.shitboxdev",
+    "CFBundleShortVersionString": "0.69.420",
+    "CFBundleVersion": "1",
+    "ShitboxReleaseVersion": "beta.069420INITIAL",
+}
 BUILD_INTERMEDIATE_SUFFIXES = {
     ".a", ".bc", ".d", ".dia", ".dsym", ".gcda", ".gcno", ".hmap",
     ".o", ".pch", ".profdata", ".profraw", ".swiftmodule", ".swiftdoc",
@@ -126,7 +134,7 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
 
 
 def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False,
-             require_scene_diagnostic: bool = False) -> None:
+             require_scene_diagnostic: bool = False, require_shitbox_identity: bool = False) -> None:
     with zipfile.ZipFile(ipa_path) as ipa:
         bad_member = ipa.testzip()
         if bad_member:
@@ -169,6 +177,10 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
             info = plistlib.loads(ipa.read(info_path))
         except KeyError as exc:
             raise ValueError("app bundle has no Info.plist") from exc
+        if require_shitbox_identity:
+            for key, expected in SHITBOX_IDENTITY.items():
+                if info.get(key) != expected:
+                    raise ValueError(f"IPA Info.plist {key} must be {expected!r}, got {info.get(key)!r}")
         scene_manifest = info.get("UIApplicationSceneManifest")
         if not isinstance(scene_manifest, dict):
             raise ValueError("app Info.plist is missing its UIKit application scene configuration")
@@ -270,6 +282,8 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
             raise ValueError("@rpath dependencies are not embedded in the app: " + ", ".join(missing_rpath))
     print(f"valid iPhoneOS arm64 IPA: {ipa_path}")
     print(f"bundle: {info['CFBundleIdentifier']} ({info.get('CFBundleShortVersionString', 'version unknown')})")
+    if require_shitbox_identity:
+        print(f"app release: {info['CFBundleDisplayName']} {info['ShitboxReleaseVersion']}")
     print(f"executable: {executable_name}; Mach-O slices: {slices}")
     print(f"app bundle file entries: {app_file_count}")
     if resource_pack_file_count is not None:
@@ -286,8 +300,10 @@ def main() -> None:
     parser.add_argument("--require-system-deps", action="store_true", help="inspect linked dylibs with Apple's otool")
     parser.add_argument("--require-game-textures", action="store_true", help="require original Castle, Battlefield, and Goomba PNGs in res/base.zip")
     parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2 diagnostic resources in res/base.zip")
+    parser.add_argument("--require-shitbox-identity", action="store_true", help="verify the SHITBOX LABZ INC. name, bundle ID, and release versions")
     args = parser.parse_args()
-    validate(args.ipa, args.require_system_deps, args.require_game_textures, args.require_scene_diagnostic)
+    validate(args.ipa, args.require_system_deps, args.require_game_textures,
+             args.require_scene_diagnostic, args.require_shitbox_identity)
 
 
 if __name__ == "__main__":

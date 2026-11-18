@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 from package_unsigned_ipa import package_app
-from validate_ipa import validate
+from validate_ipa import SHITBOX_IDENTITY, validate
 
 
 class IpaValidationTests(unittest.TestCase):
@@ -103,6 +103,25 @@ class IpaValidationTests(unittest.TestCase):
             app = self.make_app(Path(temp), include_game_textures=True)
             package_app(app, path)
             validate(str(path), require_system_deps=False, require_game_textures=True)
+
+    def test_validates_all_packaged_identity_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            app = self.make_app(directory)
+            plist = app / "Info.plist"
+            info = {**plistlib.loads(plist.read_bytes()), **SHITBOX_IDENTITY}
+            plist.write_bytes(plistlib.dumps(info))
+            branded = directory / "branded.ipa"
+            package_app(app, branded)
+            validate(str(branded), require_system_deps=False, require_shitbox_identity=True)
+
+            for key in SHITBOX_IDENTITY:
+                with self.subTest(key=key):
+                    plist.write_bytes(plistlib.dumps({**info, key: "outdated"}))
+                    invalid = directory / f"{key}.ipa"
+                    package_app(app, invalid)
+                    with self.assertRaisesRegex(ValueError, f"Info.plist {key}"):
+                        validate(str(invalid), require_system_deps=False, require_shitbox_identity=True)
 
     def test_rejects_ipa_without_original_texture_pack(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

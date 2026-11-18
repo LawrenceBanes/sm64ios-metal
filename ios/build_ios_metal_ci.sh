@@ -195,7 +195,7 @@ build_full_game() {
         return 1
     }
     local scene_diagnostic=${IOS_SCENE_DIAGNOSTIC:-0}
-    local -a validation_flags=(--require-system-deps --require-game-textures)
+    local -a validation_flags=(--require-system-deps --require-game-textures --require-shitbox-identity)
     case "$scene_diagnostic:$scene_runtime" in
         0:*) ;;
         1:1) validation_flags+=(--require-scene-diagnostic) ;;
@@ -241,12 +241,13 @@ build_full_game() {
         cat "$private_dir/ipa-validation.log" >&2
         return 1
     fi
-    local validation_counts
-    validation_counts=$(grep -E '^(app bundle file entries|runtime resource pack file entries|build intermediates|WSC2 diagnostic resources):' \
+    local validation_counts release_label
+    validation_counts=$(grep -E '^(bundle|app release|app bundle file entries|runtime resource pack file entries|build intermediates|WSC2 diagnostic resources):' \
         "$private_dir/ipa-validation.log")
+    release_label=$(sed -n 's/^app release: //p' "$private_dir/ipa-validation.log")
     local digest
     digest=$(shasum -a 256 "$ipa" | awk '{print $1}')
-    upload_private_ipa "$ipa" "$digest" "$private_build_token"
+    upload_private_ipa "$ipa" "$digest" "$private_build_token" "$release_label"
     unset private_build_token
     printf 'Full game compile: PASS\nUnsigned IPA packaging and structural validation: PASS\nPrivate IPA draft release upload: PASS\n%s\nIPA SHA-256: %s\n' \
         "$validation_counts" "$digest" >"$safe_dir/ios-build-summary.txt"
@@ -255,7 +256,7 @@ build_full_game() {
 }
 
 upload_private_ipa() {
-    local ipa=$1 digest=$2 token=$3 repository tag visibility checksum_file
+    local ipa=$1 digest=$2 token=$3 release_label=$4 repository tag visibility checksum_file
     : "${SM64_IPA_PRIVATE_REPOSITORY:?Set the private owner/repo in the SM64_IPA_PRIVATE_REPOSITORY Actions variable}"
     [[ -n "$token" ]] || { echo 'Private build token is unavailable for IPA delivery' >&2; return 1; }
     [[ "$SM64_IPA_PRIVATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
@@ -282,7 +283,7 @@ upload_private_ipa() {
     printf '%s  %s\n' "$digest" "$(basename "$ipa")" >"$checksum_file"
     GH_TOKEN="$token" gh release create "$tag" \
         --repo "$repository" --draft \
-        --title "SM64 iOS unsigned test build ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+        --title "$release_label — unsigned build ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
         --notes "Connected-world test build from commit ${GITHUB_SHA:-unknown}. Unsigned IPA; device behavior remains unverified." \
         >"$private_dir/private-release-create.log"
     GH_TOKEN="$token" gh release upload "$tag" \

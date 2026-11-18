@@ -32,6 +32,11 @@
 #include "engine/geo_layout.h"
 #include "save_file.h"
 #include "level_table.h"
+#if defined(TARGET_OS_IOS) && defined(VERSION_US)
+#include "ios_app_branding.h"
+#include "segment2.h"
+static bool sShowIntroBranding;
+#endif
 #ifdef IOS_BUILD
 #include "pc/gfx/gfx_ios_diagnostics.h"
 #endif
@@ -194,6 +199,9 @@ static int scale_x_to_correct_aspect_center(int x) {
 }
 
 void print_intro_text(void) {
+#if defined(TARGET_OS_IOS) && defined(VERSION_US)
+    sShowIntroBranding = true;
+#endif
 #ifdef VERSION_EU
     int language = eu_get_language();
 #endif
@@ -563,6 +571,24 @@ void render_game(void) {
 
         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
         render_text_labels();
+#if defined(TARGET_OS_IOS) && defined(VERSION_US)
+        if (sShowIntroBranding) {
+            // The US HUD font has no X, Z, or period. Use the dialogue font.
+            const char *name = IOS_APP_DISPLAY_NAME;
+            u8 label[sizeof(IOS_APP_DISPLAY_NAME)];
+            for (size_t i = 0; i < sizeof(label) - 1; ++i) {
+                char c = name[i];
+                label[i] = c == ' ' ? DIALOG_CHAR_SPACE
+                    : c == '.' ? DIALOG_CHAR_PERIOD : ASCII_TO_DIALOG(c);
+            }
+            label[sizeof(label) - 1] = DIALOG_CHAR_TERMINATOR;
+            create_dl_ortho_matrix();
+            gSPDisplayList(gDisplayListHead++, dl_ia_text_begin);
+            gDPSetEnvColor(gDisplayListHead++, 255, 255, 255, 255);
+            print_generic_string(get_str_x_pos_from_center(SCREEN_WIDTH / 2, label, 10.0f), 58, label);
+            gSPDisplayList(gDisplayListHead++, dl_ia_text_end);
+        }
+#endif
         do_cutscene_handler();
         print_displaying_credits_entry();
         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
@@ -605,4 +631,7 @@ void render_game(void) {
 
     D_8032CE74 = NULL;
     D_8032CE78 = 0;
+#if defined(TARGET_OS_IOS) && defined(VERSION_US)
+    sShowIntroBranding = false;
+#endif
 }

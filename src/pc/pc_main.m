@@ -42,6 +42,7 @@
 #if TARGET_OS_IOS
 #include "controller/controller_touchscreen.h"
 #include "src/ios/native_ui_controller.h"
+#include "ios_app_branding.h"
 #endif
 #include "fs/fs.h"
 
@@ -279,7 +280,11 @@ void main_func(void) {
 #endif
 
     char window_title[96] =
+#if TARGET_OS_IOS
+    IOS_APP_DISPLAY_NAME " (" RAPI_NAME ")"
+#else
     "Super Mario 64 EX (" RAPI_NAME ")"
+#endif
     #ifdef NIGHTLY
     " nightly " GIT_HASH
     #endif

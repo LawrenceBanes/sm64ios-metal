@@ -8,12 +8,13 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #include "AboutViewController.h"
+#include "ios_app_branding.h"
 
 @implementation AboutViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    NSString *versionNumber = [NSString stringWithFormat:@"Version %@", [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"]];
+    NSString *versionNumber = [NSString stringWithFormat:@"Version %@", ios_app_release_version()];
     [self.versionLabel setText:versionNumber];
 }
 

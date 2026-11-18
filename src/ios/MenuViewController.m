@@ -7,6 +7,7 @@
 
 #import "MenuViewController.h"
 #import "native_ui_controller.h"
+#include "ios_app_branding.h"
 
 
 @implementation MenuViewController
@@ -19,8 +20,10 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     paused_by_menu = true;
-    NSString *versionNumber = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"];
-    [self.versionLabel setText:versionNumber];
+#if TARGET_OS_IOS
+    self.navigationItem.title = ios_app_display_name();
+#endif
+    self.versionLabel.text = ios_app_release_version();
     
 #if TARGET_OS_TV
     tapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap:)];

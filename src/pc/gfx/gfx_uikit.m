@@ -15,6 +15,7 @@
 #include "scene_diagnostic.h"
 #import "src/ios/CheatsViewController.h"
 #if TARGET_OS_IOS
+#include "ios_app_branding.h"
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 #if defined(RAPI_METAL)
@@ -120,9 +121,11 @@ static int sm64RenderDiagnosticMode;
 
     self.titleLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     UILabel *title = self.titleLabel;
-    title.text = @"SM64 startup diagnostics";
+    title.text = [NSString stringWithFormat:@"%@ Diagnostics", ios_app_display_name()];
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:14.0];
+    title.adjustsFontSizeToFitWidth = YES;
+    title.minimumScaleFactor = 0.7;
     [self.panel addSubview:title];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
@@ -142,7 +145,8 @@ static int sm64RenderDiagnosticMode;
         [self.toggleButton.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-8],
         [self.toggleButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [self.toggleButton.widthAnchor constraintEqualToConstant:44],
-        [self.toggleButton.heightAnchor constraintEqualToConstant:28]
+        [self.toggleButton.heightAnchor constraintEqualToConstant:28],
+        [title.trailingAnchor constraintLessThanOrEqualToAnchor:self.toggleButton.leadingAnchor constant:-6]
     ]];
 
     self.statusLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
@@ -226,8 +230,8 @@ static int sm64RenderDiagnosticMode;
     [self presentViewController:controller animated:YES completion:nil];
 }
 - (void)showGameplayActions {
-    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
-        message:@"Kart: press L nearby to enter or exit. Touch joystick left/right steers; push up for forward throttle or down for reverse. B accelerates and Z only brakes. Press A to hop; hold A with left/right steering after the hop to powerslide, then release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, Yoshi remains available, and the portal surface is an animated fallback, not a linked world view."
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Gameplay", ios_app_display_name()]
+        message:[NSString stringWithFormat:@"%@\n\nKart: press L nearby to enter or exit. Touch joystick left/right steers; push up for forward throttle or down for reverse. B accelerates and Z only brakes. Press A to hop; hold A with left/right steering after the hop to powerslide, then release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, Yoshi remains available, and the portal surface is an animated fallback, not a linked world view.", ios_app_release_version()]
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cheats — Hat, Flight, Bowser, SuperSlide" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self dismissViewControllerAnimated:YES completion:^{ [self showCheats]; }];
@@ -428,10 +432,12 @@ static int sm64RenderDiagnosticMode;
     self.graphicsPanel.hidden = YES;
     [self.view addSubview:self.graphicsPanel];
 
-    UILabel *heading = [[[UILabel alloc] initWithFrame:CGRectMake(14, 8, 260, 24)] autorelease];
-    heading.text = @"Graphics Settings";
+    UILabel *heading = [[[UILabel alloc] initWithFrame:CGRectMake(14, 8, 240, 24)] autorelease];
+    heading.text = [NSString stringWithFormat:@"%@ Graphics", ios_app_display_name()];
     heading.textColor = UIColor.whiteColor;
     heading.font = [UIFont boldSystemFontOfSize:16.0];
+    heading.adjustsFontSizeToFitWidth = YES;
+    heading.minimumScaleFactor = 0.7;
     [self.graphicsPanel addSubview:heading];
     UIButton *close = [self buttonWithTitle:@"Close" action:@selector(toggleGraphicsSettings)];
     close.frame = CGRectMake(0, 5, 62, 32);
@@ -858,7 +864,9 @@ void gfx_ios_diag_log(const char *format, ...) {
         if (!sm64DiagnosticsLaunchMarkerWritten) {
             NSDictionary *info = NSBundle.mainBundle.infoDictionary;
             NSString *version = [NSString stringWithFormat:@"%@ (%@)", info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown"];
-            NSString *marker = [NSString stringWithFormat:@"%@ === process start pid=%d appVersion=%@ bundle=%@ iOS=%@ ===\n", [sm64DiagnosticsDateFormatter stringFromDate:[NSDate date]], getpid(), version, NSBundle.mainBundle.bundleIdentifier ?: @"unknown", UIDevice.currentDevice.systemVersion];
+            NSString *marker = [NSString stringWithFormat:@"%@ === process start pid=%d app=%@ appVersion=%@ release=%@ bundle=%@ iOS=%@ ===\n",
+                [sm64DiagnosticsDateFormatter stringFromDate:[NSDate date]], getpid(), ios_app_display_name(),
+                version, ios_app_release_version(), NSBundle.mainBundle.bundleIdentifier ?: @"unknown", UIDevice.currentDevice.systemVersion];
             @try {
                 [sm64DiagnosticsFile writeData:[marker dataUsingEncoding:NSUTF8StringEncoding]];
                 [sm64DiagnosticsFile synchronizeFile];
