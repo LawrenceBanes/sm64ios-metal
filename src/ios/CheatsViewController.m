@@ -7,24 +7,158 @@
 
 #import "CheatsViewController.h"
 #import "src/pc/cheats.h"
+#import "src/pc/mods/mod_runtime.h"
+#import "src/pc/fs/fs.h"
 #include <math.h>
+
+#if TARGET_OS_IOS
+@interface CoopDXModManagerViewController : UITableViewController <UIDocumentPickerDelegate>
+@end
+
+@implementation CoopDXModManagerViewController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"CoopDX Mods";
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Import ZIP"
+        style:UIBarButtonItemStylePlain target:self action:@selector(importZip)];
+    self.refreshControl = [[UIRefreshControl alloc] init];
+    [self.refreshControl addTarget:self action:@selector(refreshMods) forControlEvents:UIControlEventValueChanged];
+}
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
+}
+- (void)refreshMods {
+    [self.tableView reloadData];
+    [self.refreshControl endRefreshing];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    (void)tableView;
+    return 2;
+}
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+    return section == 0 ? @"Lua mods" : @"DynOS packs";
+}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;
+    return section == 1 ? @"DynOS packs are imported and retained, but this engine does not yet decode their model, animation, texture, or behavior assets." : nil;
+}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView;
+    return section == 0 ? mod_runtime_mod_count() : mod_runtime_dynos_pack_count();
+}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 1) {
+        UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+        const char *name = mod_runtime_dynos_pack_name((int)indexPath.row);
+        cell.textLabel.text = name ? [NSString stringWithUTF8String:name] : @"DynOS pack";
+        const char *summary = mod_runtime_dynos_pack_summary((int)indexPath.row);
+        cell.detailTextLabel.text = summary ? [NSString stringWithUTF8String:summary] : @"Imported; DynOS runtime is unavailable";
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+    static NSString *reuse = @"CoopDXModCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:reuse];
+    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
+    const char *name = mod_runtime_mod_name((int)indexPath.row);
+    cell.textLabel.text = name ? [NSString stringWithUTF8String:name] : @"Unknown mod";
+    cell.detailTextLabel.text = @"Imported into this app's sandbox";
+    UISwitch *enabled = [[UISwitch alloc] init];
+    enabled.tag = (NSInteger)indexPath.row;
+    enabled.on = mod_runtime_mod_enabled((int)indexPath.row);
+    enabled.accessibilityLabel = [NSString stringWithFormat:@"Enable %@", cell.textLabel.text];
+    [enabled addTarget:self action:@selector(enabledChanged:) forControlEvents:UIControlEventValueChanged];
+    cell.accessoryView = enabled;
+    return cell;
+}
+- (void)enabledChanged:(UISwitch *)sender {
+    if (!mod_runtime_request_enabled((int)sender.tag, sender.isOn)) {
+        sender.on = !sender.isOn;
+        [self showMessage:@"The game could not queue that mod change."];
+    }
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
+    trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    if (indexPath.section != 0) return nil;
+    UIContextualAction *reload = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"Reload" handler:^(UIContextualAction *action, UIView *sourceView, void (^completion)(BOOL)) {
+            (void)action; (void)sourceView;
+            completion(mod_runtime_request_reload((int)indexPath.row));
+        }];
+    return [UISwipeActionsConfiguration configurationWithActions:@[reload]];
+}
+- (void)importZip {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+        initWithDocumentTypes:@[@"public.zip-archive"] inMode:UIDocumentPickerModeImport];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller;
+    NSURL *source = urls.firstObject;
+    if (!source) return;
+    BOOL scoped = [source startAccessingSecurityScopedResource];
+    const char *modsPathC = fs_get_write_path("mods");
+    NSString *modsPath = [NSString stringWithUTF8String:modsPathC];
+    NSError *error = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:modsPath withIntermediateDirectories:YES attributes:nil error:&error];
+    NSString *incomingPath = [modsPath stringByAppendingPathComponent:
+        [NSString stringWithFormat:@".incoming-%@.zip", NSUUID.UUID.UUIDString]];
+    NSURL *incomingURL = [NSURL fileURLWithPath:incomingPath];
+    BOOL copied = !error && [[NSFileManager defaultManager] copyItemAtURL:source toURL:incomingURL error:&error];
+    if (scoped) [source stopAccessingSecurityScopedResource];
+    if (!copied || !mod_runtime_request_import_zip(incomingPath.UTF8String)) {
+        [[NSFileManager defaultManager] removeItemAtURL:incomingURL error:nil];
+        [self showMessage:error.localizedDescription ?: @"Could not queue this ZIP for import."];
+        return;
+    }
+    [self showMessage:@"Import queued. The game will validate and extract the package on its next update; unsupported DynOS assets will be listed as inactive."];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self.tableView reloadData];
+    });
+}
+- (void)showMessage:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"CoopDX Mods"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+@end
+#endif
 
 @implementation CheatsViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
 #if TARGET_OS_IOS
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 116)];
+    UIStackView *stack = [[UIStackView alloc] initWithFrame:header.bounds];
+    stack.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.distribution = UIStackViewDistributionFillEqually;
+    stack.spacing = 4;
     UIButton *playground = [UIButton buttonWithType:UIButtonTypeSystem];
-    playground.frame = CGRectMake(0, 0, 300, 56);
     [playground setTitle:@"Open cheat playground" forState:UIControlStateNormal];
     [playground addTarget:self action:@selector(showPlayground) forControlEvents:UIControlEventTouchUpInside];
-    self.tableView.tableHeaderView = playground;
+    UIButton *mods = [UIButton buttonWithType:UIButtonTypeSystem];
+    [mods setTitle:@"Manage CoopDX mods" forState:UIControlStateNormal];
+    [mods addTarget:self action:@selector(showModManager) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:playground];
+    [stack addArrangedSubview:mods];
+    [header addSubview:stack];
+    self.tableView.tableHeaderView = header;
 #endif
 }
 
 #if TARGET_OS_IOS
 - (void)showPlayground {
     [self presentViewController:ios_cheats_playground_controller() animated:YES completion:nil];
+}
+- (void)showModManager {
+    CoopDXModManagerViewController *manager = [[CoopDXModManagerViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    [self.navigationController pushViewController:manager animated:YES];
 }
 
 #endif

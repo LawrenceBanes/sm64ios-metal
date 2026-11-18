@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "mario_step.h"
 #include "game/ios_reality.h"
+#include "pc/mods/mod_runtime.h"
 
 static s16 sMovingSandSpeeds[] = { 12, 8, 4, 0 };
 
@@ -553,6 +554,7 @@ void apply_gravity(struct MarioState *m) {
     const IOSRealityPolicy *policy = ios_reality_global_policy();
     f32 initialVelY = m->vel[1];
     if (policy->zero_gravity) return;
+    if (mod_runtime_mario_gravity(m)) return;
     if (policy->gravity_multiplier < 0.0f && !should_strengthen_gravity_for_jump_ascent(m)) {
         f32 strength = -policy->gravity_multiplier;
         f32 acceleration = 4.0f;

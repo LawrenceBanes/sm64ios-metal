@@ -15,6 +15,7 @@
 #include "save_file.h"
 #include "print.h"
 #include "pc/configfile.h"
+#include "pc/mods/mod_runtime.h"
 
 /* @file hud.c
  * This file implements HUD rendering and power meter animations.
@@ -432,6 +433,8 @@ void render_hud(void) {
         sPowerMeterHUD.animation = POWER_METER_HIDDEN;
         sPowerMeterStoredHealth = 8;
         sPowerMeterVisibleTimer = 0;
+        create_dl_ortho_matrix();
+        mod_runtime_hud_render();
     } else {
 #ifdef VERSION_EU
         // basically create_dl_ortho_matrix but guOrtho screen width is different
@@ -477,5 +480,6 @@ void render_hud(void) {
         if (hudDisplayFlags & HUD_DISPLAY_FLAG_TIMER && configHUD) {
             render_hud_timer();
         }
+        mod_runtime_hud_render();
     }
 }

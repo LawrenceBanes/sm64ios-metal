@@ -10,6 +10,11 @@ on:
         type: boolean
         required: true
         default: true
+      compile_only:
+        description: Compile the full iPhoneOS app without IPA packaging or upload (set full_game false)
+        type: boolean
+        required: false
+        default: false
       asset_bundle_release_tag:
         description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
@@ -87,8 +92,17 @@ jobs:
         shell: bash
         run: bash ios/build_ios_metal_ci.sh validate
 
+      - name: Compile full app for iPhoneOS arm64 without packaging
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.compile_only }}
+        shell: bash
+        env:
+          SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
+          SM64_PRIVATE_BUILD_GH_TOKEN: ${{ secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
+          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag || vars.SM64_ASSET_BUNDLE_RELEASE_TAG }}
+        run: bash ios/build_ios_metal_ci.sh compile
+
       - name: Build complete app, package IPA, and upload only to private vault
-        if: ${{ inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}

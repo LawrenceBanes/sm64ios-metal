@@ -16,6 +16,7 @@
 #include "sound_init.h"
 #include "mario.h"
 #include "mario_hat.h"
+#include "pc/mods/mod_runtime.h"
 #include "camera.h"
 #include "object_list_processor.h"
 #include "ingame_menu.h"
@@ -1284,6 +1285,11 @@ s32 init_level(void) {
 
     if (gMarioState->action == ACT_INTRO_CUTSCENE) {
         sound_banks_disable(2, 0x0330);
+    }
+
+    if (gCurrentArea != NULL) {
+        mod_runtime_level_init(sWarpDest.type, gCurrLevelNum, gCurrentArea->index,
+                               sWarpDest.nodeId, (s32)sWarpDest.arg);
     }
 
     return 1;

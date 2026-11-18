@@ -140,4 +140,11 @@ bool fs_sys_dir_exists(const char *name);
 bool fs_sys_mkdir(const char *name); // creates with 0777 by default
 bool fs_sys_copy_file(const char *oldname, const char *newname);
 
+/* Validates a CoopDX-style ZIP and extracts Lua mods or DynOS packs into
+ * their separate app-owned roots. Lua packages may include actor assets. */
+bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const char *dynos_packs_dir,
+                            char *installed_path, size_t installed_path_size,
+                            bool *contains_lua, bool *contains_dynos,
+                            char *error, size_t error_size);
+
 #endif // _SM64_FS_H_

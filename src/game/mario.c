@@ -54,6 +54,7 @@
 #endif
 #endif
 #include "pc/cheats.h"
+#include "pc/mods/mod_runtime.h"
 #ifdef IOS_BUILD
 #include "pc/gfx/gfx_ios_diagnostics.h"
 #define IOS_PORTAL_EVENT(...) gfx_ios_diag_log(__VA_ARGS__)
@@ -2400,6 +2401,9 @@ static u32 set_mario_action_cutscene(struct MarioState *m, u32 action, UNUSED u3
  * specific function if needed.
  */
 u32 set_mario_action(struct MarioState *m, u32 action, u32 actionArg) {
+    bool cancelAction = false;
+    mod_runtime_before_set_action(m, &action, actionArg, &cancelAction);
+    if (cancelAction) return TRUE;
     switch (action & ACT_GROUP_MASK) {
         case ACT_GROUP_MOVING:
             action = set_mario_action_moving(m, action, actionArg);
@@ -2431,6 +2435,8 @@ u32 set_mario_action(struct MarioState *m, u32 action, u32 actionArg) {
     m->actionArg = actionArg;
     m->actionState = 0;
     m->actionTimer = 0;
+
+    mod_runtime_after_set_action(m);
 
     return TRUE;
 }
@@ -3183,6 +3189,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
     * End of cheat stuff
     */
     if (gMarioState->action) {
+        mod_runtime_before_mario_update(gMarioState);
         gMarioState->marioObj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
         mario_reset_bodystate(gMarioState);
         vec3f_copy(previousPosition, gMarioState->pos);
@@ -3207,6 +3214,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
 #ifdef IOS_HAT_MOVEMENT
             mario_hat_reset();
 #endif
+            mod_runtime_after_mario_update(gMarioState);
             return 0;
         }
 
@@ -3264,7 +3272,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
                 mario_hat_execute_throw(gMarioState);
             }
 #endif
-            switch (gMarioState->action & ACT_GROUP_MASK) {
+            if (mod_runtime_mario_action(gMarioState, &inLoop)) {
+                /* The registered Lua action owns this action frame. */
+            } else switch (gMarioState->action & ACT_GROUP_MASK) {
                 case ACT_GROUP_STATIONARY:
                     inLoop = mario_execute_stationary_action(gMarioState);
                     break;
@@ -3355,6 +3365,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         gMarioState->marioObj->oInteractStatus = 0;
         func_sh_8025574C();
 
+        mod_runtime_after_mario_update(gMarioState);
         return gMarioState->particleFlags;
     }
 

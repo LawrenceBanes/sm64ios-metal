@@ -44,6 +44,7 @@
 #include "src/ios/native_ui_controller.h"
 #endif
 #include "fs/fs.h"
+#include "pc/mods/mod_runtime.h"
 
 #import "src/ios/FrameController.h"
 #import "src/ios/GameTimer.h"
@@ -154,6 +155,7 @@ void audio_shutdown(void) {
 }
 
 void game_deinit(void) {
+    mod_runtime_shutdown();
 #ifdef DISCORDRPC
     discord_shutdown();
 #endif
@@ -220,6 +222,7 @@ void main_func(void) {
     const char *gamedir = gCLIOpts.GameDir[0] ? gCLIOpts.GameDir : FS_BASEDIR;
     const char *userpath = gCLIOpts.SavePath[0] ? gCLIOpts.SavePath : sys_user_path();
     fs_init(sys_ropaths, gamedir, userpath);
+    mod_runtime_init();
     gfx_ios_diag_log("Filesystem initialized gameDir=%s userPath=%s", gamedir, userpath);
 
     configfile_load(configfile_name());

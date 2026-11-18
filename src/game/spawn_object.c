@@ -11,6 +11,7 @@
 #include "object_helpers.h"
 #include "object_list_processor.h"
 #include "spawn_object.h"
+#include "pc/mods/mod_runtime.h"
 #include "types.h"
 
 /**
@@ -184,6 +185,7 @@ static void unused_delete_leaf_nodes(struct Object *obj) {
  * Free the given object.
  */
 void unload_object(struct Object *obj) {
+    mod_runtime_object_unload(obj);
     obj->activeFlags = ACTIVE_FLAG_DEACTIVATED;
     obj->prevObj = NULL;
 

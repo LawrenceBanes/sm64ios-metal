@@ -4,6 +4,11 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
+#include <dirent.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <tinfl.h>
 
@@ -36,6 +41,7 @@ typedef struct {
     uint16_t attr_int;       // internal attributes
     uint32_t attr_ext;       // external attributes
     bool     ofs_fixed;      // if true, `ofs` points to the file data, otherwise to LFH
+    bool     explicit_entry; // false for directory ancestors synthesized by the tree
 } zip_entry_t;
 
 typedef struct {
@@ -145,16 +151,41 @@ static bool zip_fixup_offset(zip_file_t *zipfile) {
     struct lfh_s lfh;
 
     zip_entry_t *ent = zipfile->entry;
-
+    if (fseek(zipfile->fstream, 0, SEEK_END) != 0) return false;
+    long file_size = ftell(zipfile->fstream);
+    if (file_size < 0 || ent->ofs > (uint64_t)file_size || ent->ofs + sizeof(lfh) > (uint64_t)file_size) return false;
     fseek(zipfile->fstream, ent->ofs, SEEK_SET);
     if (!fread(&lfh, sizeof(lfh), 1, zipfile->fstream)) return false;
 
-    // we only need these two
+    if (LE_TO_HOST32(lfh.sig) != ZIP_LFH_SIG) return false;
+    uint16_t local_bits = LE_TO_HOST16(lfh.bits);
+    uint16_t local_type = LE_TO_HOST16(lfh.comptype);
+    uint32_t local_crc = LE_TO_HOST32(lfh.crc);
+    uint32_t local_comp_size = LE_TO_HOST32(lfh.comp_size);
+    uint32_t local_uncomp_size = LE_TO_HOST32(lfh.uncomp_size);
     lfh.fname_len = LE_TO_HOST16(lfh.fname_len);
     lfh.extra_len = LE_TO_HOST16(lfh.extra_len);
+    if (local_bits != ent->bits || local_type != ent->comptype) return false;
+    uint64_t header_len = sizeof(lfh) + (uint64_t)lfh.fname_len + lfh.extra_len;
+    if (header_len > (uint64_t)file_size - ent->ofs) return false;
+    if (ent->ofs + header_len > (uint64_t)file_size ||
+        ent->comp_size > (uint64_t)file_size - (ent->ofs + header_len)) return false;
+    if (!(ent->bits & (1u << 3)) &&
+        (local_crc != ent->crc || local_comp_size != ent->comp_size || local_uncomp_size != ent->uncomp_size)) return false;
+    char *local_name = malloc((size_t)lfh.fname_len + 1);
+    if (!local_name) return false;
+    if (fseek(zipfile->fstream, ent->ofs + sizeof(lfh), SEEK_SET) != 0 ||
+        fread(local_name, lfh.fname_len, 1, zipfile->fstream) != 1) {
+        free(local_name);
+        return false;
+    }
+    local_name[lfh.fname_len] = 0;
+    bool same_name = !strcmp(local_name, ent->tree.name);
+    free(local_name);
+    if (!same_name) return false;
 
     // ofs will now point to actual data
-    ent->ofs += sizeof(lfh) + lfh.fname_len + lfh.extra_len;
+    ent->ofs += header_len;
     ent->ofs_fixed = true; // only need to do this once
 
     return true;
@@ -206,6 +237,8 @@ static zip_entry_t *zip_load_entry(FILE *f, fs_dirtree_t *tree, const uint64_t d
     cdh.comment_len = LE_TO_HOST16(cdh.comment_len);
     cdh.extra_len = LE_TO_HOST16(cdh.extra_len);
 
+    if (cdh.fname_len == 0) return NULL;
+
     // read the name
     char *name = calloc(1, cdh.fname_len + 1);
     if (!name) return NULL;
@@ -219,6 +252,17 @@ static zip_entry_t *zip_load_entry(FILE *f, fs_dirtree_t *tree, const uint64_t d
     }
     name[cdh.fname_len] = 0;
 
+    zip_entry_t *existing = (zip_entry_t *)fs_dirtree_find(tree, name);
+    if (existing) {
+        if (is_dir && existing->tree.is_dir && !existing->explicit_entry) {
+            existing->explicit_entry = true;
+            free(name);
+            return existing;
+        }
+        free(name);
+        return NULL;
+    }
+
     // add to directory tree
     zip_entry_t *retent = (zip_entry_t *)fs_dirtree_add(tree, name, is_dir);
     free(name);
@@ -226,6 +270,7 @@ static zip_entry_t *zip_load_entry(FILE *f, fs_dirtree_t *tree, const uint64_t d
 
     // copy the data we read into the new entry
     zipent.tree = retent->tree;
+    zipent.explicit_entry = true;
     memcpy(retent, &zipent, sizeof(zipent));
 
     // this points to the LFH now; will be fixed up on file open
@@ -484,3 +529,298 @@ fs_packtype_t fs_packtype_zip = {
     pack_zip_eof,
     pack_zip_close,
 };
+
+typedef struct {
+    zip_pack_t *pack;
+    zip_entry_t **entries;
+    char **names;
+    size_t count;
+    uint64_t total_size;
+    size_t common_root_len;
+    char common_root[256];
+    bool root_initialized;
+    bool has_common_root;
+    bool failed;
+    char error[256];
+} zip_import_ctx_t;
+
+static bool zip_import_path_safe(const char *path) {
+    if (!path || !*path || path[0] == '/' || path[0] == '\\') return false;
+    const char *segment = path;
+    for (const unsigned char *p = (const unsigned char *)path;; ++p) {
+        unsigned char c = *p;
+        if (c == ':' || c == '\\' || (c && c < 0x20)) return false;
+        if (c == '/' || c == 0) {
+            size_t n = (const char *)p - segment;
+            if (!n || (n == 1 && segment[0] == '.') || (n == 2 && segment[0] == '.' && segment[1] == '.')) return false;
+            if (!c) break;
+            segment = (const char *)p + 1;
+        }
+    }
+    return strlen(path) < SYS_MAX_PATH - 1;
+}
+
+static bool zip_import_add(void *userdata, const char *name) {
+    zip_import_ctx_t *ctx = userdata;
+    zip_entry_t *entry = (zip_entry_t *)fs_dirtree_find(&ctx->pack->tree, name);
+    if (!entry || entry->tree.is_dir || !zip_import_path_safe(name)) {
+        snprintf(ctx->error, sizeof(ctx->error), "unsafe ZIP path: %.180s", name ? name : "(null)");
+        ctx->failed = true;
+        return false;
+    }
+    if (ctx->count >= 1024) {
+        snprintf(ctx->error, sizeof(ctx->error), "ZIP contains more than 1024 files");
+        ctx->failed = true;
+        return false;
+    }
+    if ((entry->bits & 1) || (entry->comptype != 0 && entry->comptype != 8)) {
+        snprintf(ctx->error, sizeof(ctx->error), "encrypted or unsupported ZIP compression: %.160s", name);
+        ctx->failed = true;
+        return false;
+    }
+    if (entry->comp_size == UINT32_MAX || entry->uncomp_size == UINT32_MAX ||
+        entry->uncomp_size > 64ull * 1024ull * 1024ull ||
+        ctx->total_size > 256ull * 1024ull * 1024ull - entry->uncomp_size) {
+        snprintf(ctx->error, sizeof(ctx->error), "ZIP resource size limit exceeded: %.160s", name);
+        ctx->failed = true;
+        return false;
+    }
+    uint32_t unix_mode = (entry->attr_ext >> 16) & 0170000;
+    if (unix_mode == 0120000) {
+        snprintf(ctx->error, sizeof(ctx->error), "symbolic links are not allowed: %.150s", name);
+        ctx->failed = true;
+        return false;
+    }
+    if (entry->uncomp_size && !entry->comp_size) {
+        snprintf(ctx->error, sizeof(ctx->error), "invalid compressed size for %.170s", name);
+        ctx->failed = true;
+        return false;
+    }
+    if (entry->comp_size && entry->uncomp_size / entry->comp_size > 250) {
+        snprintf(ctx->error, sizeof(ctx->error), "compression ratio exceeds limit: %.160s", name);
+        ctx->failed = true;
+        return false;
+    }
+    for (size_t i = 0; i < ctx->count; ++i) {
+        if (!strcasecmp(ctx->names[i], name)) {
+            snprintf(ctx->error, sizeof(ctx->error), "duplicate ZIP path: %.100s vs %.100s", ctx->names[i], name);
+            ctx->failed = true;
+            return false;
+        }
+    }
+    zip_entry_t **new_entries = realloc(ctx->entries, sizeof(*ctx->entries) * (ctx->count + 1));
+    char **new_names = realloc(ctx->names, sizeof(*ctx->names) * (ctx->count + 1));
+    if (!new_entries || !new_names) {
+        if (new_entries) ctx->entries = new_entries;
+        if (new_names) ctx->names = new_names;
+        snprintf(ctx->error, sizeof(ctx->error), "out of memory validating mod ZIP");
+        ctx->failed = true;
+        return false;
+    }
+    ctx->entries = new_entries; ctx->names = new_names;
+    ctx->entries[ctx->count] = entry;
+    ctx->names[ctx->count] = strdup(name);
+    if (!ctx->names[ctx->count]) { ctx->failed = true; return false; }
+    ctx->count++;
+    ctx->total_size += entry->uncomp_size;
+    if (strchr(name, '/') == NULL) {
+        ctx->has_common_root = false;
+        ctx->root_initialized = true;
+    } else if (!ctx->root_initialized) {
+        size_t n = (size_t)(strchr(name, '/') - name);
+        if (n >= sizeof(ctx->common_root)) ctx->has_common_root = false;
+        else { memcpy(ctx->common_root, name, n); ctx->common_root[n] = 0; ctx->common_root_len = n; ctx->has_common_root = true; }
+        ctx->root_initialized = true;
+    } else if (ctx->has_common_root) {
+        size_t n = (size_t)(strchr(name, '/') - name);
+        if (n != ctx->common_root_len || strncmp(name, ctx->common_root, n)) ctx->has_common_root = false;
+    }
+    return true;
+}
+
+static uint32_t zip_crc32_update(uint32_t crc, const uint8_t *data, size_t size) {
+    crc = ~crc;
+    while (size--) {
+        crc ^= *data++;
+        for (int i = 0; i < 8; ++i) crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)-(int32_t)(crc & 1));
+    }
+    return ~crc;
+}
+
+static bool zip_mkdir_parents(const char *path) {
+    char buffer[SYS_MAX_PATH];
+    if (strlen(path) >= sizeof(buffer)) return false;
+    strcpy(buffer, path);
+    for (char *p = buffer + 1; *p; ++p) {
+        if (*p == '/') {
+            *p = 0;
+            if (!fs_sys_dir_exists(buffer) && !fs_sys_mkdir(buffer)) { *p = '/'; return false; }
+            *p = '/';
+        }
+    }
+    return true;
+}
+
+static bool zip_import_extract_entry(zip_import_ctx_t *ctx, size_t index, const char *staging,
+                                     size_t strip_prefix) {
+    const char *name = ctx->names[index] + strip_prefix;
+    if (!*name || !zip_import_path_safe(name)) return false;
+    char output[SYS_MAX_PATH];
+    int n = snprintf(output, sizeof(output), "%s/%s", staging, name);
+    if (n <= 0 || (size_t)n >= sizeof(output) || !zip_mkdir_parents(output)) return false;
+    fs_file_t *input = pack_zip_open(ctx->pack, ctx->names[index]);
+    if (!input) return false;
+    FILE *file = fopen(output, "wb");
+    if (!file) { pack_zip_close(ctx->pack, input); return false; }
+    uint8_t buffer[8192];
+    uint64_t remaining = ctx->entries[index]->uncomp_size;
+    uint32_t crc = 0;
+    bool ok = true;
+    while (remaining) {
+        size_t chunk = remaining > sizeof(buffer) ? sizeof(buffer) : (size_t)remaining;
+        int64_t got = pack_zip_read(ctx->pack, input, buffer, chunk);
+        if (got <= 0 || (size_t)got != chunk || fwrite(buffer, 1, chunk, file) != chunk) { ok = false; break; }
+        crc = zip_crc32_update(crc, buffer, chunk);
+        remaining -= chunk;
+    }
+    if (fclose(file) != 0) ok = false;
+    pack_zip_close(ctx->pack, input);
+    if (crc != ctx->entries[index]->crc) ok = false;
+    if (!ok) unlink(output);
+    return ok;
+}
+
+static bool zip_component_safe(const char *name) {
+    if (!*name || !strcmp(name, ".") || !strcmp(name, "..")) return false;
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p)
+        if (!(isalnum(*p) || *p == '-' || *p == '_' || *p == '.')) return false;
+    return strlen(name) < 100;
+}
+
+static bool zip_name_has_suffix(const char *name, const char *suffix) {
+    size_t name_len = strlen(name), suffix_len = strlen(suffix);
+    return name_len >= suffix_len && strcasecmp(name + name_len - suffix_len, suffix) == 0;
+}
+
+static bool zip_is_dynos_asset(const char *name) {
+    /* Match CoopDX's ZIP type detection: these are the extensions it treats
+     * as DynOS content. Other files may be dependencies inside the archive,
+     * but should not independently turn arbitrary ZIPs into DynOS packs. */
+    return zip_name_has_suffix(name, ".tex") || zip_name_has_suffix(name, ".png") ||
+           zip_name_has_suffix(name, ".bin");
+}
+
+static void zip_remove_tree(const char *path) {
+    DIR *dir = opendir(path);
+    if (!dir) { unlink(path); return; }
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char child[SYS_MAX_PATH];
+        int n = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+        if (n <= 0 || (size_t)n >= sizeof(child)) continue;
+        struct stat info;
+        if (lstat(child, &info) == 0 && S_ISDIR(info.st_mode)) zip_remove_tree(child);
+        else unlink(child);
+    }
+    closedir(dir);
+    rmdir(path);
+}
+
+bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const char *dynos_packs_dir,
+                            char *installed_path, size_t installed_path_size,
+                            bool *contains_lua, bool *contains_dynos,
+                            char *error, size_t error_size) {
+    zip_pack_t *pack = NULL;
+    zip_import_ctx_t ctx = {0};
+    bool ok = false;
+    char staging[SYS_MAX_PATH] = {0};
+    char destination[SYS_MAX_PATH] = {0};
+    if (error && error_size) error[0] = 0;
+    if (contains_lua) *contains_lua = false;
+    if (contains_dynos) *contains_dynos = false;
+    FILE *probe = fopen(zip_path, "rb");
+    if (!probe) { if (error && error_size) snprintf(error, error_size, "cannot open selected ZIP"); return false; }
+    fseek(probe, 0, SEEK_END); long file_size = ftell(probe);
+    uint64_t cdir = 0, data = 0, count = 0;
+    bool archive_ok = file_size > 0 && file_size <= 128 * 1024 * 1024 &&
+                      zip_parse_eocd(probe, &cdir, &data, &count) && count <= 1024;
+    fclose(probe);
+    if (!archive_ok) { if (error && error_size) snprintf(error, error_size, "invalid ZIP or archive limits exceeded"); return false; }
+    pack = pack_zip_mount(zip_path);
+    if (!pack) { if (error && error_size) snprintf(error, error_size, "ZIP parser rejected archive"); return false; }
+    ctx.pack = pack; ctx.has_common_root = true;
+    fs_dirtree_walk(&pack->tree, "", zip_import_add, &ctx, true);
+    if (ctx.failed || ctx.count == 0) { if (error && error_size) snprintf(error, error_size, "%s", ctx.error[0] ? ctx.error : "ZIP contains no files"); goto done; }
+    bool has_lua = false, has_dynos = false;
+    for (size_t i = 0; i < ctx.count; ++i) {
+        has_lua |= zip_name_has_suffix(ctx.names[i], ".lua") || zip_name_has_suffix(ctx.names[i], ".luac");
+        has_dynos |= zip_is_dynos_asset(ctx.names[i]);
+    }
+    if (!has_lua && !has_dynos) {
+        if (error && error_size) snprintf(error, error_size, "ZIP contains neither Lua scripts nor recognized DynOS assets");
+        goto done;
+    }
+    if (contains_lua) *contains_lua = has_lua;
+    if (contains_dynos) *contains_dynos = has_dynos;
+
+    char package[128] = {0};
+    size_t strip_prefix = 0;
+    if (ctx.has_common_root && ctx.common_root_len && zip_component_safe(ctx.common_root)) {
+        snprintf(package, sizeof(package), "%s", ctx.common_root);
+        strip_prefix = ctx.common_root_len + 1;
+    } else {
+        const char *base = strrchr(zip_path, '/'); base = base ? base + 1 : zip_path;
+        snprintf(package, sizeof(package), "%s", base);
+        char *dot = strrchr(package, '.'); if (dot) *dot = 0;
+        for (char *p = package; *p; ++p) if (!(isalnum((unsigned char)*p) || *p == '-' || *p == '_' || *p == '.')) *p = '_';
+        if (!zip_component_safe(package)) snprintf(package, sizeof(package), "ImportedMod");
+    }
+    const char *install_root = has_lua ? mods_dir : dynos_packs_dir;
+    if (!install_root || !*install_root ||
+        !zip_mkdir_parents(install_root) ||
+        (!fs_sys_dir_exists(install_root) && !fs_sys_mkdir(install_root))) {
+        if (error && error_size) snprintf(error, error_size, "cannot create sandbox package folder");
+        goto done;
+    }
+    char unique[128]; snprintf(unique, sizeof(unique), "%s", package);
+    for (unsigned suffix = 2; ; ++suffix) {
+        snprintf(destination, sizeof(destination), "%s/%s", install_root, unique);
+        if (!fs_sys_dir_exists(destination) && !fs_sys_file_exists(destination)) break;
+        snprintf(unique, sizeof(unique), "%.90s-%u", package, suffix);
+        if (suffix > 999) { if (error && error_size) snprintf(error, error_size, "too many imported mods share this name"); goto done; }
+    }
+    bool stage_created = false;
+    for (unsigned attempt = 0; attempt < 32; ++attempt) {
+        snprintf(staging, sizeof(staging), "%s/.import-%u-%u-%u", install_root,
+                 (unsigned)getpid(), (unsigned)count, attempt);
+        if (fs_sys_mkdir(staging)) { stage_created = true; break; }
+    }
+    if (!stage_created) { if (error && error_size) snprintf(error, error_size, "cannot create temporary extraction folder"); goto done; }
+    size_t stripped = strip_prefix;
+    if (strip_prefix) {
+        for (size_t i = 0; i < ctx.count; ++i) {
+            if (strncmp(ctx.names[i], ctx.common_root, ctx.common_root_len) || ctx.names[i][ctx.common_root_len] != '/') {
+                stripped = 0; break;
+            }
+        }
+    }
+    for (size_t i = 0; i < ctx.count; ++i) {
+        if (!zip_import_extract_entry(&ctx, i, staging, stripped)) {
+            if (error && error_size) snprintf(error, error_size, "failed extracting or validating resource: %.160s", ctx.names[i]);
+            goto done;
+        }
+    }
+    if (rename(staging, destination) != 0) { if (error && error_size) snprintf(error, error_size, "could not install extracted mod package"); goto done; }
+    staging[0] = 0;
+    if (installed_path && installed_path_size) snprintf(installed_path, installed_path_size, "%s", destination);
+    ok = true;
+done:
+    if (!ok && staging[0]) {
+        zip_remove_tree(staging);
+    }
+    for (size_t i = 0; i < ctx.count; ++i) free(ctx.names[i]);
+    free(ctx.names); free(ctx.entries);
+    pack_zip_unmount(pack);
+    return ok;
+}
