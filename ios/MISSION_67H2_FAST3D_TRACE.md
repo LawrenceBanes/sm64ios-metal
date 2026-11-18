@@ -136,3 +136,16 @@ python3 tools/o2r_draw_trace.py ~/Downloads/oot.o2r \
 - The Linux regression suite and existing WSC1/WSC2 package replay passed.
   The native package replay also passed under ASan/UBSan. Local sanitizer
   checks ran with LeakSanitizer disabled.
+- The final Linux suite reported 90 Python cases and passed its native and
+  build checks. The actual archive trace took 2.22 seconds and peaked at
+  90.1 MiB RSS in one local run.
+- [Apple validation run 44421679105](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44421679105)
+  passed both jobs for implementation commit
+  `0e66d38849f97460db9ff14712f05a4e55201f37`. Xcode 27.1 (27A9275) and the
+  iOS SDK compiled and linked the iPhoneOS and simulator validation targets
+  and produced 12 Metal libraries. The asset-free validation artifact was
+  downloaded under `build/mission67h2/apple`. The first workflow was
+  superseded while its Linux package install was active. The dedicated
+  workflow ran the Apple job independently.
+- This milestone uses the host trace and asset-free validation targets.
+  The latest full-device IPA remains Mission 67G.
