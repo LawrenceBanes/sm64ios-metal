@@ -35,7 +35,7 @@ For the supplied archive (38,390 ZIP entries; SHA-256
 `e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`), the
 canonical `scenes/shared/spot00_scene/spot00_scene` points to one default
 room. The importer resolves its 37 display lists, 37 vertex arrays, and 51
-sampled texture images. It decodes 1,639 triangles and 52 texture resources,
+display-list texture references (including the palette). It decodes 1,639 triangles and 52 texture resources,
 including the RGBA16 palette used by CI4. The source collision header contains
 1,162 vertices and 1,579 triangles; all triangle winding/normals and bounds
 were checked, and the selected spawn is over valid ground.
@@ -44,9 +44,9 @@ The O2R display lists are F3DEX2 streams with custom hash-wide resource
 references. The importer resolves those hashes and rewrites hashed texture,
 vertex, and nested-list commands into standard SM64 `G_SETTIMG`, `G_VTX`, and
 `G_DL` commands. It retains supported RDP/GBI material, tile, combiner, filter,
-and geometry-state commands for the existing graphics interpreter. Raw
-archived texel bytes are kept in the generated level data so the normal SM64
-texture loader performs sampling and format conversion.
+and geometry-state commands for the existing graphics interpreter.
+Embedded builds use raw texels. External-data builds put stable texture names
+in the executable and package the corresponding decoded PNGs in `res/base.zip`.
 
 There are three ordinary segmented `G_DL` pointers in the selected room whose
 segment bases are not represented in the O2R scene resource graph. The
@@ -217,3 +217,44 @@ tile offsets. The last affects a small time-dependent visual detail. These
 calls do not load actors or supply terrain collision. The importer retains the
 no-ops and the original collision alignment. Check the translucent materials
 and the area around the overlay on device if visual fidelity matters.
+
+## Mission 62 rendering handoff
+
+Run 44224738009 shipped commit `b859ba02`. Its arm64 executable matches the
+private import across 39 display lists (3,708 commands), 37 vertex arrays
+(2,971 vertices), and all 51 referenced texture payloads. Both connected
+GeoLayout nodes contain the expected quarter-turn and translation.
+The opaque and translucent lists are also used by the standalone level.
+
+- **Position.** A type-2 room entry holds a bounding sphere. Its display
+  lists already contain room-space coordinates. Adding the center moved
+  different terrain patches by different amounts, extending maximum drawn Z
+  from 16,529 to 31,526. With source coordinates, 833 distinct render positions
+  exactly coincide with collision vertices. The shipped geometry had zero.
+  [Original room drawing code](https://github.com/zeldaret/oot/blob/main/src/code/z_room.c#L117-L183)
+- **Checkerboard.** The shipping external-data renderer interpreted texel
+  bytes as NUL-terminated names. None of the 51 computed resource paths
+  existed. Host replay of both placements with the shipping pack uploaded
+  the fallback on all 39 uploads. The corrected build path makes an explicit
+  PNG list for Make, including the decoded paletted image. External intensity
+  textures carry intensity in the alpha channel.
+  [Nintendo texture format reference](https://ultra64.ca/files/documentation/online-manuals/man/pro-man/pro12/12-04.html)
+- **Materials.** Both field passes left fog active and overwrote the layer
+  blend/depth mode. They now establish neutral static lighting, suppress
+  inherited fog, and finish in the corresponding SM64 layer mode. The
+  two water lists use 52 triangles. Their two-cycle alpha expression reduces
+  to primitive alpha. The importer places that result in cycle one so
+  the existing interpreter sends the source opacity (102/255) to the backend.
+  Its single-cycle RGB approximation and the three segmented effects described
+  above still limit visual fidelity.
+
+Run `CC=clang tests/run_linux_checks.sh` for the synthetic render regression.
+For the private comparison, import the authorized archive with
+`--connected-world` and run the suite with `HYRULE_GENERATED_RENDER_DIR`
+set to the resulting absolute `render` directory. The Linux replay mounts a
+real Make-built base pack, decodes its PNGs with the game loader, and checks
+the stream at the renderer API boundary. Metal rasterization, camera clipping
+at the crest, translucent ordering and the source of the blue pixels in the
+iPhone recording still require a device comparison. Use the same camera route
+in Normal, Flat and UV modes in standalone and connected Hyrule. Inspect Castle
+water, Mario and his cap immediately before and after the return crossing.

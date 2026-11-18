@@ -14,6 +14,7 @@ import math
 import struct
 import sys
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
 
@@ -449,9 +450,9 @@ def decode_texture_rgba(descriptor: dict, payload: bytes,
     if fmt in (5, 6, 7, 8, 9):
         for i in range(pixels):
             if fmt == 5:
-                intensity, alpha = nibble(i) * 17, 255
+                intensity = alpha = nibble(i) * 17
             elif fmt == 6:
-                intensity, alpha = payload[i], 255
+                intensity = alpha = payload[i]
             elif fmt == 7:
                 value = nibble(i)
                 intensity, alpha = ((value >> 1) & 7) * 255 // 7, (value & 1) * 255
@@ -499,7 +500,6 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                     continue
                 pending_lists.append({"path": path, "polygon_index": polygon_index,
                                       "render_pass": render_pass,
-                                      "position": polygon.get("position", [0, 0, 0]),
                                       "mesh_type": mesh.get("type")})
 
     parsed_lists = {}
@@ -597,7 +597,6 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                                           "reason": "nested display list was not decoded"})
             return
         execution_stack.append(path)
-        position = draw["position"]
         for instruction in parsed["instructions"]:
             opcode, w0, w1 = instruction["opcode"], instruction["w0"], instruction["w1"]
             if opcode == 0x32:
@@ -625,10 +624,8 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                     source_vertex = array["vertices"][first + index]
                     vertex_cache[destination + index] = {
                         "array_path": target, "array_index": first + index,
-                        "position": [source_vertex["position"][axis] + position[axis]
-                                     for axis in range(3)],
-                        "world_position": [(source_vertex["position"][axis] + position[axis]) * scale
-                                           for axis in range(3)],
+                        "position": source_vertex["position"],
+                        "world_position": coordinate(source_vertex["position"], scale),
                         "source_position": source_vertex["position"],
                         "uv_fixed_s10_5": source_vertex["uv_fixed_s10_5"],
                         "uv_texels": source_vertex["uv_texels"],
@@ -683,7 +680,8 @@ def decode_room_render_data(room_meshes: list[dict], decoded_scenes: dict,
                         else (63 - encoded_shift - (length - 1) - 32)
                 mode = state["other_mode_h"] if opcode == 0xE3 else state["other_mode_l"]
                 mask = ((1 << length) - 1) << max(0, shift)
-                mode = (mode & ~mask) | ((w1 << max(0, shift)) & mask)
+                # gfx_sp_set_other_mode merges the supplied data word as-is.
+                mode = (mode & ~mask) | w1
                 state["other_mode_h" if opcode == 0xE3 else "other_mode_l"] = mode & 0xFFFFFFFF
             elif opcode in (0xFA, 0xFB, 0xF8):
                 rgba = [(w1 >> 24) & 0xFF, (w1 >> 16) & 0xFF,
@@ -826,6 +824,30 @@ def _native_symbol(kind: str, path: str, suffix: str = "") -> str:
     return f"hyrule_{kind}_{crc64_resource_path(path):016x}{suffix}"
 
 
+def external_texture_name(path: str, descriptor: dict) -> str:
+    suffix = {1: "rgba32", 2: "rgba16", 3: "ci4", 4: "ci8", 5: "i4",
+              6: "i8", 7: "ia4", 8: "ia8", 9: "ia16"}.get(descriptor["format_code"])
+    if suffix is None:
+        raise ImportFailure(f"unsupported runtime texture format for {path}")
+    return f"levels/hyrule_field/{crc64_resource_path(path):016x}.{suffix}"
+
+
+def write_rgba_png(path: Path, width: int, height: int, pixels: bytes) -> None:
+    # The iOS asset build runs with system Python. PNG filter 0 stores one
+    # unchanged RGBA8 row after each filter byte, including decoded CI alpha.
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    stride = width * 4
+    if len(pixels) != stride * height:
+        raise ImportFailure(f"invalid RGBA8 dimensions for {path.name}")
+    rows = b"".join(b"\0" + pixels[i:i + stride] for i in range(0, len(pixels), stride))
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
 def _c_float(value: float) -> str:
     text = f"{value:.8g}"
     if "." not in text and "e" not in text.lower():
@@ -909,7 +931,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                     raise ImportFailure(f"native Gfx lowering: vertex array {target} is unavailable")
                 referenced_arrays.add(target)
 
-    # A nested list inherits the polygon transform of each caller. Use the
+    # A nested list must be emitted for each caller's polygon variant. Use the
     # caller's variants when emitting references; the field's default root
     # lists currently contain no OTR-hashed DL calls.
     variants = {(path, polygon) for path, polygons in list_to_polygons.items()
@@ -940,18 +962,16 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
         descriptor, payload, _, _ = texture_payloads[path]
         symbol = _native_symbol("tex", path)
         texture_symbols[path] = symbol
-        lines.append(f"static const u8 {symbol}[{len(payload)}] = {{")
+        lines.extend(["#ifdef EXTERNAL_DATA",
+                      f'static const u8 {symbol}[] = "{external_texture_name(path, descriptor)}";',
+                      "#else", f"static const u8 {symbol}[{len(payload)}] = {{"])
         for offset in range(0, len(payload), 16):
             lines.append("    " + ", ".join(f"0x{byte:02x}" for byte in payload[offset:offset + 16]) + ",")
-        lines.extend(["};", ""])
+        lines.extend(["};", "#endif", ""])
 
     for path, polygon in sorted(variants, key=lambda item: (item[1], item[0])):
         if path not in parsed_lists:
             continue
-        mesh = next((record["mesh"] for record in room_meshes
-                     if polygon < len(record["mesh"].get("polygons", []))), None)
-        position = (mesh["polygons"][polygon].get("position", [0, 0, 0])
-                    if mesh else [0, 0, 0])
         for instruction in parsed_lists[path]["instructions"]:
             if instruction["opcode"] != 0x32:
                 continue
@@ -964,8 +984,7 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
             vertex_symbols[key] = symbol
             lines.append(f"static const Vtx {symbol}[{array['count']}] = {{")
             for vertex in array["vertices"]:
-                xyz = [_c_float((vertex["position"][axis] + position[axis]) * scale)
-                       for axis in range(3)]
+                xyz = [_c_float(value) for value in coordinate(vertex["position"], scale)]
                 uv = vertex["uv_fixed_s10_5"]
                 color = ", ".join(f"0x{value:02x}" for value in vertex["cn_bytes"])
                 lines.append(f"    {{{{{{{xyz[0]}, {xyz[1]}, {xyz[2]}}}, "
@@ -1011,6 +1030,12 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
                 if not target_symbol:
                     raise ImportFailure(f"native Gfx lowering: nested list {target} lacks polygon variant")
                 lines.append(_gfx_initializer((w0 & 0x00FFFFFF) | 0xDE000000, target_symbol))
+            elif (w0, w1) == (0xFC267E04, 0x1F0CFDFF):
+                # Field water: alpha0 = ONE, alpha1 = COMBINED * PRIMITIVE.
+                # gfx_pc consumes cycle 0 only and maps ONE to zero. Fold
+                # the exact alpha result forward; keep both RGB cycles intact.
+                lines.append("    gsDPSetCombineLERP(TEXEL1, TEXEL0, ENV_ALPHA, TEXEL0, "
+                             "0, 0, 0, PRIMITIVE, COMBINED, 0, SHADE, 0, 0, 0, 0, COMBINED),")
             elif opcode == 0xDE:
                 # These pointers depend on the source scene's live segment
                 # bindings. Keep the omission explicit rather than guessing a target.
@@ -1023,13 +1048,18 @@ def emit_native_level_include(output_path: Path, room_meshes: list[dict],
         lines.append(_gfx_initializer(0xDF000000))
         lines.extend(["};", ""])
 
+    lines.append('#include "levels/hyrule_field/render_state.inc.c"')
     for render_pass, public_name in (("opaque", "hyrule_field_opaque_dl"),
                                      ("translucent", "hyrule_field_translucent_dl")):
         lines.append(f"const Gfx {public_name}[] = {{")
+        lines.append("    gsSPDisplayList(hyrule_field_begin_dl),")
         for path, polygon, draw_pass in draw_calls:
             if draw_pass != render_pass:
                 continue
             lines.append(_gfx_initializer(0xDE000000, symbols[(path, polygon)]))
+        lines.append("    gsSPDisplayList(hyrule_field_end_dl),")
+        mode = "G_RM_AA_ZB_OPA_SURF" if render_pass == "opaque" else "G_RM_AA_ZB_XLU_SURF"
+        lines.append(f"    gsDPSetRenderMode({mode}, {mode}2),")
         lines.append(_gfx_initializer(0xDF000000))
         lines.extend(["};", ""])
 
@@ -1131,6 +1161,8 @@ def parse_mesh(reader: Reader) -> dict:
         poly_type = reader.i8()
         polygon = {"poly_type": poly_type}
         if mesh_type == 2:
+            # Keep the manifest's original field names. These are a culling
+            # sphere center and radius, independent of the model matrix.
             polygon["position"] = [reader.i16(), reader.i16(), reader.i16()]
             polygon["unknown"] = reader.i16()
         opaque, translucent = reader.string(), reader.string()
@@ -1727,6 +1759,19 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
             texture_name = f"{crc64_resource_path(texture_path):016x}.rgba8"
             (texture_output_dir / texture_name).write_bytes(pixels)
             next(item for item in render_data_json["texture_records"] if item["path"] == texture_path)["rgba8_file"] = f"textures/{texture_name}"
+        # List precisely the SETTIMG resources used by this import. A reused
+        # output directory may also contain images from an earlier archive.
+        pack_entries = []
+        for path in render_data["textures"]:
+            pixels = render_data["texture_rgba8"].get(path)
+            if pixels is None:
+                raise ImportFailure(f"referenced texture has no decoded pixels: {path}")
+            descriptor = texture_payloads[path][0]
+            entry = "gfx/" + external_texture_name(path, descriptor) + ".png"
+            write_rgba_png(output_dir / "render" / entry, descriptor["width"], descriptor["height"], pixels)
+            pack_entries.append(entry)
+        (output_dir / "render" / "hyrule-basepack.lst").write_text(
+            "".join(entry + "\n" for entry in pack_entries), encoding="ascii")
         render_data_json["texture_rgba8_format"] = "row-major RGBA8, tightly packed, no row padding"
         render_manifest_path = output_dir / "render" / "hyrule-render.json"
         render_manifest_path.write_text(json.dumps(render_data_json, sort_keys=True, indent=2) + "\n",

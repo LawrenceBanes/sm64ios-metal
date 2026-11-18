@@ -831,10 +831,15 @@ all: $(BASEPACK_PATH)
 # phony target for building resources
 res: $(BASEPACK_PATH)
 
+ifeq ($(IOS_HYRULE_WORLD),1)
+HYRULE_RENDER_DIR := build/hyrule_field_import/render
+$(BASEPACK_LST): $(HYRULE_RENDER_DIR)/hyrule-basepack.lst
+endif
+
 # prepares the basepack.lst
-$(BASEPACK_LST): $(EXE)
+$(BASEPACK_LST): $(EXE) $(BUILD_DIR)/.ios_world_mode
 	@mkdir -p $(BUILD_DIR)/$(BASEDIR)
-	@echo "$(BUILD_DIR)/sound/bank_sets sound/bank_sets" >> $(BASEPACK_LST)
+	@echo "$(BUILD_DIR)/sound/bank_sets sound/bank_sets" > $(BASEPACK_LST)
 	@echo "$(BUILD_DIR)/sound/sequences.bin sound/sequences.bin" >> $(BASEPACK_LST)
 	@echo "$(BUILD_DIR)/sound/sound_data.ctl sound/sound_data.ctl" >> $(BASEPACK_LST)
 	@echo "$(BUILD_DIR)/sound/sound_data.tbl sound/sound_data.tbl" >> $(BASEPACK_LST)
@@ -842,6 +847,10 @@ $(BASEPACK_LST): $(EXE)
 	@find actors -name \*.png -exec echo "{} gfx/{}" >> $(BASEPACK_LST) \;
 	@find levels -name \*.png -exec echo "{} gfx/{}" >> $(BASEPACK_LST) \;
 	@find textures -name \*.png -exec echo "{} gfx/{}" >> $(BASEPACK_LST) \;
+
+ifeq ($(IOS_HYRULE_WORLD),1)
+	@awk -v dir="$(HYRULE_RENDER_DIR)/" '{print dir $$0, $$0}' $(HYRULE_RENDER_DIR)/hyrule-basepack.lst >> $(BASEPACK_LST)
+endif
 
 # prepares the resource ZIP with base data
 $(BASEPACK_PATH): $(BASEPACK_LST)

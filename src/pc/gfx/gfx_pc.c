@@ -768,6 +768,7 @@ static bool texname_to_texformat(const char *name, u8 *fmt, u8 *siz) {
         { "ia16",   G_IM_FMT_IA,   G_IM_SIZ_16b },
         { "i4",     G_IM_FMT_I,    G_IM_SIZ_4b  },
         { "i8",     G_IM_FMT_I,    G_IM_SIZ_8b  },
+        { "ci4",    G_IM_FMT_CI,   G_IM_SIZ_4b  },
         { "ci8",    G_IM_FMT_I,    G_IM_SIZ_8b  },
         { "ci16",   G_IM_FMT_I,    G_IM_SIZ_16b },
     };

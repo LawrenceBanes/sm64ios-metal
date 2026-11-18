@@ -151,13 +151,18 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertEqual(decode_texture_rgba(ia4, b"\xf1"),
                          bytes((255, 255, 255, 255, 0, 0, 0, 255)))
 
+    def test_intensity_is_also_the_alpha_mask(self):
+        for code, payload in ((5, b"\x0f"), (6, b"\x00\xff")):
+            descriptor = {"format_code": code, "width": 2, "height": 1, "image_data_size": len(payload)}
+            self.assertEqual(decode_texture_rgba(descriptor, payload), bytes(4) + bytes([255]) * 4)
+
     def test_texture_decoder_uses_rgba16_palette_for_ci4(self):
         ci4 = {"width": 2, "height": 1, "format_code": 3, "image_data_size": 1}
         palette = [[0, 0, 0, 0], [0, 255, 0, 255]]
         self.assertEqual(decode_texture_rgba(ci4, b"\x10", palette),
                          bytes((0, 255, 0, 255, 0, 0, 0, 0)))
 
-    def test_room_decoder_resolves_vertices_texture_state_and_polygon_translation(self):
+    def test_room_decoder_resolves_vertices_texture_state_and_culling_bounds(self):
         display_path = "scenes/fixture/DisplayList"
         array_path = "scenes/fixture/VertexArray"
         texture_path = "scenes/fixture/Texture"
@@ -198,8 +203,8 @@ class HyruleImporterTests(unittest.TestCase):
         self.assertEqual(triangle["material"]["palette_path"], palette_path)
         self.assertEqual(triangle["material"]["texture_image_tmem_words"], 0)
         self.assertTrue(triangle["material"]["texture_enabled"])
-        self.assertEqual(triangle["vertices"][0]["position"], [100, 20, -5])
-        self.assertEqual(triangle["vertices"][0]["world_position"], [200.0, 40.0, -10.0])
+        self.assertEqual(triangle["vertices"][0]["position"], [0, 0, 0])
+        self.assertEqual(triangle["vertices"][0]["world_position"], [0, 0, 0])
         self.assertEqual(triangle["vertices"][1]["uv_texels"], [10.0, 0.0])
         self.assertEqual(result["texture_rgba8"][texture_path],
                          bytes((0, 255, 0, 255, 0, 0, 0, 0)))
@@ -238,7 +243,7 @@ class HyruleImporterTests(unittest.TestCase):
             generated = output_path.read_text()
             self.assertIn("0x01003006u", generated)  # OTR VTX_HASH lowered to F3DEX2 VTX
             self.assertIn("0xfd100001u", generated)  # OTR SETTIMG_HASH lowered to SETTIMG
-            self.assertIn("220.0f", generated)       # polygon translation and world scale are baked
+            self.assertIn("{{{20.0f, 0.0f, 0.0f}", generated)  # scale the room-space vertex once
             self.assertIn("const Gfx hyrule_field_opaque_dl[]", generated)
             self.assertIn("COL_TRI_INIT(SURFACE_DEFAULT, 1)", generated)
             self.assertIn("COL_TRI(0, 1, 2)", generated)
