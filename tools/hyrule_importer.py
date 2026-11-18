@@ -323,7 +323,7 @@ def _f3dex2_triangle_indices(w0: int, w1: int, opcode: int) -> list[list[int]]:
     return [first, [decode(w1, 16), decode(w1, 8), decode(w1, 0)]]
 
 
-def parse_display_list(body: bytes, endian: str, path: str) -> dict:
+def parse_display_list(body: bytes, endian: str, path: str, *, max_instructions: int | None = None) -> dict:
     """Decode a binary ODLT command stream without executing its graphics state."""
     if not body:
         raise ImportFailure(f"{path}: empty display-list body")
@@ -340,6 +340,8 @@ def parse_display_list(body: bytes, endian: str, path: str) -> dict:
     instructions = []
     terminated = False
     while reader.offset < len(body):
+        if max_instructions is not None and len(instructions) >= max_instructions:
+            raise ImportFailure(f"{path}: display list exceeds {max_instructions} commands")
         command_offset = reader.offset
         if len(body) - command_offset < 8:
             raise ImportFailure(f"{path}: trailing {len(body) - command_offset} bytes after command stream")
@@ -364,7 +366,7 @@ def parse_display_list(body: bytes, endian: str, path: str) -> dict:
         elif opcode == 0x20:
             instruction["image_format"] = (w0 >> 21) & 7
             instruction["image_size_bits"] = 4 << ((w0 >> 19) & 3)
-            instruction["image_width"] = (w0 & 0x3FF) + 1
+            instruction["image_width"] = (w0 & 0xFFF) + 1
         elif opcode == 0xF5:
             instruction["tile"] = (w1 >> 24) & 7
             instruction["tile_state"] = {
@@ -385,8 +387,8 @@ def parse_display_list(body: bytes, endian: str, path: str) -> dict:
             instruction["texture_state"] = {
                 "s_scale": (w1 >> 16) & 0xFFFF, "t_scale": w1 & 0xFFFF,
                 "level": (w0 >> 11) & 7, "tile": (w0 >> 8) & 7,
-                # F3DEX2 gsSPTexture stores the enable bit at bit 1.
-                "enabled": bool(w0 & 2),
+                # F3DEX2 carries the on field in bits 1 through 7.
+                "enabled": bool((w0 >> 1) & 0x7F),
             }
         elif opcode == 0xD9:
             instruction["geometry_clear_mask"] = (~w0) & 0x00FFFFFF
