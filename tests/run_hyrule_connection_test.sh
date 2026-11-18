@@ -112,7 +112,7 @@ for old_world in 0 1; do
     if [ "$old_world" = 1 ]; then old_flag=-DIOS_CONNECTED_WORLD_TEST; fi
     $cc $common $physics_flags $old_flag $gate_flag -Iinclude -Isrc -I"$scratch" -I. -ffunction-sections -fdata-sections \
         tests/test_hyrule_connection.c src/engine/surface_collision.c src/engine/surface_load.c src/engine/math_util.c \
-        src/game/mario.c src/game/mario_step.c src/game/mario_actions_moving.c src/game/ios_reality.c \
-        -Wl,--gc-sections,--wrap=mario_ios_portal_surface_passable,--wrap=mario_get_terrain_sound_addend -lm -o "$scratch/route"
+        src/game/mario.c src/game/mario_step.c src/game/mario_actions_moving.c src/game/ios_reality.c src/game/mario_superslide.c src/pc/cheats.c \
+        -Wl,--gc-sections,--wrap=mario_ios_portal_surface_passable,--wrap=mario_get_terrain_sound_addend,--wrap=set_mario_action,--wrap=set_mario_animation,--wrap=play_sound,--wrap=align_with_floor -lm -o "$scratch/route"
     "$scratch/route"
 done
