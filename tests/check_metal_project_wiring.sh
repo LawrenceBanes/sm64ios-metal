@@ -51,3 +51,20 @@ fi
 grep -Fq -- '-target "Static Library-iOS"' "$repo_dir/ios/build_sdl2_ios.sh"
 grep -Fq 'SDL_uikit_main' "$repo_dir/ios/build_sdl2_ios.sh"
 echo "Metal Xcode references and Makefile source/framework wiring checks passed"
+
+# Included C fragments depend on their owning unit and must never be compiled alone.
+python3 - <<'PYTHON'
+import subprocess
+result = subprocess.run(
+    ["make", "-s", "-pn", "clean", "NOEXTRACT=1", "TARGET_IOS=1",
+     "TARGET_OS_IOS=1", "RENDER_API=METAL", "IOS_HYRULE_WORLD=1",
+     "IOS_CONNECTED_WORLD=1", "IOS_HAT_MOVEMENT=1"],
+    check=True, capture_output=True, text=True,
+)
+line = next(line for line in result.stdout.splitlines() if line.startswith("C_FILES := "))
+sources = line.split(" := ", 1)[1].split()
+assert "src/game/mario.c" in sources
+assert "src/game/mario_superslide.c" in sources
+assert not any(path.endswith(".inc.c") for path in sources), "Make compiled an include fragment"
+print("iOS Make source selection includes gameplay units and excludes C fragments")
+PYTHON
