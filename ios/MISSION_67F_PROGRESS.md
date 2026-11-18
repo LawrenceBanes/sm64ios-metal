@@ -16,3 +16,12 @@
 4. Leave through the same menu action and re-enter. Look for `WSC2 diagnostic entry` with result `0` and floor height `0.0`, and `WSC2 diagnostic exit activeRooms=0`. Export `SM64Diagnostics.log` using the native Share action or Files if behavior differs.
 
 Actual iPhone rendering, control of the player through the warp, and install/signing remain device checks. The diagnostic contains no converted Kokiri Forest content.
+
+## Build and delivery checkpoint
+
+- Built source commit `f957d7fdc506beddd0f7e759a0448eed0f46ed2a` on `mission-67f-scene-diagnostic`. This progress update is a documentation-only follow-up.
+- Linux regressions, the seven CI flag tests, IPA validation, runtime staging, and the scene-package replay under AddressSanitizer and UndefinedBehaviorSanitizer passed. The container prevented LeakSanitizer from attaching, so the sanitizer replay used `ASAN_OPTIONS=detect_leaks=0`.
+- [Actions run 44385787405](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44385787405) passed both jobs. Xcode 27.1 (27A9275) and the iPhoneOS 27.1 SDK built the pinned SDL2, linked the Metal validation targets, compiled generated MSL, and built the full iPhoneOS arm64 app without signing. The manual invocation enabled `full_game`, `hat_movement`, and `scene_diagnostic`, with no Hyrule O2R input.
+- The [private draft release](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-248504ccb24f8b3df4bf) contains `sm64ios-connected-world-arm64-unsigned.ipa` and the SHA-256 sidecar. The IPA is 9,326,120 bytes. The uploaded digest, CI report, and downloaded file all match `ebb3230b4d8e8284cf12f75681a21ab38afc25b3735e5403f5233696e8f0a915`.
+- The downloaded IPA passed ZIP CRC, bundle structure, iPhoneOS arm64, required stock textures, and WSC2 resource validation. It includes 56 app files and 1,912 resource pack entries, with zero build intermediates. The Mach-O contains the menu and diagnostic log strings. The nested pack and IPA contain no ROM or O2R files. GitHub Actions attached only asset-free diagnostics.
+- Local IPA is at `build/mission67f/private/sm64ios-connected-world-arm64-unsigned.ipa`. Device installation, visuals, and actual traversal remain unverified.
