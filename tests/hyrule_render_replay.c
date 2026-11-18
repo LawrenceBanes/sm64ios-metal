@@ -17,6 +17,7 @@
 
 unsigned int configFiltering = 1;
 static unsigned draws, uploads, texture_ids;
+static unsigned missing_hyrule_uploads;
 static struct CCFeatures features;
 
 static void record_draw(float *stream, size_t floats, size_t triangles) {
@@ -40,6 +41,15 @@ static void record_draw(float *stream, size_t floats, size_t triangles) {
 
 static void record_upload(const uint8_t *rgba, int width, int height) {
     assert(rgba != missing_texture && width > 0 && height > 0);
+    if (rgba == missing_hyrule_texture) {
+        assert(getenv("REPLAY_EXPECT_MISSING_HYRULE_TEXTURE"));
+        assert(width == 2 && height == 2);
+        for (size_t i = 3; i < sizeof(missing_hyrule_texture); i += 4)
+            assert(rgba[i] == 255);
+        ++missing_hyrule_uploads;
+        ++uploads;
+        return;
+    }
 #ifdef REPLAY_FIXTURE
     const uint8_t expected[] = {255,0,0,255, 0,255,0,255};
     assert(width == 1 && height == 2 && !memcmp(rgba, expected, sizeof(expected)));
@@ -151,6 +161,10 @@ int main(int argc, char **argv) {
     replay_passes(true);
 
     assert(draws && uploads && !gfx_texture_cache_failed_binding_count);
+    if (getenv("REPLAY_EXPECT_MISSING_HYRULE_TEXTURE"))
+        assert(missing_hyrule_uploads > 0);
+    else
+        assert(missing_hyrule_uploads == 0);
     printf("Hyrule host replay: %u triangles submitted, %u texture uploads\n", draws, uploads);
     return 0;
 }

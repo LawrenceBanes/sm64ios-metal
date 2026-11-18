@@ -1,5 +1,6 @@
 """Exercise O2R -> native DL -> external base pack -> renderer upload on Linux."""
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -92,6 +93,32 @@ class HyruleRenderTest(unittest.TestCase):
                 for entry in required:
                     self.assertEqual(z.read(entry), (render / entry).read_bytes())
 
+            if private_render:
+                manifest = json.loads((render / "hyrule-render.json").read_text())
+                floor_textures = {}
+                for triangle in manifest["triangles"]:
+                    points = [vertex["world_position"] for vertex in triangle["vertices"]]
+                    a = [points[1][i] - points[0][i] for i in range(3)]
+                    b = [points[2][i] - points[0][i] for i in range(3)]
+                    normal_y = a[2] * b[0] - a[0] * b[2]
+                    normal_length = math.sqrt(sum(value * value for value in (
+                        a[1] * b[2] - a[2] * b[1], normal_y,
+                        a[0] * b[1] - a[1] * b[0])))
+                    material = triangle["material"]
+                    if normal_length and normal_y / normal_length > 0.6 and material["texture_enabled"]:
+                        path = material["texture_image_path"]
+                        floor_textures[path] = floor_textures.get(path, 0) + 1
+                self.assertTrue(floor_textures, "imported field has no upward textured triangles")
+                principal_floor_texture = max(floor_textures, key=floor_textures.get)
+                floor_entry = next(entry for entry in required if
+                                   Path(entry).name.startswith(f"{crc64_resource_path(principal_floor_texture):016x}."))
+                record = next(item for item in manifest["texture_records"]
+                              if item["path"] == principal_floor_texture)
+                rgba = (render / record["rgba8_file"]).read_bytes()
+                self.assertTrue(all(alpha == 255 for alpha in rgba[3::4]),
+                                "principal floor texture unexpectedly has transparent texels")
+                self.assertIn(floor_entry, required)
+
             executable = work / "replay"
             sources = ["tests/hyrule_render_replay.c", "src/pc/gfx/gfx_cc.c",
                        "src/pc/gfx/gfx_scene_capture.c", "src/pc/platform.c",
@@ -104,6 +131,21 @@ class HyruleRenderTest(unittest.TestCase):
                 *([] if private_render else ["-DREPLAY_FIXTURE"]), *sources, "-lm", "-o", executable
             ], cwd=ROOT, check=True)
             subprocess.run([executable, pack], check=True)
+
+            # Simulate an incomplete private pack: the renderer must upload
+            # a visible, opaque Hyrule diagnostic material for a sampled draw.
+            manifest = json.loads((render / "hyrule-render.json").read_text())
+            sampled = next(t["material"]["texture_image_path"] for t in manifest["triangles"]
+                           if t["material"]["texture_enabled"] and t["material"]["texture_image_path"])
+            missing_entry = next(entry for entry in required if
+                                 Path(entry).name.startswith(f"{crc64_resource_path(sampled):016x}."))
+            incomplete_pack = work / "incomplete-base.zip"
+            with zipfile.ZipFile(pack) as source, zipfile.ZipFile(incomplete_pack, "w") as destination:
+                for entry in source.infolist():
+                    if entry.filename != missing_entry:
+                        destination.writestr(entry, source.read(entry))
+            subprocess.run([executable, incomplete_pack], check=True,
+                           env={**os.environ, "REPLAY_EXPECT_MISSING_HYRULE_TEXTURE": "1"})
 
             # The Make mode stamp must invalidate the pack in a reused build dir.
             subprocess.run(make + ["IOS_HYRULE_WORLD=0"], cwd=work, env=make_env, check=True)

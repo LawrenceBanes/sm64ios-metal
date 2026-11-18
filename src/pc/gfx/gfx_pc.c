@@ -628,6 +628,15 @@ static void import_texture_ci8(int tile) {
 
 #else // EXTERNAL_DATA
 
+/* Keep missing Hyrule resources visible even when the source material uses
+ * alpha. This is a diagnostic material; successfully loaded textures are
+ * unchanged. */
+static const uint8_t missing_hyrule_texture[2 * 2 * 4] = {
+    0xff, 0xb0, 0x00, 0xff,  0x20, 0x00, 0xff, 0xff,
+    0x20, 0x00, 0xff, 0xff,  0xff, 0xb0, 0x00, 0xff,
+};
+static uint32_t missing_hyrule_texture_count;
+
 static bool decode_texture_file(const char *fullpath, uint8_t **rgba, int *width, int *height) {
     uint64_t image_size = 0;
     uint8_t *encoded = fs_load_file(fullpath, &image_size);
@@ -651,8 +660,18 @@ static bool load_texture(const char *fullpath) {
     }
 
     fprintf(stderr, "could not load texture: `%s`\n", fullpath);
-    // replace with missing texture
-    gfx_rapi->upload_texture(missing_texture, MISSING_W, MISSING_H);
+    if (!strncmp(fullpath, FS_TEXTUREDIR "/levels/hyrule_field/",
+                 sizeof(FS_TEXTUREDIR "/levels/hyrule_field/") - 1)) {
+        uint32_t failures = ++missing_hyrule_texture_count;
+#if defined(TARGET_OS_IOS)
+        if (failures <= 8 || failures % 32 == 0)
+            gfx_ios_diag_log("Hyrule texture unavailable asset=%s count=%u; opaque amber/violet fallback uploaded",
+                             fullpath, failures);
+#endif
+        gfx_rapi->upload_texture(missing_hyrule_texture, 2, 2);
+    } else {
+        gfx_rapi->upload_texture(missing_texture, MISSING_W, MISSING_H);
+    }
     return false;
 }
 
