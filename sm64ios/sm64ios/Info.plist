@@ -5,7 +5,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>SHITBOX LABZ INC.</string>
 	<key>CFBundleName</key>
-	<string>ShitboxDev</string>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleShortVersionString</key>
