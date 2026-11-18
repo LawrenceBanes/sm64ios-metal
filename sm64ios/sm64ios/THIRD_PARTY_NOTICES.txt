@@ -1,0 +1,15 @@
+Private iOS device test build
+
+SuperSlide 1.1
+Original Lua movement mod by SkyCaster09.
+Native adaptation of the user-supplied superslide.lua for this SM64 iOS port.
+Source SHA-256: 79a5c454221f44682ac1ca18744a66d35d1032162a4d14f07c7079fba9cca855
+The supplied file contains author credit and no explicit license grant.
+
+The character and movement mods researched for Missions 63 and 65 supplied
+implementation references. Their third-party models, textures, sounds and
+animation payloads are not included by these changes.
+
+Project sources and additional attribution
+https://github.com/LawrenceBanes/sm64ios-metal
+See ios/MISSION_63_HANDOFF.md and ios/SUPERSLIDE_HANDOFF.md in the source.
