@@ -3156,6 +3156,10 @@ void func_sh_8025574C(void) {
 /**
  * Main function for executing Mario's behavior.
  */
+#ifdef IOS_BUILD
+#include "mario_playground.inc.c"
+#endif
+
 s32 execute_mario_action(UNUSED struct Object *o) {
     s32 inLoop = TRUE;
     Vec3f previousPosition;
@@ -3241,8 +3245,14 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         // The function can loop through many action shifts in one frame,
         // which can lead to unexpected sub-frame behavior. Could potentially hang
         // if a loop of actions were found, but there has not been a situation found.
+#ifdef IOS_BUILD
+        playground_hat(gMarioState);
+#endif
 #ifdef IOS_HAT_MOVEMENT
         mario_hat_update(gMarioState);
+#endif
+#ifdef IOS_BUILD
+        if (playground_step(gMarioState)) inLoop = FALSE;
 #endif
         while (inLoop) {
 #ifdef IOS_HAT_MOVEMENT
@@ -3281,6 +3291,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             }
         }
 
+#ifdef IOS_BUILD
+        playground_bowser_movement(gMarioState);
+#endif
         mario_ios_try_portal_traversal(gMarioState, previousPosition);
 
         // Damage, death, cutscenes, and other normal action transitions release
@@ -3305,6 +3318,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         update_mario_info_for_cam(gMarioState);
 #ifdef IOS_HAT_MOVEMENT
         mario_hat_finish_frame(gMarioState);
+#endif
+#ifdef IOS_BUILD
+        playground_hat(gMarioState);
 #endif
         mario_update_hitbox_and_cap_model(gMarioState);
         if (mario_ios_is_riding_yoshi(gMarioState)) {
@@ -3346,6 +3362,10 @@ s32 execute_mario_action(UNUSED struct Object *o) {
  **************************************************/
 
 void init_mario(void) {
+#ifdef IOS_BUILD
+    sPlaygroundFlying = false;
+    sPlaygroundBowser = false;
+#endif
     Vec3s capPos;
     struct Object *capObject;
 

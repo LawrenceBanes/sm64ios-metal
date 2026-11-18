@@ -14,6 +14,10 @@
 #import "src/ios/tvos/TVOSSwitch.h"
 #endif
 
+#if TARGET_OS_IOS
+UIViewController *ios_cheats_playground_controller(void);
+#endif
+
 @interface CheatsViewController : UITableViewController
 
 #if TARGET_OS_IOS

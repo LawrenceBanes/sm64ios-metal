@@ -1167,7 +1167,7 @@ Gfx *geo_update_body_rot_from_parent(s32 run, UNUSED struct GraphNode *node, Mat
 
     if (run == TRUE) {
         sp1C = (struct Object *) gCurGraphNodeObject;
-        if (sp1C->prevObj != NULL) {
+        if (sp1C != gMarioObject && sp1C->prevObj != NULL) {
             create_transformation_from_matrices(sp20, mtx, *gCurGraphNodeCamera->matrixPtr);
             obj_update_pos_from_parent_transformation(sp20, sp1C->prevObj);
             obj_set_gfx_pos_from_pos(sp1C->prevObj);
@@ -1238,6 +1238,10 @@ void bowser_open_eye_switch(struct Object *a0, struct GraphNodeSwitchCase *switc
  * direction otherwise.
  */
 Gfx *geo_switch_bowser_eyes(s32 run, struct GraphNode *node, UNUSED Mat4 *mtx) {
+    if ((struct Object *)gCurGraphNodeObject == gMarioObject) {
+        ((struct GraphNodeSwitchCase *)node)->selectedCase = 0;
+        return NULL;
+    }
     UNUSED s16 sp36;
     UNUSED s32 unused;
     struct Object *obj = (struct Object *) gCurGraphNodeObject;

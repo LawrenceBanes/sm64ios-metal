@@ -80,4 +80,5 @@ s32 mario_ios_portal_surface_passable(const struct Surface *surface, f32 x, f32 
                                       f32 radius);
 void mario_ios_sync_portal_object(struct Object *obj, s32 portalType);
 
+s32 mario_playground_bowser_active(void);
 #endif // MARIO_H

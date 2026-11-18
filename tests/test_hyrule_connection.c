@@ -172,6 +172,24 @@ static void jump_across_crest(int direction, int side) {
     assert(perform_ground_step(&state) == GROUND_STEP_NONE);
 }
 
+static void flight_collision_checks(void) {
+    struct MarioState m;
+    start_mario(&m, -8180, 1850, HYRULE_CONNECTION_Z);
+    m.action = ACT_FLYING;
+    m.pos[1] = 1900;
+    m.vel[1] = 24;
+    assert(perform_air_step(&m, 0) == AIR_STEP_NONE);
+    assert(m.pos[1] == 1924 && m.action == ACT_FLYING && m.vel[1] == 24);
+    m.vel[1] = -24;
+    for (int i = 0; i < 12; ++i) perform_air_step(&m, 0);
+    assert(m.pos[1] == m.floorHeight && m.action == ACT_FLYING);
+    m.vel[1] = 0;
+    m.vel[2] = 24;
+    for (int i = 0; i < 40; ++i) perform_air_step(&m, 0);
+    assert(m.pos[2] < HYRULE_CONNECTION_Z + 720);
+    puts("Flight stock air step: ascent, floor contact and crest rail collision passed");
+}
+
 static void check_frame_transform(void) {
     Mat4 matrix;
     Vec3f origin = { HYRULE_CONNECTION_X, HYRULE_CONNECTION_Y, HYRULE_CONNECTION_Z };
@@ -206,6 +224,7 @@ int main(void) {
         jump_across_crest(-1, side);
         jump_across_crest(1, side);
     }
+    flight_collision_checks();
     puts("Castle and field inlet: both directions, both walkway edges, rail contacts, and crest jump landings passed");
     gMarioState = NULL;
     gCurrentObject = gMarioObject = NULL;
