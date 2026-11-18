@@ -20,6 +20,7 @@
 #include "config.h"
 
 #include "gfx_pc.h"
+#include "scene_diagnostic.h"
 #include "gfx_cc.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
@@ -738,7 +739,18 @@ static bool load_texture(const char *fullpath) {
 static uint8_t *decode_scene_png(const char *path, int width, int height) {
     static const u8 signature[] = {137, 'P', 'N', 'G', 13, 10, 26, 10};
     uint64_t length;
-    uint8_t *png = fs_load_write_file(path, 256 * 1024, &length);
+    uint8_t *png;
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (!strcmp(path, "gfx/scenes/67f-ci4.rgba16.png") ||
+        !strcmp(path, "gfx/scenes/67f-ci8.rgba16.png")) {
+        char bundled[sizeof(SCENE_DIAGNOSTIC_DIRECTORY "gfx/scenes/67f-ci4.rgba16.png")];
+        snprintf(bundled, sizeof(bundled), SCENE_DIAGNOSTIC_DIRECTORY "%s", path);
+        png = fs_load_file_bounded(bundled, 256 * 1024, &length);
+    } else
+#endif
+    {
+        png = fs_load_write_file(path, 256 * 1024, &length);
+    }
     uint8_t *rgba = NULL;
     int w, h;
     if (png && length >= sizeof(signature) && !memcmp(png, signature, sizeof(signature))

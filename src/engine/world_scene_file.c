@@ -1,5 +1,6 @@
 #include <PR/mbi.h>
 #include "world_scene_file.h"
+#include "scene_diagnostic.h"
 
 #ifdef IOS_O2R_SCENE_RUNTIME
 
@@ -327,8 +328,17 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     char path[48];
     uint64_t size = 0;
     (void)context;
-    snprintf(path, sizeof(path), "scenes/%u.wsc", id);
-    u8 *bytes = fs_load_write_file(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
+    u8 *bytes;
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (id == SCENE_DIAGNOSTIC_PACKAGE || id == SCENE_DIAGNOSTIC_INVALID_PACKAGE) {
+        snprintf(path, sizeof(path), SCENE_DIAGNOSTIC_DIRECTORY "scenes/%u.wsc", id);
+        bytes = fs_load_file_bounded(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
+    } else
+#endif
+    {
+        snprintf(path, sizeof(path), "scenes/%u.wsc", id);
+        bytes = fs_load_write_file(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
+    }
     if (!bytes) {
         if (fs_sys_file_exists(fs_get_write_path(path))) {
             fprintf(stderr, "Scene package %u is unreadable or exceeds the size limit\n", id);

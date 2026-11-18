@@ -110,7 +110,23 @@ def fat_slices(data: bytes, entries: list[tuple[int, int, int]]) -> dict[int, in
     return result
 
 
-def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False) -> None:
+def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
+    prefix = "scene-diagnostic/"
+    try:
+        scene = resource_pack.read(prefix + "scenes/4098.wsc")
+        invalid = resource_pack.read(prefix + "scenes/4294967294.wsc")
+        textures = [resource_pack.read(prefix + f"gfx/scenes/67f-ci{bits}.rgba16.png") for bits in (4, 8)]
+    except KeyError as exc:
+        raise ValueError("WSC2 diagnostic resource missing from base.zip") from exc
+    if len(scene) <= 14 or scene[:8] != struct.pack("<4sI", b"WSC2", 4098) or invalid != b"WSC2":
+        raise ValueError("incorrect WSC2 diagnostic package or failed-load probe")
+    for png in textures:
+        if not png.startswith(b"\x89PNG\r\n\x1a\n") or png[12:29] != struct.pack(">4sIIBBBBB", b"IHDR", 16, 16, 8, 6, 0, 0, 0):
+            raise ValueError("WSC2 diagnostic textures must be 16x16 RGBA PNGs")
+
+
+def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False,
+             require_scene_diagnostic: bool = False) -> None:
     with zipfile.ZipFile(ipa_path) as ipa:
         bad_member = ipa.testzip()
         if bad_member:
@@ -142,8 +158,12 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
                     resource_members = resource_pack.namelist()
                     reject_build_intermediates(resource_members, "app resource pack")
                     resource_pack_file_count = sum(not member.endswith("/") for member in resource_members)
+                    if require_scene_diagnostic:
+                        check_scene_diagnostic(resource_pack)
             except zipfile.BadZipFile as exc:
                 raise ValueError("app resource pack is corrupt") from exc
+        elif require_scene_diagnostic:
+            raise ValueError("WSC2 diagnostic IPA is missing res/base.zip")
         info_path = app + "Info.plist"
         try:
             info = plistlib.loads(ipa.read(info_path))
@@ -255,6 +275,8 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
     if resource_pack_file_count is not None:
         print(f"runtime resource pack file entries: {resource_pack_file_count}")
     print("build intermediates: 0")
+    if require_scene_diagnostic:
+        print("WSC2 diagnostic resources: room, CI4/CI8 PNGs, and failed-load probe present")
     print("signature: unsigned structure check only; SideStore signing and device launch remain unverified")
 
 
@@ -263,8 +285,9 @@ def main() -> None:
     parser.add_argument("ipa")
     parser.add_argument("--require-system-deps", action="store_true", help="inspect linked dylibs with Apple's otool")
     parser.add_argument("--require-game-textures", action="store_true", help="require original Castle, Battlefield, and Goomba PNGs in res/base.zip")
+    parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2 diagnostic resources in res/base.zip")
     args = parser.parse_args()
-    validate(args.ipa, args.require_system_deps, args.require_game_textures)
+    validate(args.ipa, args.require_system_deps, args.require_game_textures, args.require_scene_diagnostic)
 
 
 if __name__ == "__main__":

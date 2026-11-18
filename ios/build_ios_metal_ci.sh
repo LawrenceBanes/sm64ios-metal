@@ -194,6 +194,13 @@ build_full_game() {
         echo 'IOS_O2R_SCENE_RUNTIME must be 0 or 1' >&2
         return 1
     }
+    local scene_diagnostic=${IOS_SCENE_DIAGNOSTIC:-0}
+    local -a validation_flags=(--require-system-deps --require-game-textures)
+    case "$scene_diagnostic:$scene_runtime" in
+        0:*) ;;
+        1:1) validation_flags+=(--require-scene-diagnostic) ;;
+        *) echo 'IOS_SCENE_DIAGNOSTIC must be 0 or 1 and requires IOS_O2R_SCENE_RUNTIME=1 when enabled' >&2; return 1 ;;
+    esac
     download_private_assets
     download_private_hyrule_archive
     local private_build_token=$SM64_PRIVATE_BUILD_GH_TOKEN
@@ -204,9 +211,11 @@ build_full_game() {
     echo "iOS hat movement compile flag: $hat_movement"
     echo "iOS connected world compile flag: $connected_world"
     echo "iOS O2R scene runtime compile flag: $scene_runtime"
+    echo "iOS WSC2 scene diagnostic compile flag: $scene_diagnostic"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
         IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" IOS_O2R_SCENE_RUNTIME="$scene_runtime" \
+        IOS_SCENE_DIAGNOSTIC="$scene_diagnostic" \
         xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
         -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
         -derivedDataPath "$output_dir/DerivedData" \
@@ -214,6 +223,7 @@ build_full_game() {
         SDL2_ROOT="$sdl_stage" SDL2_INCLUDE_DIR="$sdl_stage/include" \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 \
         IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" IOS_O2R_SCENE_RUNTIME="$scene_runtime" \
+        IOS_SCENE_DIAGNOSTIC="$scene_diagnostic" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
         >"$raw_log" 2>&1; then
         python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-build-summary.txt"
@@ -225,10 +235,14 @@ build_full_game() {
     local ipa="$private_dir/sm64ios-connected-world-arm64-unsigned.ipa"
     [[ -d "$app" ]] || { echo 'Xcode did not create the app bundle' >&2; return 1; }
     python3 ios/package_unsigned_ipa.py "$app" "$ipa" >"$private_dir/packaging.log" 2>&1
-    python3 ios/validate_ipa.py "$ipa" --require-system-deps --require-game-textures \
+    if ! python3 ios/validate_ipa.py "$ipa" "${validation_flags[@]}" \
         >"$private_dir/ipa-validation.log" 2>&1
+    then
+        cat "$private_dir/ipa-validation.log" >&2
+        return 1
+    fi
     local validation_counts
-    validation_counts=$(grep -E '^(app bundle file entries|runtime resource pack file entries|build intermediates):' \
+    validation_counts=$(grep -E '^(app bundle file entries|runtime resource pack file entries|build intermediates|WSC2 diagnostic resources):' \
         "$private_dir/ipa-validation.log")
     local digest
     digest=$(shasum -a 256 "$ipa" | awk '{print $1}')

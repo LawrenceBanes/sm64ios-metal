@@ -68,6 +68,7 @@ gmake() {
 xcodebuild() {
     printf '%s\n' "${IOS_CONNECTED_WORLD-unset}" > "$PWD/xcode-env"
     printf '%s\n' "${IOS_O2R_SCENE_RUNTIME-unset}" > "$PWD/xcode-o2r-env"
+    printf '%s\n' "${IOS_SCENE_DIAGNOSTIC-unset}" > "$PWD/xcode-diagnostic-env"
     printf '%s\n' "$@" > "$PWD/xcode-args"
     local setting
     for setting; do
@@ -92,7 +93,7 @@ class ConnectedWorldCITests(unittest.TestCase):
             workflow,
         )
 
-    def run_build_path(self, connected, hyrule, with_tag, scene_runtime=0):
+    def run_build_path(self, connected, hyrule, with_tag, scene_runtime=0, scene_diagnostic=0):
         fixture = tempfile.TemporaryDirectory(prefix="sm64-connected-build-")
         self.addCleanup(fixture.cleanup)
         work = Path(fixture.name)
@@ -101,6 +102,7 @@ class ConnectedWorldCITests(unittest.TestCase):
             "IOS_HYRULE_WORLD": str(hyrule), "IOS_HYRULE_GATE_DIAGNOSTICS": str(hyrule),
             "IOS_HAT_MOVEMENT": str(hyrule), "IOS_CONNECTED_WORLD_TEST": "1",
             "IOS_O2R_SCENE_RUNTIME": str(scene_runtime),
+            "IOS_SCENE_DIAGNOSTIC": str(scene_diagnostic),
         }
         for key in ("HYRULE_O2R_PATH", "HYRULE_O2R_RELEASE_TAG", "IOS_CONNECTED_WORLD"):
             env.pop(key, None)
@@ -135,8 +137,10 @@ class ConnectedWorldCITests(unittest.TestCase):
         self.assertIn("IOS_CONNECTED_WORLD=0", (work / "xcode-args").read_text().splitlines())
         self.assertNotIn("-DIOS_CONNECTED_WORLD", (work / "compiler-flags").read_text().split())
         self.assertNotIn("-DIOS_O2R_SCENE_RUNTIME", (work / "compiler-flags").read_text().split())
+        self.assertNotIn("-DIOS_SCENE_DIAGNOSTIC", (work / "compiler-flags").read_text().split())
         symbols = subprocess.check_output(["nm", "-u", work / "geo.o"], text=True)
         self.assertNotIn("hyrule_field_opaque_dl", symbols)
+        self.assertNotIn("scene_diagnostic_geo", subprocess.check_output(["nm", work / "geo.o"], text=True))
 
     def test_connected_compile_requires_hyrule_and_private_tag(self):
         for hyrule, has_tag in ((0, True), (1, False)):
@@ -150,6 +154,19 @@ class ConnectedWorldCITests(unittest.TestCase):
         self.assertEqual((work / "xcode-o2r-env").read_text().strip(), "1", result.stderr)
         self.assertIn("IOS_O2R_SCENE_RUNTIME=1", (work / "xcode-args").read_text().splitlines())
         self.assertIn("-DIOS_O2R_SCENE_RUNTIME", (work / "compiler-flags").read_text().split())
+
+    def test_scene_diagnostic_lands_in_the_native_level(self):
+        work, result = self.run_build_path(None, 0, False, scene_runtime=1, scene_diagnostic=1)
+        self.assertEqual((work / "xcode-diagnostic-env").read_text().strip(), "1", result.stderr)
+        self.assertIn("IOS_SCENE_DIAGNOSTIC=1", (work / "xcode-args").read_text().splitlines())
+        self.assertIn("-DIOS_SCENE_DIAGNOSTIC", (work / "compiler-flags").read_text().split())
+        self.assertIn("scene_diagnostic_geo", subprocess.check_output(["nm", work / "geo.o"], text=True))
+        self.assertFalse((work / "importer-args").exists())
+
+    def test_scene_diagnostic_requires_scene_runtime(self):
+        work, result = self.run_build_path(None, 0, False, scene_diagnostic=1)
+        self.assertIn("requires IOS_O2R_SCENE_RUNTIME=1", result.stderr)
+        self.assertFalse((work / "xcode-args").exists())
 
 
 if __name__ == "__main__":

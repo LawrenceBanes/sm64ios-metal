@@ -12,6 +12,7 @@
 #import "gfx_uikit.h"
 #include "game/mario.h"
 #include "game/ios_reality.h"
+#include "scene_diagnostic.h"
 #import "src/ios/CheatsViewController.h"
 #if TARGET_OS_IOS
 #import <Metal/Metal.h>
@@ -273,6 +274,16 @@ static int sm64RenderDiagnosticMode;
         gfx_ios_diag_log("Gameplay menu queued portal reset");
         [self appendStatus:@"Portal reset queued for game thread"];
     }]];
+#ifdef IOS_SCENE_DIAGNOSTIC
+    [menu addAction:[UIAlertAction actionWithTitle:@"Enter / leave WSC2 diagnostic" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_AREA);
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Probe WSC2 failed-load recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        scene_diagnostic_request(SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD);
+    }]];
+#endif
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = menu.popoverPresentationController;
     popover.sourceView = self.gameplayButton;

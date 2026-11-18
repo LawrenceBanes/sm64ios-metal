@@ -28,6 +28,7 @@
 #include "segment_symbols.h"
 #endif
 #include "level_table.h"
+#include "scene_diagnostic.h"
 #include "course_table.h"
 #include "thread6.h"
 #include "../../include/libc/stdlib.h"
@@ -1004,6 +1005,40 @@ void basic_update(UNUSED s16 *arg) {
 
 int gPressedStart = 0;
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+/* UIKit and the iOS game tick both run on the main thread. Perform scene
+ * changes at the usual warp boundary, outside any UIKit presentation callback. */
+static enum SceneDiagnosticRequest sSceneDiagnosticRequest;
+
+void scene_diagnostic_request(enum SceneDiagnosticRequest request) {
+    sSceneDiagnosticRequest = request;
+}
+
+static void apply_scene_diagnostic_request(void) {
+    enum SceneDiagnosticRequest request = sSceneDiagnosticRequest;
+    sSceneDiagnosticRequest = 0;
+    if (!request) return;
+
+    if (!gCurrentArea || gCurrLevelNum != LEVEL_CASTLE_GROUNDS || gCurrDemoInput != NULL ||
+        gWarpTransition.isActive || sDelayedWarpOp != WARP_OP_NONE || sWarpDest.type != WARP_TYPE_NOT_WARPING ||
+        !gMarioState->marioObj || gMarioState->action == ACT_UNINITIALIZED ||
+        (gMarioState->action & ACT_FLAG_INTANGIBLE)) {
+        gfx_ios_diag_log("WSC2 request ignored: resume active gameplay in Castle Grounds and retry");
+        return;
+    }
+    if (request == SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD) {
+        scene_diagnostic_check_failed_load();
+    } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA) {
+        if (mario_ios_is_riding_yoshi(gMarioState) || mario_ios_is_driving_kart(gMarioState)) {
+            gfx_ios_diag_log("WSC2 warp ignored: dismount before changing area");
+            return;
+        }
+        s16 destination = gCurrentArea->index == SCENE_DIAGNOSTIC_AREA ? 1 : SCENE_DIAGNOSTIC_AREA;
+        initiate_warp(LEVEL_CASTLE_GROUNDS, destination, SCENE_DIAGNOSTIC_NODE, 0);
+    }
+}
+#endif
+
 s32 play_mode_normal(void) {
     if (gCurrDemoInput != NULL) {
         print_intro_text();
@@ -1017,6 +1052,9 @@ s32 play_mode_normal(void) {
         }
     }
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+    apply_scene_diagnostic_request();
+#endif
     warp_area();
     check_instant_warp();
 

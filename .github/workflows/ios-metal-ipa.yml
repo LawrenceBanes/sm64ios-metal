@@ -24,6 +24,11 @@ on:
         type: boolean
         required: false
         default: false
+      scene_diagnostic:
+        description: Include the original WSC2 diagnostic room and developer menu commands
+        type: boolean
+        required: false
+        default: false
       hyrule_o2r_release_tag:
         description: Optional private draft O2R release tag; leave blank for connected Castle Grounds only
         type: string
@@ -100,6 +105,8 @@ jobs:
           IOS_HYRULE_GATE_DIAGNOSTICS: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HAT_MOVEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.hat_movement && '1' || '0' }}
           IOS_CONNECTED_WORLD: ${{ github.event_name == 'workflow_dispatch' && inputs.connected_world && '1' || '0' }}
+          IOS_O2R_SCENE_RUNTIME: ${{ inputs.scene_diagnostic && '1' || '0' }}
+          IOS_SCENE_DIAGNOSTIC: ${{ inputs.scene_diagnostic && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
 
       - name: Upload asset-free diagnostics only

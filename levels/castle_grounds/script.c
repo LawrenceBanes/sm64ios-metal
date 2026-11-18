@@ -5,6 +5,8 @@
 #include "seq_ids.h"
 #include "segment_symbols.h"
 #include "level_commands.h"
+#include "surface_terrains.h"
+#include "scene_diagnostic.h"
 
 #include "game/level_update.h"
 
@@ -14,6 +16,23 @@
 
 #include "make_const_nonconst.h"
 #include "levels/castle_grounds/header.h"
+
+#ifdef IOS_SCENE_DIAGNOSTIC
+extern const GeoLayout scene_diagnostic_geo[];
+
+// Keep the developer menu usable even if the WSC2 package is missing.
+// The authored room's walkable surface sits 120 units above this safety floor.
+static const Collision scene_diagnostic_safety_floor[] = {
+    COL_INIT(),
+    COL_VERTEX_INIT(4),
+    COL_VERTEX(-1560, -120, -1340), COL_VERTEX(-1560, -120, 1340),
+    COL_VERTEX(1560, -120, 1340), COL_VERTEX(1560, -120, -1340),
+    COL_TRI_INIT(SURFACE_DEFAULT, 2),
+    COL_TRI(0, 1, 2), COL_TRI(0, 2, 3),
+    COL_TRI_STOP(),
+    COL_END(),
+};
+#endif
 
 static const LevelScript script_func_local_1[] = {
     WARP_NODE(/*id*/ 0x00, /*destLevel*/ LEVEL_CASTLE, /*destArea*/ 0x01, /*destNode*/ 0x00, /*flags*/ WARP_NO_CHECKPOINT),
@@ -160,6 +179,10 @@ const LevelScript level_castle_grounds_entry[] = {
 
     AREA(/*index*/ 1, castle_grounds_geo_00073C),
         WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x03, /*flags*/ WARP_NO_CHECKPOINT),
+#ifdef IOS_SCENE_DIAGNOSTIC
+        WARP_NODE(SCENE_DIAGNOSTIC_NODE, LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
+        OBJECT(MODEL_NONE, -1328, 260, 4664, 0, 180, 0, SCENE_DIAGNOSTIC_NODE << 16, bhvInstantActiveWarp),
+#endif
         JUMP_LINK(script_func_local_1),
         JUMP_LINK(script_func_local_2),
         JUMP_LINK(script_func_local_3),
@@ -172,6 +195,17 @@ const LevelScript level_castle_grounds_entry[] = {
         SET_BACKGROUND_MUSIC(/*settingsPreset*/ 0x0000, /*seq*/ SEQ_SOUND_PLAYER),
         TERRAIN_TYPE(/*terrainType*/ TERRAIN_GRASS),
     END_AREA(),
+
+#ifdef IOS_SCENE_DIAGNOSTIC
+    AREA(SCENE_DIAGNOSTIC_AREA, scene_diagnostic_geo),
+        WARP_NODE(SCENE_DIAGNOSTIC_NODE, LEVEL_CASTLE_GROUNDS, SCENE_DIAGNOSTIC_AREA, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
+        WARP_NODE(0xF1, LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
+        OBJECT(MODEL_NONE, 0, 40, 720, 0, 180, 0, SCENE_DIAGNOSTIC_NODE << 16, bhvInstantActiveWarp),
+        TERRAIN(scene_diagnostic_safety_floor),
+        SET_BACKGROUND_MUSIC(0, SEQ_SOUND_PLAYER),
+        TERRAIN_TYPE(TERRAIN_STONE),
+    END_AREA(),
+#endif
 
     FREE_LEVEL_POOL(),
     MARIO_POS(/*area*/ 1, /*yaw*/ 180, /*pos*/ -1328, 260, 4664),

@@ -168,12 +168,13 @@ $(BUILD_DIR)/src/game/mario.o: $(BUILD_DIR)/.ios_world_mode
 # The scene package hooks can be toggled in an existing iOS build directory.
 $(BUILD_DIR)/.ios_scene_mode: FORCE
 	@mkdir -p "$(BUILD_DIR)"
-	@printf '%s %s\n' '$(IOS_O2R_SCENE_RUNTIME)' '$(EXTERNAL_DATA)' > "$@.tmp"
+	@printf '%s %s %s\n' '$(IOS_O2R_SCENE_RUNTIME)' '$(EXTERNAL_DATA)' '$(IOS_SCENE_DIAGNOSTIC)' > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
 $(addprefix $(BUILD_DIR)/,src/engine/world_scene.o src/engine/world_scene_file.o \
   src/engine/world_region.o src/engine/surface_load.o src/game/area.o \
-  src/game/rendering_graph_node.o src/pc/gfx/gfx_pc.o): $(BUILD_DIR)/.ios_scene_mode
+  src/game/rendering_graph_node.o src/pc/gfx/gfx_pc.o src/game/level_update.o \
+  src/pc/gfx/gfx_uikit.o levels/castle_grounds/geo.o levels/castle_grounds/script.o): $(BUILD_DIR)/.ios_scene_mode
 
 # Castle level objects embed connected-forest geometry and collision indices.
 $(BUILD_DIR)/levels/castle_grounds/leveldata.o \

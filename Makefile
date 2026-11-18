@@ -35,6 +35,7 @@ IOS_HYRULE_GATE_DIAGNOSTICS ?= 0
 IOS_HAT_MOVEMENT ?= 0
 IOS_CONNECTED_WORLD_TEST ?= 0
 IOS_O2R_SCENE_RUNTIME ?= 0
+IOS_SCENE_DIAGNOSTIC ?= 0
 
 # Makeflag to enable OSX fixes
 OSX_BUILD ?= 1
@@ -198,6 +199,14 @@ ifeq ($(IOS_O2R_SCENE_RUNTIME),1)
 VERSION_CFLAGS += -DIOS_O2R_SCENE_RUNTIME
 else ifneq ($(IOS_O2R_SCENE_RUNTIME),0)
 $(error IOS_O2R_SCENE_RUNTIME must be 0 or 1)
+endif
+ifeq ($(IOS_SCENE_DIAGNOSTIC),1)
+ifneq ($(TARGET_IOS):$(IOS_O2R_SCENE_RUNTIME):$(EXTERNAL_DATA),1:1:1)
+$(error IOS_SCENE_DIAGNOSTIC=1 requires TARGET_IOS=1 IOS_O2R_SCENE_RUNTIME=1 EXTERNAL_DATA=1)
+endif
+VERSION_CFLAGS += -DIOS_SCENE_DIAGNOSTIC
+else ifneq ($(IOS_SCENE_DIAGNOSTIC),0)
+$(error IOS_SCENE_DIAGNOSTIC must be 0 or 1)
 endif
 VERSION_ASFLAGS := --defsym $(VERSION_DEF)=1
 
@@ -841,9 +850,14 @@ ifeq ($(IOS_HYRULE_WORLD),1)
 HYRULE_RENDER_DIR := build/hyrule_field_import/render
 $(BASEPACK_LST): $(HYRULE_RENDER_DIR)/hyrule-basepack.lst
 endif
+ifeq ($(IOS_SCENE_DIAGNOSTIC),1)
+$(BUILD_DIR)/scene-diagnostic/basepack.lst: tools/scene_diagnostic.py tools/world_scene_package.py tools/hyrule_importer.py include/scene_diagnostic.h
+	@$(PYTHON) tools/scene_diagnostic.py "$(@D)"
+$(BASEPACK_LST): $(BUILD_DIR)/scene-diagnostic/basepack.lst
+endif
 
 # prepares the basepack.lst
-$(BASEPACK_LST): $(EXE) $(BUILD_DIR)/.ios_world_mode
+$(BASEPACK_LST): $(EXE) $(BUILD_DIR)/.ios_world_mode $(BUILD_DIR)/.ios_scene_mode
 	@mkdir -p $(BUILD_DIR)/$(BASEDIR)
 	@echo "$(BUILD_DIR)/sound/bank_sets sound/bank_sets" > $(BASEPACK_LST)
 	@echo "$(BUILD_DIR)/sound/sequences.bin sound/sequences.bin" >> $(BASEPACK_LST)
@@ -856,6 +870,9 @@ $(BASEPACK_LST): $(EXE) $(BUILD_DIR)/.ios_world_mode
 
 ifeq ($(IOS_HYRULE_WORLD),1)
 	@awk -v dir="$(HYRULE_RENDER_DIR)/" '{print dir $$0, $$0}' $(HYRULE_RENDER_DIR)/hyrule-basepack.lst >> $(BASEPACK_LST)
+endif
+ifeq ($(IOS_SCENE_DIAGNOSTIC),1)
+	@cat $(BUILD_DIR)/scene-diagnostic/basepack.lst >> $(BASEPACK_LST)
 endif
 
 # prepares the resource ZIP with base data

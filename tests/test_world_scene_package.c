@@ -6,6 +6,7 @@
 #include "game/area.h"
 #include "game/object_list_processor.h"
 #include "pc/gfx/gfx_metal_shader.h"
+#include "level_table.h"
 
 SpatialPartitionCell gStaticSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
 SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
@@ -24,7 +25,7 @@ static struct Object inactive_object;
 static bool base_terrain_loaded;
 
 void load_area_terrain(s16 index, s16 *data, s8 *rooms, s16 *macroObjects) {
-    assert(index == 1 && data && !rooms && !macroObjects);
+    assert((index == 1 || index == SCENE_DIAGNOSTIC_AREA) && data && !rooms && !macroObjects);
     assert(world_region_count() == 0);
     base_terrain_loaded = true;
 }
@@ -35,7 +36,7 @@ void spawn_objects_from_info(s32 index, struct SpawnInfo *info) {
 }
 
 void unload_objects_from_area(s32 index, s32 area) {
-    assert(index == 0 && area == 1 && world_region_count() == 1);
+    assert(index == 0 && (area == 1 || area == SCENE_DIAGNOSTIC_AREA) && world_region_count() == 1);
 }
 
 void geo_call_global_function_nodes(struct GraphNode *node, s32 context) {
@@ -82,6 +83,8 @@ static struct ShaderProgram shaders[32];
 static unsigned shaderCount;
 static unsigned triangles, textures;
 static bool check_materials;
+static bool check_diagnostic;
+static unsigned translucent_triangles;
 
 static struct ShaderProgram *lookup(u32 id) {
     for (unsigned i = 0; i < shaderCount; ++i) {
@@ -111,7 +114,15 @@ static void sampler(int tile, bool linear, u32 s, u32 t) {
     (void)linear; (void)s; (void)t;
 }
 static void upload(const u8 *rgba, int width, int height) {
-    if (check_materials) {
+    if (check_diagnostic) {
+        assert(width == 16 && height == 16);
+        if (textures % 2 == 0) {
+            assert(memcmp(rgba, (u8[]){0, 0, 123, 255}, 4) == 0);
+        } else {
+            assert(memcmp(rgba, (u8[]){255, 255, 255, 32}, 4) == 0);
+            assert(memcmp(rgba + 8, (u8[]){255, 255, 255, 120}, 4) == 0);
+        }
+    } else if (check_materials) {
         static const u8 expected[] = {
             255, 0, 0, 255, 0, 255, 0, 0, 66, 66, 66, 255, 255, 0, 0, 255,
             0, 255, 0, 0, 255, 0, 0, 255, 66, 66, 66, 255, 0, 255, 0, 0,
@@ -124,7 +135,7 @@ static void upload(const u8 *rgba, int width, int height) {
     textures++;
 }
 static void draw(float *data, size_t length, size_t count) {
-    assert(count == 1 && length > 0);
+    assert((check_diagnostic ? count > 0 : count == 1) && length > 0);
     for (size_t i = 0; i < length; ++i) assert(isfinite(data[i]));
     if (check_materials) {
         struct CCFeatures features;
@@ -146,6 +157,11 @@ static void draw(float *data, size_t length, size_t count) {
             assert(triangles == 2 && data[4] == 1 && data[5] == 1 && data[6] == 1);
             assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
         }
+    }
+    if (check_diagnostic) {
+        assert(rendering_state.depth_test);
+        assert(rendering_state.depth_mask != rendering_state.alpha_blend);
+        if (rendering_state.alpha_blend) translucent_triangles += count;
     }
     triangles += count;
 }
@@ -249,8 +265,46 @@ static void check_area_hooks(void) {
     assert(find_floor(450, 80, -100, &floor) == -11000.0f && !floor);
 }
 
+static void check_bundled_diagnostic(void) {
+    static struct GraphNodeRoot root;
+    static s16 terrain;
+    const float projection[4][4] = {
+        {0.0006f, 0, 0, 0}, {0, 0.001f, 0, 0}, {0, -0.0004f, -0.0003f, 0}, {0, 0, 0.6f, 1},
+    };
+    gCurrLevelNum = LEVEL_CASTLE_GROUNDS;
+    gAreaData[SCENE_DIAGNOSTIC_AREA] = (struct Area){.index = SCENE_DIAGNOSTIC_AREA,
+        .unk04 = &root, .terrainData = &terrain};
+    check_diagnostic = true;
+    textures = 0;
+    for (int visit = 0; visit < 2; ++visit) {
+        load_area(SCENE_DIAGNOSTIC_AREA);
+        assert(gCurrAreaIndex == SCENE_DIAGNOSTIC_AREA && area_scene_package_id() == SCENE_DIAGNOSTIC_PACKAGE);
+        struct Surface *floor;
+        assert(find_floor(0, 40, 720, &floor) == 0 && floor);
+        assert(find_floor(900, 180, 60, &floor) == 72 && floor && floor->normal.y > 0.95f);
+        assert(find_floor(900, 180, -400, &floor) == 144 && floor);
+        scene_diagnostic_check_failed_load();
+        assert(area_scene_package_id() == SCENE_DIAGNOSTIC_PACKAGE && world_region_count() == 1);
+        assert(find_floor(0, 40, 720, &floor) == 0 && floor);
+        struct WorldRegionInfo region;
+        assert(world_region_info_at(0, &region) && region.active && region.renderList && region.translucentList);
+        Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
+        frame[0].words.w1 = (uintptr_t)region.renderList;
+        frame[1].words.w1 = (uintptr_t)region.translucentList;
+        prepare_projection();
+        gfx_sp_matrix(G_MTX_PROJECTION | G_MTX_LOAD, (const int32_t *)projection);
+        triangles = translucent_triangles = 0;
+        gfx_run_dl(frame);
+        assert(triangles == 74 && translucent_triangles == 2 && textures == (visit + 1) * 2u);
+        unload_area();
+        assert(area_scene_package_id() == 0 && world_region_count() == 0);
+        assert(find_floor(0, 40, 720, &floor) == -11000.0f && !floor);
+    }
+    check_diagnostic = false;
+}
+
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 3);
     const char *rodirs[] = { NULL };
     assert(fs_init(rodirs, argv[1], argv[1]));
     world_region_reset((struct WorldPoint){0, 0, 0});
@@ -290,6 +344,8 @@ int main(int argc, char **argv) {
     assert(find_floor(-150, 80, -100, &floor) == -11000.0f && !floor);
     check_area_hooks();
     check_wsc2_rendering(&runtime);
+    assert(fs_mount(argv[2]));
+    check_bundled_diagnostic();
     puts("Scene packages: render, texture upload, collision, room transitions and rollback passed");
     return 0;
 }

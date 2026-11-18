@@ -8,6 +8,10 @@
 #include "game_init.h"
 #include "object_list_processor.h"
 #include "engine/surface_load.h"
+#include "scene_diagnostic.h"
+#ifdef IOS_SCENE_DIAGNOSTIC
+#include "engine/surface_collision.h"
+#endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
 #include "engine/world_region.h"
 #endif
@@ -66,6 +70,36 @@ struct Area *gCurrentArea = NULL;
 #ifdef IOS_O2R_SCENE_RUNTIME
 static struct WorldSceneRuntime sAreaScene;
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+_Static_assert(SCENE_DIAGNOSTIC_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DIAGNOSTIC_AREA),
+               "WSC2 diagnostic package ID must match the Castle Grounds area key");
+#if defined(IOS_BUILD)
+#define SCENE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define SCENE_DIAG_LOG(...) ((void)0)
+#endif
+
+void scene_diagnostic_check_failed_load(void) {
+    if (area_scene_package_id() != SCENE_DIAGNOSTIC_PACKAGE) {
+        SCENE_DIAG_LOG("WSC2 failure probe skipped: enter the diagnostic room first");
+        return;
+    }
+    u32 room = world_scene_current_room(&sAreaScene);
+    u32 roomCount = world_scene_active_room_count(&sAreaScene);
+    struct Surface *before, *after;
+    f32 height = find_floor(0, 40, 720, &before);
+    enum WorldSceneResult result = world_scene_transition(&sAreaScene, SCENE_DIAGNOSTIC_INVALID_PACKAGE, 0, NULL);
+    f32 newHeight = find_floor(0, 40, 720, &after);
+    bool preserved = area_scene_package_id() == SCENE_DIAGNOSTIC_PACKAGE
+        && world_scene_current_room(&sAreaScene) == room
+        && world_scene_active_room_count(&sAreaScene) == roomCount
+        && before != NULL && before == after && height == 0 && newHeight == height;
+    SCENE_DIAG_LOG("WSC2 failure probe %s result=%d room=%u floor=%.1f->%.1f",
+                   result == WORLD_SCENE_PROVIDER_FAILED && preserved ? "PASS" : "FAIL",
+                   result, room, height, newHeight);
+}
+#endif
+
 u32 area_scene_package_id(void) {
     return world_scene_active_id(&sAreaScene);
 }
@@ -75,7 +109,16 @@ static void load_area_scene(s32 index) {
      * original IDs. Entry 0 is the package's default room. */
     u32 sceneId = ((u32)gCurrLevelNum << 8) | (u32)index;
     world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
-    world_scene_open(&sAreaScene, sceneId, 0, NULL);
+    enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, NULL);
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (sceneId == SCENE_DIAGNOSTIC_PACKAGE) {
+        struct Surface *floor;
+        f32 height = find_floor(0, 40, 720, &floor);
+        SCENE_DIAG_LOG("WSC2 diagnostic entry package=%u result=%d room=%u floor=%s y=%.1f",
+                       sceneId, result, world_scene_current_room(&sAreaScene), floor ? "hit" : "miss", height);
+    }
+#endif
+    (void)result;
 }
 #endif
 struct CreditsEntry *gCurrCreditsEntry = NULL;
@@ -367,7 +410,15 @@ void unload_area(void) {
         unload_objects_from_area(0, gCurrentArea->index);
 #ifdef IOS_O2R_SCENE_RUNTIME
         if (area_scene_package_id()) {
+#ifdef IOS_SCENE_DIAGNOSTIC
+            bool diagnostic = area_scene_package_id() == SCENE_DIAGNOSTIC_PACKAGE;
+#endif
             world_scene_close(&sAreaScene);
+#ifdef IOS_SCENE_DIAGNOSTIC
+            if (diagnostic) {
+                SCENE_DIAG_LOG("WSC2 diagnostic exit activeRooms=%u", world_scene_active_room_count(&sAreaScene));
+            }
+#endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
             world_region_reset((struct WorldPoint){0, 0, 0});
 #endif

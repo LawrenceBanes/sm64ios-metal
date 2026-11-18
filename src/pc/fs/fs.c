@@ -327,11 +327,15 @@ const char *fs_readline(fs_file_t *file, char *dst, uint64_t size) {
 }
 
 void *fs_load_file(const char *vpath, uint64_t *outsize) {
+    return fs_load_file_bounded(vpath, SIZE_MAX, outsize);
+}
+
+void *fs_load_file_bounded(const char *vpath, uint64_t max_size, uint64_t *outsize) {
     fs_file_t *f = fs_open(vpath);
     if (!f) return NULL;
 
     int64_t size = fs_size(f);
-    if (size <= 0) {
+    if (size <= 0 || (uint64_t)size > max_size || (uint64_t)size > SIZE_MAX) {
         fs_close(f);
         return NULL;
     }
