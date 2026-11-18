@@ -57,6 +57,9 @@ enum SpecialFontChars {
 
 // definitions for some of the special characters defined in charmap.txt
 enum DialogSpecialChars {
+#ifdef VERSION_US
+    DIALOG_CHAR_US_PERIOD = 0x3F,
+#endif
 #ifdef VERSION_EU
     DIALOG_CHAR_LOWER_A_GRAVE = 0x60,      // 'a' grave
     DIALOG_CHAR_LOWER_A_CIRCUMFLEX = 0x61, // 'a' circumflex

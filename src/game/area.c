@@ -579,7 +579,7 @@ void render_game(void) {
             for (size_t i = 0; i < sizeof(label) - 1; ++i) {
                 char c = name[i];
                 label[i] = c == ' ' ? DIALOG_CHAR_SPACE
-                    : c == '.' ? DIALOG_CHAR_PERIOD : ASCII_TO_DIALOG(c);
+                    : c == '.' ? DIALOG_CHAR_US_PERIOD : ASCII_TO_DIALOG(c);
             }
             label[sizeof(label) - 1] = DIALOG_CHAR_TERMINATOR;
             create_dl_ortho_matrix();
