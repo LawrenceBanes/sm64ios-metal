@@ -174,6 +174,7 @@ const LevelScript script_func_global_1[] = {
 #if defined(IOS_BUILD)
     LOAD_MODEL_FROM_GEO(MODEL_PORTAL_BLUE,            portal_blue_geo),
     LOAD_MODEL_FROM_GEO(MODEL_PORTAL_ORANGE,          portal_orange_geo),
+    LOAD_MODEL_FROM_GEO(MODEL_PLAYABLE_BOWSER, bowser_geo_0000D8),
     LOAD_MODEL_FROM_GEO(MODEL_IOS_KART,               ios_kart_geo),
 #endif
     LOAD_MODEL_FROM_GEO(MODEL_BLUE_COIN_SWITCH,        blue_coin_switch_geo),

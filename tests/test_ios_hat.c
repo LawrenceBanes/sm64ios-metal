@@ -15,6 +15,22 @@
 #include "game/mario_hat.h"
 #include "game/mario_step.h"
 #include "game/object_helpers.h"
+#include "game/mario.h"
+#include "game/save_file.h"
+#include "pc/cheats.h"
+#include "behavior_data.h"
+#include "game/mario_playground.inc.c"
+
+void unload_objects_from_area(s32 unused, s32 area) {}
+void geo_call_global_function_nodes(struct GraphNode *node, s32 context) {}
+static u32 savedCapFlags;
+u32 save_file_get_flags(void) { return savedCapFlags; }
+void save_file_clear_flags(u32 flags) { savedCapFlags &= ~flags; }
+const BehaviorScript bhvNormalCap[] = {0};
+struct Object *cur_obj_find_nearest_object_with_behavior(const BehaviorScript *behavior, f32 *distance) {
+    return NULL;
+}
+
 
 static struct Object marioObject, hatObject;
 static struct MarioBodyState body;
@@ -357,6 +373,38 @@ static void test_trajectory(void) {
     assert(hat.phase == IOS_HAT_ATTACHED); // Cannot lose it even if Mario outruns it.
 }
 
+static void test_cheat_hat_lifecycle(void) {
+    for (int returning = 0; returning < 2; ++returning) {
+        struct MarioState *m = fixture();
+        cheats_playground_set(3, CHEAT_HAT_ON);
+        playground_hat(m);
+        throw_hat(m);
+        assert(mario_hat_is_away());
+        if (returning) {
+            controller.buttonPressed = 0;
+            for (int tick=0; tick<35 && mario_hat_is_away(); ++tick) mario_hat_update(m);
+        }
+        cheats_playground_set(3, CHEAT_HAT_OFF);
+        playground_hat(m);
+        assert(!mario_hat_is_away() && !(m->flags & MARIO_CAP_ON_HEAD));
+        assert(hatObject.activeFlags == ACTIVE_FLAG_DEACTIVATED);
+        savedCapFlags = SAVE_FLAG_CAP_ON_KLEPTO;
+        cheats_playground_set(3, CHEAT_HAT_ON);
+        playground_hat(m);
+        assert(!savedCapFlags && (m->flags & MARIO_CAP_ON_HEAD));
+        m->health = 0xff;
+        mario_hat_finish_frame(m);
+        assert(!mario_hat_is_away());
+        m->health = 0x880;
+        unload_area();
+        assert(!mario_hat_is_away());
+        m = fixture();
+        playground_hat(m);
+        assert(m->flags & MARIO_CAP_ON_HEAD);
+    }
+    cheats_playground_set(3, 0);
+}
+
 int main(void) {
     test_trajectory();
     test_gameplay();
@@ -370,6 +418,7 @@ int main(void) {
     test_jump_onto_hat(32.0f);
     test_air_throw_into_bounce();
     test_recovery();
+    test_cheat_hat_lifecycle();
     puts("Hat movement, air step, and recovery checks passed");
     return 0;
 }

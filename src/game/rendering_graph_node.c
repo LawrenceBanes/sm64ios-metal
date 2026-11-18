@@ -1,4 +1,5 @@
 #include <PR/ultratypes.h>
+#include <math.h>
 
 #include "area.h"
 #include "engine/math_util.h"
@@ -10,6 +11,12 @@
 #include "rendering_graph_node.h"
 #include "shadow.h"
 #include "sm64.h"
+#ifdef IOS_BUILD
+#include "mario.h"
+#include "level_update.h"
+#include "object_list_processor.h"
+#include "actors/group12.h"
+#endif
 
 /**
  * This file contains the code that processes the scene graph for rendering.
@@ -795,6 +802,25 @@ static int obj_is_in_view(struct GraphNodeObject *node, Mat4 matrix) {
 static void geo_process_object(struct Object *node) {
     Mat4 mtxf;
     s32 hasAnimation = (node->header.gfx.node.flags & GRAPH_RENDER_HAS_ANIMATION) != 0;
+#ifdef IOS_BUILD
+    struct GraphNode *savedGeo = node->header.gfx.sharedChild;
+    struct GraphNodeObject_sub savedAnimation = node->header.gfx.unk38;
+    Vec3f savedScale;
+    vec3f_copy(savedScale, node->header.gfx.scale);
+    s32 bowser = node == gMarioObject && mario_playground_bowser_active()
+        && gLoadedGraphNodes[MODEL_PLAYABLE_BOWSER] != NULL;
+    if (bowser) {
+        u32 action = gMarioState->action;
+        s32 index = (action & ACT_FLAG_AIR) ? 9 : fabsf(gMarioState->forwardVel) > 1 ? 13 : 12;
+        struct Animation *animation = (struct Animation *)bowser_seg6_anims_06057690[index];
+        node->header.gfx.sharedChild = gLoadedGraphNodes[MODEL_PLAYABLE_BOWSER];
+        node->header.gfx.unk38 = (struct GraphNodeObject_sub){0};
+        node->header.gfx.unk38.curAnim = animation;
+        node->header.gfx.unk38.animFrame = gAreaUpdateCounter % animation->unk08;
+        hasAnimation = FALSE;
+        vec3f_set(node->header.gfx.scale, 0.25f, 0.25f, 0.25f);
+    }
+#endif
 
     if (node->header.gfx.unk18 == gCurGraphNodeRoot->areaIndex) {
         if (node->header.gfx.throwMatrix != NULL) {
@@ -843,6 +869,13 @@ static void geo_process_object(struct Object *node) {
         gCurAnimType = ANIM_TYPE_NONE;
         node->header.gfx.throwMatrix = NULL;
     }
+#ifdef IOS_BUILD
+    if (bowser) {
+        node->header.gfx.sharedChild = savedGeo;
+        node->header.gfx.unk38 = savedAnimation;
+        vec3f_copy(node->header.gfx.scale, savedScale);
+    }
+#endif
 }
 
 /**

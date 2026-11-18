@@ -207,6 +207,9 @@ void mario_hat_execute_throw(struct MarioState *m) {
     // Regular spawn_object can hang on an exhausted object pool.
     sHatObject = try_to_spawn_object(0, 1.25f, m->marioObj, MODEL_MARIOS_CAP, sHatVisual);
     if (sHatObject == NULL) return;
+    // The cap GeoLayout samples oOpacity. A render-only behavior never runs
+    // the normal cap behavior that initializes this field.
+    sHatObject->oOpacity = 255;
     const f32 aimSpeed = m->forwardVel * coss(yaw - m->faceAngle[1]);
     if (!ios_hat_launch(&sHat, start, sins(yaw), coss(yaw), airborne ? aimSpeed * 0.25f : aimSpeed)) {
         remove_hat_visual();
