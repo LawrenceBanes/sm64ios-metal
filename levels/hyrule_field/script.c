@@ -29,11 +29,13 @@ const LevelScript level_hyrule_field_entry[] = {
 
     AREA(/*index*/ 1, hyrule_field_geo),
 #if defined(IOS_HYRULE_WORLD)
+#if !defined(IOS_CONNECTED_WORLD)
         // The fading warp is a valid spawn node and gives Hyrule a normal route home.
         WARP_NODE(/*id*/ 0x01, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01,
                   /*destNode*/ 0x09, /*flags*/ WARP_NO_CHECKPOINT),
         OBJECT(MODEL_NONE, HYRULE_FIELD_RETURN_X, HYRULE_FIELD_RETURN_Y, HYRULE_FIELD_RETURN_Z,
                0, HYRULE_FIELD_SPAWN_YAW, 0, 0x28010000, bhvFadingWarp),
+#endif
 #if defined(IOS_BUILD)
         // Level changes unload per-area actors; place a recoverable local kart on verified floor.
         OBJECT(MODEL_IOS_KART, HYRULE_FIELD_KART_X, HYRULE_FIELD_KART_Y, HYRULE_FIELD_KART_Z,

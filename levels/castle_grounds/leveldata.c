@@ -32,6 +32,9 @@
 #if defined(IOS_CONNECTED_WORLD_TEST)
 #include "levels/castle_grounds/areas/1/connected_world/registry.inc.c"
 #endif
+#if defined(IOS_CONNECTED_WORLD)
+#include "build/hyrule_field_connector.inc.c"
+#endif
 #include "levels/castle_grounds/areas/1/collision.inc.c"
 #include "levels/castle_grounds/areas/1/macro.inc.c"
 #include "levels/castle_grounds/areas/1/7/collision.inc.c"

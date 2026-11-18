@@ -1412,7 +1412,141 @@ def write_collision_outputs(output_dir: Path, collision: dict, scale: float, ste
             "scale": scale, "geometry_validation": collision["geometry_validation"]}
 
 
-def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float) -> dict:
+def emit_connected_hyrule(output_dir: Path, collision: dict | None, scale: float) -> dict:
+    """Place an existing native field in Castle area 1 with one connector.
+
+    The Castle terrain stream accepts a second vertex table. The field's
+    render data stays in its normal level object and is instanced by GeoLayout.
+    """
+    if collision is None or scale != 1.0:
+        raise ImportFailure("connected Hyrule requires the native spot00 collision at scale 1")
+    if not collision["polygons"]:
+        raise ImportFailure("connected Hyrule has no collision")
+    # Spot00's market entrance is along source +Z. Turn it to face west in
+    # Castle; keep the field east edge beyond the original trail's west end.
+    tx, ty, tz = -13200, 260, 1460
+    yaw = -90
+    # Confirm the arch approach and the internal landing strip. The lowered
+    # channel between these strips is bridged by the original connector deck.
+    for z in (-160, 0, 200, 400, 600, 1120, 1180, 1350, 1500):
+        for x in (-72, 0, 72):
+            floor = collision_floor_at(collision, x, 0, z, max_above=4, max_below=4)
+            if floor is None or floor["normal"][1] < 25000:
+                raise ImportFailure(f"connected Hyrule has no level entrance floor at ({x}, {z})")
+
+    def world(vertex):
+        x, y, z = vertex
+        return tx - z, ty + y, tz + x
+
+    field_vertices = [world(v) for v in collision["vertices"]]
+    east = max(v[0] for v in field_vertices)
+    if east >= -11100:
+        raise ImportFailure("connected Hyrule overlaps the legacy Castle corridor")
+    if any(not -31000 <= coord <= 31000 for v in field_vertices for coord in v):
+        raise ImportFailure("connected Hyrule exceeds the signed collision grid with camera margin")
+    if len(field_vertices) > 32700:
+        raise ImportFailure("connected Hyrule has too many vertices for native collision")
+
+    # The stock west ridge reaches Y=1729 across the old low trail.
+    # Cross over it with a gradual walkway and leave the ridge and trail intact.
+    # The far end tapers into the imported arch and spans its shallow channel.
+    deck = [(-4650, 260, 510), (-8060, 1830, 740), (-8300, 1830, 740),
+            (-11950, 260, 510), (-12650, 260, 144), (tx - 1180, 260, 144)]
+    rails = [(a, b, 108) for a, b in zip(deck, deck[1:]) if a[0] != -12650]
+    rails += [(deck[-2], (tx + 320, ty, 144), 108),
+              ((tx - 640, ty, 144), (tx - 1120, ty, 144), 108)]
+    connector_vertices = [(x, y, tz + sign * w) for x, y, w in deck for sign in (-1, 1)]
+    connector_tris = []
+    for i in range(0, len(connector_vertices) - 2, 2):
+        for tri in ((i, i + 2, i + 1), (i + 2, i + 3, i + 1)):
+            # Stock floors sort by the first vertex's height. Start each
+            # upward-wound triangle at its highest vertex over older terrain.
+            j = max(range(3), key=lambda k: connector_vertices[tri[k]][1])
+            connector_tris.append(tri[j:] + tri[:j])
+    floor_vertex_count = len(connector_vertices)
+    floor_tri_count = len(connector_tris)
+    for (x0, y0, w0), (x1, y1, w1), height in rails:
+        for sign in (-1, 1):
+            i = len(connector_vertices)
+            connector_vertices.extend([(x0, y0, tz + sign * w0), (x0, y0 + height, tz + sign * w0),
+                                       (x1, y1, tz + sign * w1), (x1, y1 + height, tz + sign * w1)])
+            tris = [(i, i + 1, i + 2), (i + 1, i + 3, i + 2)]
+            connector_tris.extend(tris if sign < 0 else [t[::-1] for t in tris])
+
+    field_tris = [tuple(p["vertex_indices"]) for p in collision["polygons"]]
+    if len(field_tris) > 4000:
+        raise ImportFailure("connected Hyrule exceeds the surface budget")
+    # Count the engine's per-cell bounding rectangles including its 50-unit
+    # border padding. Reserve more than half the node pool for Castle and
+    # dynamic surface headroom.
+    def cell_range(low, high):
+        lo, hi = low + 32768, high + 32768
+        return min(63, hi // 1024 + (hi % 1024 > 974)) - max(0, lo // 1024 - (lo % 1024 < 50)) + 1
+
+    field_nodes = 0
+    for triangle in field_tris:
+        if any(not 0 <= i < len(field_vertices) for i in triangle):
+            raise ImportFailure("connected Hyrule triangle references a missing vertex")
+        x, _, z = zip(*(field_vertices[i] for i in triangle))
+        field_nodes += cell_range(min(x), max(x)) * cell_range(min(z), max(z))
+    if field_nodes > 15000:
+        raise ImportFailure("connected Hyrule exceeds the collision node budget")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    def write(name, lines):
+        (output_dir / name).write_text("\n".join([*lines, ""]), encoding="utf-8")
+
+    write("hyrule_field_connection.h", [
+        "#ifndef HYRULE_FIELD_CONNECTION_H",
+        "#define HYRULE_FIELD_CONNECTION_H",
+        f"#define HYRULE_CONNECTION_X ({tx})",
+        f"#define HYRULE_CONNECTION_Y ({ty})",
+        f"#define HYRULE_CONNECTION_Z ({tz})",
+        f"#define HYRULE_CONNECTION_YAW ({yaw})",
+        f"#define HYRULE_CONNECTION_FIELD_EAST_X ({east})",
+        "#endif",
+    ])
+
+    # Two banks allow the existing collision data to keep its own indices.
+    def bank(vertices, triangles):
+        def values(t):
+            return ", ".join(map(str, t))
+        return ["    COL_INIT(),", f"    COL_VERTEX_INIT({len(vertices)}),",
+                *(f"    COL_VERTEX({values(v)})," for v in vertices),
+                f"    COL_TRI_INIT(SURFACE_DEFAULT, {len(triangles)}),",
+                *(f"    COL_TRI({values(t)})," for t in triangles),
+                "    COL_TRI_STOP(),"]
+    write("hyrule_field_connected_collision.inc.c",
+          bank(connector_vertices, connector_tris) + bank(field_vertices, field_tris))
+
+    # The connector's render mesh uses the same vertices as collision, with
+    # a small vertical bias on the deck where it overlaps existing terrain.
+    render = ["static const Vtx sHyruleConnectorVertices[] = {"]
+    for i, (x, y, z) in enumerate(connector_vertices):
+        deck_vertex = i < floor_vertex_count
+        color = "0x76, 0x53, 0x31" if deck_vertex else "0x55, 0x36, 0x24"
+        render.append(f"    {{{{{{{x}, {y + (3 if deck_vertex else 0)}, {z}}}, 0, {{0, 0}}, {{{color}, 0xFF}}}}}},")
+    render += ["};", "const Gfx castle_grounds_hyrule_connector_dl[] = {",
+               "    gsDPPipeSync(),", "    gsSPClearGeometryMode(G_LIGHTING | G_CULL_BACK),",
+               "    gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),",
+               f"    gsSPVertex(sHyruleConnectorVertices, {floor_vertex_count}, 0),"]
+    render.extend(f"    gsSP1Triangle({a}, {b}, {c}, 0),"
+                  for a, b, c in connector_tris[:floor_tri_count])
+    for j in range(floor_tri_count, len(connector_tris), 2):
+        start = min(connector_tris[j])
+        render.append(f"    gsSPVertex(sHyruleConnectorVertices + {start}, 4, 0),")
+        render.extend(f"    gsSP1Triangle({a - start}, {b - start}, {c - start}, 0),"
+                      for a, b, c in connector_tris[j:j + 2])
+    render += ["    gsSPSetGeometryMode(G_LIGHTING | G_CULL_BACK),",
+               "    gsDPPipeSync(),", "    gsSPEndDisplayList(),", "};"]
+    write("hyrule_field_connector.inc.c", render)
+    return {"translation": [tx, ty, tz], "yaw_degrees": yaw,
+            "field_triangles": len(field_tris), "field_node_estimate": field_nodes,
+            "connector_triangles": len(connector_tris)}
+
+
+def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scale: float,
+                   connected_world: bool = False) -> dict:
     if not archive_path.is_file():
         raise ImportFailure(f"O2R archive not found: {archive_path}. Supply oot.o2r as the input path.")
     if not math.isfinite(scale) or scale <= 0.0:
@@ -1698,6 +1832,10 @@ def import_archive(archive_path: Path, output_dir: Path, scene_prefix: str, scal
         native_summary["include"] = str(native_include.relative_to(output_dir))
         native_summary["spawn_header"] = str((native_include.parent / "hyrule_field_spawn.h")
                                               .relative_to(output_dir))
+        if connected_world:
+            if not native_summary["opaque_calls"]:
+                raise ImportFailure("connected Hyrule requires a supported native opaque display list")
+            native_summary["connection"] = emit_connected_hyrule(native_include.parent, primary_collision, scale)
         output = {
             "format": FORMAT_NAME,
             "format_version": FORMAT_VERSION,
@@ -1751,9 +1889,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", type=Path, help="directory for the intermediate world package")
     parser.add_argument("--scene-prefix", default="scenes/shared/spot00_scene")
     parser.add_argument("--scale", type=float, default=1.0, help="provisional OoT-to-SM64 coordinate scale")
+    parser.add_argument("--connected-world", action="store_true", help="generate the Castle Grounds connection")
     args = parser.parse_args(argv)
     try:
-        result = import_archive(args.archive, args.output, args.scene_prefix, args.scale)
+        result = import_archive(args.archive, args.output, args.scene_prefix, args.scale, args.connected_world)
     except (ImportFailure, OSError) as exc:
         print(f"hyrule-importer: error: {exc}", file=sys.stderr)
         return 2

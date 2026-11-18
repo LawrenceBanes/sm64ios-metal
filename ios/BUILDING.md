@@ -36,3 +36,20 @@ full-game build, select the workflow's `hat_movement` input.
 
 Run `sh tests/run_ios_hat_test.sh` for the host gameplay checks and the
 hat/Hyrule compiler matrix.
+
+## Connected Castle Grounds and Hyrule test build
+
+With the usual SDL2 and game assets set up on macOS, build the local device
+target using the existing user-supplied archive:
+
+```sh
+HYRULE_O2R_PATH=/absolute/path/to/oot.o2r \
+  xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
+  -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+  IOS_HYRULE_WORLD=1 IOS_CONNECTED_WORLD=1 IOS_HYRULE_GATE_DIAGNOSTICS=1 build
+```
+
+Set `IOS_HAT_MOVEMENT=1` independently to test hats on this build. The connected
+flag defaults to `0`, which keeps the legacy warp pair for Hyrule builds.
+The standalone `bash build_ios.sh` route accepts the same settings as environment
+variables. Device installation needs a locally configured signing identity.

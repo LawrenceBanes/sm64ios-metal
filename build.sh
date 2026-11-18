@@ -67,16 +67,28 @@ if (( MAKE_MAJOR < 4 )); then
     exit 1
 fi
 
+IOS_CONNECTED_WORLD_BUILD=${IOS_CONNECTED_WORLD:-0}
+HYRULE_IMPORT_FLAG=
+case "$IOS_CONNECTED_WORLD_BUILD" in
+    0) ;;
+    1) HYRULE_IMPORT_FLAG=--connected-world ;;
+    *) echo 'IOS_CONNECTED_WORLD must be 0 or 1' >&2; exit 1 ;;
+esac
 IOS_HYRULE_WORLD_BUILD=0
-if [[ ${IOS_HYRULE_WORLD:-0} == 1 || -n ${HYRULE_O2R_PATH:-} ]]; then
+if [[ ${IOS_HYRULE_WORLD:-0} == 1 || -n ${HYRULE_O2R_PATH:-} || "$IOS_CONNECTED_WORLD_BUILD" == 1 ]]; then
     if [[ -z ${HYRULE_O2R_PATH:-} || ! -f ${HYRULE_O2R_PATH} ]]; then
         echo "IOS_HYRULE_WORLD requires HYRULE_O2R_PATH to name a readable user-supplied .o2r archive." >&2
         exit 1
     fi
     HYRULE_IMPORT_DIR="build/hyrule_field_import"
-    python3 tools/hyrule_importer.py "$HYRULE_O2R_PATH" "$HYRULE_IMPORT_DIR"
+    python3 tools/hyrule_importer.py "$HYRULE_O2R_PATH" "$HYRULE_IMPORT_DIR" ${HYRULE_IMPORT_FLAG:+"$HYRULE_IMPORT_FLAG"}
     cp "$HYRULE_IMPORT_DIR/render/hyrule_field_runtime.inc.c" build/hyrule_field_generated.inc.c
     cp "$HYRULE_IMPORT_DIR/render/hyrule_field_spawn.h" build/hyrule_field_spawn.h
+    if [[ "$IOS_CONNECTED_WORLD_BUILD" == 1 ]]; then
+        for file in hyrule_field_connection.h hyrule_field_connected_collision.inc.c hyrule_field_connector.inc.c; do
+            cp "$HYRULE_IMPORT_DIR/render/$file" "build/$file"
+        done
+    fi
     IOS_HYRULE_WORLD_BUILD=1
 fi
 IOS_CONNECTED_WORLD_TEST_BUILD=${IOS_CONNECTED_WORLD_TEST:-0}
@@ -88,6 +100,7 @@ fi
     IOS_HYRULE_WORLD="$IOS_HYRULE_WORLD_BUILD" \
     IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" \
     IOS_HAT_MOVEMENT="${IOS_HAT_MOVEMENT:-0}" \
+    IOS_CONNECTED_WORLD="$IOS_CONNECTED_WORLD_BUILD" \
     IOS_CONNECTED_WORLD_TEST="$IOS_CONNECTED_WORLD_TEST_BUILD"
 
 GAME_APP_DIR="${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}"

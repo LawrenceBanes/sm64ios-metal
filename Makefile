@@ -30,6 +30,7 @@ TARGET_WEB ?= 0
 # Build for iOS devices
 TARGET_IOS ?= 1
 IOS_HYRULE_WORLD ?= 0
+IOS_CONNECTED_WORLD ?= 0
 IOS_HYRULE_GATE_DIAGNOSTICS ?= 0
 IOS_HAT_MOVEMENT ?= 0
 IOS_CONNECTED_WORLD_TEST ?= 0
@@ -179,6 +180,15 @@ ifneq ($(IOS_HYRULE_WORLD),1)
 $(error IOS_HYRULE_GATE_DIAGNOSTICS=1 requires IOS_HYRULE_WORLD=1)
 endif
 VERSION_CFLAGS += -DIOS_HYRULE_GATE_DIAGNOSTICS
+endif
+ifneq ($(IOS_CONNECTED_WORLD),0)
+ifneq ($(IOS_CONNECTED_WORLD),1)
+$(error IOS_CONNECTED_WORLD must be 0 or 1)
+endif
+ifneq ($(TARGET_IOS):$(IOS_HYRULE_WORLD),1:1)
+$(error IOS_CONNECTED_WORLD=1 requires TARGET_IOS=1 and IOS_HYRULE_WORLD=1)
+endif
+VERSION_CFLAGS += -DIOS_CONNECTED_WORLD
 endif
 ifeq ($(IOS_CONNECTED_WORLD_TEST),1)
 VERSION_CFLAGS += -DIOS_CONNECTED_WORLD_TEST
@@ -1068,6 +1078,13 @@ $(BUILD_DIR)/levels/%/leveldata.o: OPT_FLAGS := -g
 ifeq ($(IOS_HYRULE_WORLD),1)
 $(BUILD_DIR)/levels/hyrule_field/leveldata.o: build/hyrule_field_generated.inc.c
 $(BUILD_DIR)/levels/hyrule_field/script.o: build/hyrule_field_spawn.h
+endif
+ifeq ($(IOS_CONNECTED_WORLD),1)
+$(BUILD_DIR)/levels/castle_grounds/leveldata.o: build/hyrule_field_connected_collision.inc.c build/hyrule_field_connector.inc.c
+$(BUILD_DIR)/levels/castle_grounds/geo.o: build/hyrule_field_connection.h
+ifeq ($(IOS_HYRULE_GATE_DIAGNOSTICS),1)
+$(BUILD_DIR)/src/game/mario.o: build/hyrule_field_connection.h build/hyrule_field_spawn.h
+endif
 endif
 $(BUILD_DIR)/actors/%.o: OPT_FLAGS := -g
 $(BUILD_DIR)/bin/%.o: OPT_FLAGS := -g

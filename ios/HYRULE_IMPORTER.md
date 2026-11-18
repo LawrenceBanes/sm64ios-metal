@@ -139,3 +139,51 @@ not enqueue an invalid warp or invent a destination. A forward transition
 remains blocked until its intended destination and entrance are specified and
 registered; the proximity feedback itself remains device-unverified until this
 diagnostic IPA is tested.
+
+## Mission 61 audit handoff
+
+`IOS_CONNECTED_WORLD=1` mounts the supported field in Castle Grounds area 1.
+The Castle terrain command stream keeps its original records and appends two
+vertex banks for the new walkway and field. The ceiling and wall checks use
+the same static collision grid as Castle. The field keeps its existing opaque
+and translucent display lists and texture buffers. Castle's GeoLayout applies
+the same placement as the collision generator: source `(x, y, z)` maps to
+`(-13200 - z, 260 + y, 1460 + x)`. Castle retains its free roam camera and
+20,000-unit far plane.
+
+Host movement exposed two obstacles: the original west ridge reaches
+`y=1729` above the legacy trail, and the field entrance crosses a 140-unit
+drop. An original raised walkway crosses the ridge and descends along the
+trail into the field opening. It bridges the drop without changing stock
+Castle triangles. Connected mode suppresses the legacy Hyrule warp pair.
+The standalone level remains registered, and normal Castle warps are unchanged.
+
+The host harness first crossed the inlet using 130 representative field
+triangles, then passed in three lanes in both directions with the full import
+and the engine's walking speed, floor, wall and ceiling queries. The combined
+real import used 2,510 static surfaces and 7,370 nodes, with zero rejected
+surfaces. With the separate legacy forest test also enabled, it used 2,540
+surfaces and 7,534 nodes. The expanded pools already used by ordinary Hyrule
+builds hold 8,192 surfaces and 32,768 nodes. The extra transformed collision
+stream uses about 16 KiB of compiled data. The existing 37 field render lists
+run through Castle's scene graph when enabled, so Metal frame pacing, texture
+residency and far views need device measurement. The importer still omits
+three unsupported segmented display list calls and does not import OoT actors
+or water behavior.
+
+On device, install the local build from [BUILDING.md](BUILDING.md) and:
+
+1. Enter Castle Grounds. Look for the area collision log with `rejected=0`.
+   Head west from the grove onto the raised walkway near `(-4650,260,1460)`.
+2. Walk over the crest, descend through the field opening, continue past
+   `x=-14600`, then walk back along the same route. Check that there is no
+   fade or transition and both sides remain in Castle Grounds area 1.
+3. Check camera turns, wall clearance, deck edges, texture rendering and frame
+   pacing at the crest, the narrow opening, and deep in the field. Re-enter
+   through a stock Castle door to check area reload.
+4. Near `(-28876,-621,-4431)`, check for the gate probe and unavailable message
+   from Castle area 1. With hats enabled, throw and bounce on each side.
+   Compare with a separate connected-off Hyrule build to verify the warp pair.
+
+The host tests exercise compiled geometry wiring and collision math without
+launching UIKit, Metal, scene objects or an iPhone game session.

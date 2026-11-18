@@ -31,7 +31,7 @@ static const LevelScript script_func_local_1[] = {
     WARP_NODE(/*id*/ 0x06, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x06, /*flags*/ WARP_NO_CHECKPOINT),
     WARP_NODE(/*id*/ 0x07, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x07, /*flags*/ WARP_NO_CHECKPOINT),
     WARP_NODE(/*id*/ 0x08, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x08, /*flags*/ WARP_NO_CHECKPOINT),
-#if defined(IOS_HYRULE_WORLD)
+#if defined(IOS_HYRULE_WORLD) && !defined(IOS_CONNECTED_WORLD)
     WARP_NODE(/*id*/ 0x09, /*destLevel*/ LEVEL_HYRULE_FIELD, /*destArea*/ 0x01, /*destNode*/ 0x01, /*flags*/ WARP_NO_CHECKPOINT),
 #endif
     OBJECT(/*model*/ MODEL_NONE, /*pos*/  5408,  4500,  3637, /*angle*/ 0, 225, 0, /*behParam*/ 0x000A0000, /*beh*/ bhvAirborneWarp),
@@ -67,9 +67,8 @@ static const LevelScript script_func_local_5[] = {
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE, -10600, 260, 3900, 0, 0, 0, 0, bhvStaticObject),
     OBJECT(MODEL_CASTLE_GROUNDS_BUBBLY_TREE,  -8000, 260, 3900, 0, 0, 0, 0, bhvStaticObject),
 #endif
-#if defined(IOS_HYRULE_WORLD)
-    // Keep the legacy Hyrule warp at the end of the main trail; the connected
-    // test branches north before reaching it and never uses it for traversal.
+#if defined(IOS_HYRULE_WORLD) && !defined(IOS_CONNECTED_WORLD)
+    // Legacy warp at the end of the western trail.
     OBJECT(MODEL_NONE, -10850, 260, 1460, 0, 90, 0, 0x28090000, bhvFadingWarp),
 #endif
     RETURN(),

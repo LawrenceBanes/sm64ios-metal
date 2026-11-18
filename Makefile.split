@@ -153,7 +153,7 @@ FORCE:
 
 $(BUILD_DIR)/.ios_world_mode: FORCE
 	@mkdir -p "$(BUILD_DIR)"
-	@printf '%s %s %s\n' '$(IOS_HYRULE_WORLD)' '$(IOS_CONNECTED_WORLD_TEST)' '$(IOS_HYRULE_GATE_DIAGNOSTICS)' > "$@.tmp"
+	@printf '%s %s %s %s\n' '$(IOS_HYRULE_WORLD)' '$(IOS_CONNECTED_WORLD_TEST)' '$(IOS_HYRULE_GATE_DIAGNOSTICS)' '$(IOS_CONNECTED_WORLD)' > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
 # These objects embed the partition dimensions and/or opt-in collision scans.
@@ -168,7 +168,8 @@ $(BUILD_DIR)/src/game/mario.o: $(BUILD_DIR)/.ios_world_mode
 # Castle level objects embed connected-forest geometry and collision indices.
 $(BUILD_DIR)/levels/castle_grounds/leveldata.o \
 $(BUILD_DIR)/levels/castle_grounds/geo.o \
-$(BUILD_DIR)/levels/castle_grounds/script.o: $(BUILD_DIR)/.ios_world_mode
+$(BUILD_DIR)/levels/castle_grounds/script.o \
+$(BUILD_DIR)/levels/hyrule_field/script.o: $(BUILD_DIR)/.ios_world_mode
 
 # Keep compiled input and gameplay code in sync when the hat option changes.
 $(BUILD_DIR)/.ios_hat_mode: FORCE

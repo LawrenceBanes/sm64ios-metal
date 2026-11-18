@@ -69,7 +69,7 @@ class HyruleGatewayTests(unittest.TestCase):
     def test_gateway_is_opt_in_and_uses_paired_stock_fading_warps(self):
         castle = (ROOT / "levels/castle_grounds/script.c").read_text()
         hyrule = (ROOT / "levels/hyrule_field/script.c").read_text()
-        self.assertRegex(castle, r"#if defined\(IOS_HYRULE_WORLD\)\s*WARP_NODE\([^\n]*0x09[^\n]*LEVEL_HYRULE_FIELD")
+        self.assertRegex(castle, r"#if defined\(IOS_HYRULE_WORLD\) && !defined\(IOS_CONNECTED_WORLD\)\s*WARP_NODE\([^\n]*0x09[^\n]*LEVEL_HYRULE_FIELD")
         self.assertRegex(hyrule, r"WARP_NODE\([^)]*0x01[^)]*LEVEL_CASTLE_GROUNDS[^)]*0x09")
         self.assertIn("0x28090000, bhvFadingWarp", castle)
         self.assertIn("0x28010000, bhvFadingWarp", hyrule)

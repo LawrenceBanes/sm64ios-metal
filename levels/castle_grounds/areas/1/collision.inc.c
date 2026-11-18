@@ -1499,5 +1499,10 @@ const Collision castle_grounds_seg7_collision_level[] = {
     COL_WATER_BOX_INIT(2),
     COL_WATER_BOX(0, -7129, -7222, 8253, -58, -81),
     COL_WATER_BOX(1, 1024, -58, 8230, 8137, -81),
+#if defined(IOS_CONNECTED_WORLD)
+    // The loader replaces its vertex table for the appended banks. Castle
+    // triangle indices, special objects and water boxes remain unchanged.
+#include "build/hyrule_field_connected_collision.inc.c"
+#endif
     COL_END(),
 };

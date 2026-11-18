@@ -33,6 +33,15 @@ const GeoLayout castle_grounds_geo_00073C[] = {
                GEO_ASM(0x1601, geo_movtex_draw_nocolor),
                GEO_ASM(0x1601, geo_movtex_draw_water_regions),
                GEO_RENDER_OBJ(),
+#if defined(IOS_CONNECTED_WORLD)
+               GEO_DISPLAY_LIST(LAYER_OPAQUE, castle_grounds_hyrule_connector_dl),
+               GEO_TRANSLATE_ROTATE_WITH_DL(LAYER_OPAQUE, HYRULE_CONNECTION_X, HYRULE_CONNECTION_Y,
+                                            HYRULE_CONNECTION_Z, 0, HYRULE_CONNECTION_YAW, 0,
+                                            hyrule_field_opaque_dl),
+               GEO_TRANSLATE_ROTATE_WITH_DL(LAYER_TRANSPARENT, HYRULE_CONNECTION_X, HYRULE_CONNECTION_Y,
+                                            HYRULE_CONNECTION_Z, 0, HYRULE_CONNECTION_YAW, 0,
+                                            hyrule_field_translucent_dl),
+#endif
                GEO_ASM(0, geo_envfx_main),
             GEO_CLOSE_NODE(),
          GEO_CLOSE_NODE(),

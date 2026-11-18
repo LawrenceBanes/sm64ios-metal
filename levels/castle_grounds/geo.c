@@ -12,6 +12,11 @@
 #include "make_const_nonconst.h"
 
 #include "levels/castle_grounds/header.h"
+#if defined(IOS_CONNECTED_WORLD)
+#include "levels/hyrule_field/header.h"
+#include "build/hyrule_field_connection.h"
+extern const Gfx castle_grounds_hyrule_connector_dl[];
+#endif
 
 #include "levels/castle_grounds/areas/1/11/geo.inc.c"
 #include "levels/castle_grounds/areas/1/3/geo.inc.c"

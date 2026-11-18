@@ -273,6 +273,14 @@ void load_area(s32 index) {
 #endif
             load_area_terrain(index, gCurrentArea->terrainData, gCurrentArea->surfaceRooms,
                               gCurrentArea->macroObjects);
+#if defined(IOS_CONNECTED_WORLD)
+            if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS && index == 1) {
+                IOS_HYRULE_DIAG(
+                    "Castle and Hyrule collision loaded level=%d area=%d surfaces=%d nodes=%d rejected=%d",
+                    gCurrLevelNum, index, gNumStaticSurfaces, gNumStaticSurfaceNodes,
+                    gSurfaceLoadRejectedCount);
+            }
+#endif
 #if defined(IOS_BUILD) && defined(IOS_CONNECTED_WORLD_TEST)
             if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS) {
                 IOS_CONNECTED_WORLD_DIAG(

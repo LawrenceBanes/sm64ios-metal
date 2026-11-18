@@ -48,6 +48,9 @@
 #include "game/hyrule_gate.h"
 #include "level_table.h"
 #include "build/hyrule_field_spawn.h"
+#if defined(IOS_CONNECTED_WORLD)
+#include "build/hyrule_field_connection.h"
+#endif
 #endif
 #include "pc/cheats.h"
 #ifdef IOS_BUILD
@@ -1998,6 +2001,24 @@ s32 mario_floor_is_steep(struct MarioState *m) {
 static HyruleGateProximityState sHyruleGateProximity;
 static u32 sHyruleGateDiagnosticFrames;
 
+static bool mario_ios_hyrule_gate_anchor(const struct MarioState *m, int gate[3]) {
+    if (gCurrentArea == NULL || gCurrentArea->index != 1) return false;
+    gate[0] = HYRULE_FIELD_GATE_X;
+    gate[1] = HYRULE_FIELD_GATE_Y;
+    gate[2] = HYRULE_FIELD_GATE_Z;
+#if defined(IOS_CONNECTED_WORLD)
+    if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS && m->pos[0] <= HYRULE_CONNECTION_FIELD_EAST_X) {
+        gate[0] = HYRULE_CONNECTION_X - HYRULE_FIELD_GATE_Z;
+        gate[1] = HYRULE_CONNECTION_Y + HYRULE_FIELD_GATE_Y;
+        gate[2] = HYRULE_CONNECTION_Z + HYRULE_FIELD_GATE_X;
+        return true;
+    }
+#else
+    (void)m;
+#endif
+    return gCurrLevelNum == LEVEL_HYRULE_FIELD;
+}
+
 /* The selected imported start position is a useful gate-area proximity
  * anchor. The scene does not define a destination transition, so keep the
  * interaction observable and refuse to enqueue an invalid warp.
@@ -2006,9 +2027,10 @@ static void mario_ios_update_hyrule_gate_debug(const struct MarioState *m) {
     HyruleGateProximityEvent event;
     bool nearGate;
     const bool gateDestinationConfigured = false;
+    int gate[3];
 
     if (m == NULL) return;
-    if (gCurrLevelNum != LEVEL_HYRULE_FIELD || gCurrentArea == NULL || gCurrentArea->index != 1) {
+    if (!mario_ios_hyrule_gate_anchor(m, gate)) {
         sHyruleGateProximity.inside = false;
         sHyruleGateDiagnosticFrames = 0;
         return;
@@ -2023,8 +2045,7 @@ static void mario_ios_update_hyrule_gate_debug(const struct MarioState *m) {
     }
 
     nearGate = hyrule_gate_contains(m->pos[0], m->pos[1], m->pos[2],
-                                   HYRULE_FIELD_GATE_X, HYRULE_FIELD_GATE_Y,
-                                   HYRULE_FIELD_GATE_Z, HYRULE_GATE_TRIGGER_RADIUS,
+                                   gate[0], gate[1], gate[2], HYRULE_GATE_TRIGGER_RADIUS,
                                    HYRULE_GATE_VERTICAL_TOLERANCE);
     event = hyrule_gate_update_proximity(&sHyruleGateProximity, nearGate);
     if (event == HYRULE_GATE_ENTERED) {
@@ -2043,11 +2064,11 @@ static void mario_ios_update_hyrule_gate_debug(const struct MarioState *m) {
     }
 
     if ((sHyruleGateDiagnosticFrames++ % HYRULE_GATE_DIAG_INTERVAL) == 0) {
-        const float dx = m->pos[0] - HYRULE_FIELD_GATE_X;
-        const float dz = m->pos[2] - HYRULE_FIELD_GATE_Z;
+        const float dx = m->pos[0] - gate[0];
+        const float dz = m->pos[2] - gate[2];
         gfx_ios_diag_log("Hyrule gate probe level=%d area=%d mario=(%.1f,%.1f,%.1f) gate=(%d,%d,%d) distanceSquared=%.1f near=%d floor=%s floorType=%d interaction=approach-proximity destinationConfigured=%d warpIssued=0 action=0x%08x",
             gCurrLevelNum, gCurrentArea->index, m->pos[0], m->pos[1], m->pos[2],
-            HYRULE_FIELD_GATE_X, HYRULE_FIELD_GATE_Y, HYRULE_FIELD_GATE_Z,
+            gate[0], gate[1], gate[2],
             dx * dx + dz * dz, nearGate, m->floor ? "hit" : "miss",
             m->floor ? m->floor->type : -1, gateDestinationConfigured, m->action);
     }
