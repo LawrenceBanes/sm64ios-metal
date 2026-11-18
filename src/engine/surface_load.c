@@ -14,7 +14,7 @@
 #include "game/mario.h"
 #include "game/object_list_processor.h"
 #include "surface_load.h"
-#if defined(IOS_CONNECTED_WORLD_TEST)
+#if defined(IOS_CONNECTED_WORLD_TEST) || defined(IOS_O2R_SCENE_RUNTIME)
 #include "world_region.h"
 #endif
 
@@ -626,7 +626,7 @@ void load_area_terrain(s16 index, s16 *data, s8 *surfaceRooms, s16 *macroObjects
 
     // Region nodes belong to the old area; unlink them before its partition
     // heads are cleared. The new area starts at the legacy world origin.
-#if defined(IOS_CONNECTED_WORLD_TEST)
+#if defined(IOS_CONNECTED_WORLD_TEST) || defined(IOS_O2R_SCENE_RUNTIME)
     {
         struct WorldPoint origin = {0, 0, 0};
         world_region_reset(origin);

@@ -3,6 +3,9 @@
 
 #include "area.h"
 #include "engine/math_util.h"
+#ifdef IOS_O2R_SCENE_RUNTIME
+#include "engine/world_region.h"
+#endif
 #include "game_init.h"
 #include "gfx_dimensions.h"
 #include "main.h"
@@ -328,6 +331,17 @@ static void geo_process_camera(struct GraphNodeCamera *node) {
         gCurGraphNodeCamera = node;
         node->matrixPtr = &gMatStack[gMatStackIndex];
         geo_process_node_and_siblings(node->fnNode.node.children);
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (area_scene_package_id()) {
+            for (u32 i = 0; i < world_region_count(); ++i) {
+                struct WorldRegionInfo region;
+                if (world_region_info_at(i, &region) && region.externallyManaged
+                    && region.active && region.renderList) {
+                    geo_append_display_list((void *)region.renderList, LAYER_OPAQUE);
+                }
+            }
+        }
+#endif
         gCurGraphNodeCamera = NULL;
     }
     gMatStackIndex--;

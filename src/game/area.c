@@ -11,6 +11,9 @@
 #if defined(IOS_CONNECTED_WORLD_TEST)
 #include "engine/world_region.h"
 #endif
+#ifdef IOS_O2R_SCENE_RUNTIME
+#include "engine/world_scene_file.h"
+#endif
 #include "ingame_menu.h"
 #include "screen_transition.h"
 #include "mario.h"
@@ -60,6 +63,21 @@ struct SpawnInfo *gMarioSpawnInfo = &gPlayerSpawnInfos[0];
 struct GraphNode **gLoadedGraphNodes = D_8033A160;
 struct Area *gAreas = gAreaData;
 struct Area *gCurrentArea = NULL;
+#ifdef IOS_O2R_SCENE_RUNTIME
+static struct WorldSceneRuntime sAreaScene;
+
+u32 area_scene_package_id(void) {
+    return world_scene_active_id(&sAreaScene);
+}
+
+static void load_area_scene(s32 index) {
+    /* Namespaced by stock level and area so saves and level tables keep their
+     * original IDs. Entry 0 is the package's default room. */
+    u32 sceneId = ((u32)gCurrLevelNum << 8) | (u32)index;
+    world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
+    world_scene_open(&sAreaScene, sceneId, 0, NULL);
+}
+#endif
 struct CreditsEntry *gCurrCreditsEntry = NULL;
 Vp *D_8032CE74 = NULL;
 Vp *D_8032CE78 = NULL;
@@ -203,6 +221,9 @@ void load_obj_warp_nodes(void) {
 void clear_areas(void) {
     s32 i;
 
+#ifdef IOS_O2R_SCENE_RUNTIME
+    world_scene_close(&sAreaScene);
+#endif
 #ifdef IOS_HAT_MOVEMENT
     mario_hat_reset();
 #endif
@@ -246,6 +267,9 @@ void clear_area_graph_nodes(void) {
     s32 i;
     if (gCurrentArea != NULL) {
         geo_call_global_function_nodes(&gCurrentArea->unk04->node, GEO_CONTEXT_AREA_UNLOAD);
+#ifdef IOS_O2R_SCENE_RUNTIME
+        world_scene_close(&sAreaScene);
+#endif
         gCurrentArea = NULL;
         gWarpTransition.isActive = FALSE;
     }
@@ -304,6 +328,9 @@ void load_area(s32 index) {
 #endif
         }
 
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (gCurrentArea->terrainData != NULL) load_area_scene(index);
+#endif
         if (gCurrentArea->objectSpawnInfos != NULL) {
             spawn_objects_from_info(0, gCurrentArea->objectSpawnInfos);
         }
@@ -329,12 +356,23 @@ void unload_area(void) {
 #endif
     if (gCurrentArea != NULL) {
 #if defined(IOS_CONNECTED_WORLD_TEST)
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (!area_scene_package_id())
+#endif
         {
             struct WorldPoint origin = {0, 0, 0};
             world_region_reset(origin);
         }
 #endif
         unload_objects_from_area(0, gCurrentArea->index);
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (area_scene_package_id()) {
+            world_scene_close(&sAreaScene);
+#if defined(IOS_CONNECTED_WORLD_TEST)
+            world_region_reset((struct WorldPoint){0, 0, 0});
+#endif
+        }
+#endif
         geo_call_global_function_nodes(&gCurrentArea->unk04->node, GEO_CONTEXT_AREA_UNLOAD);
 
         gCurrentArea->flags = 0;

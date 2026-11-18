@@ -32,6 +32,7 @@ CC="$cc" sh "$repo_dir/tests/run_hyrule_connection_test.sh"
 python3 "$repo_dir/ios/test_surface_partition_bounds.py"
 CC="$cc" sh "$repo_dir/tests/run_world_region_test.sh"
 CC="$cc" sh "$repo_dir/tests/run_world_scene_test.sh"
+CC="$cc" python3 "$repo_dir/tests/test_world_scene_package.py"
 CC="$cc" sh "$repo_dir/tests/run_surface_load_bounds_test.sh"
 CC="$cc" "$repo_dir/tests/run_ios_kart_physics_test.sh"
 CC="$cc" sh "$repo_dir/tests/run_ios_hat_test.sh"
@@ -83,6 +84,16 @@ $cc $common_flags -DRAPI_METAL=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 $SDL2_CFLAG
     "$repo_dir/src/pc/gfx/gfx_scene_capture.c" "$repo_dir/src/pc/gfx/gfx_scene_bvh.c" \
     "$repo_dir/src/pc/gfx/gfx_metal_state.c" "$repo_dir/src/pc/gfx/gfx_texture_override.c" \
     "$repo_dir/src/pc/gfx/gfx_pc.c" "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
+
+# Compile the optional area hooks, provider, and renderer bridge together.
+# shellcheck disable=SC2086
+$cc $common_flags -DF3DEX_GBI_2E -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
+    -DIOS_O2R_SCENE_RUNTIME=1 -DIOS_CONNECTED_WORLD_TEST=1 -DIOS_HAT_MOVEMENT=1 \
+    -DRAPI_METAL=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 $SDL2_CFLAGS \
+    "$repo_dir/src/engine/world_scene_file.c" "$repo_dir/src/engine/world_scene.c" \
+    "$repo_dir/src/engine/world_region.c" "$repo_dir/src/engine/surface_load.c" \
+    "$repo_dir/src/game/area.c" "$repo_dir/src/game/rendering_graph_node.c" \
+    "$repo_dir/src/pc/gfx/gfx_pc.c"
 # The Objective-C Metal file must stay excluded cleanly on non-Apple hosts.
 $cc -x objective-c -fsyntax-only -std=gnu99 -DRAPI_METAL=1 \
     "$repo_dir/src/pc/gfx/gfx_metal.m"

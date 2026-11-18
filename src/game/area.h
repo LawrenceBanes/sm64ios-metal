@@ -134,6 +134,9 @@ extern struct SpawnInfo *gMarioSpawnInfo;
 
 extern struct Area *gAreas;
 extern struct Area *gCurrentArea;
+#ifdef IOS_O2R_SCENE_RUNTIME
+u32 area_scene_package_id(void);
+#endif
 
 extern s16 gCurrSaveFileNum;
 extern s16 gCurrLevelNum;

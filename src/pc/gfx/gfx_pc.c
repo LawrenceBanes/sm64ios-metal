@@ -28,6 +28,9 @@
 #include "gfx_screen_config.h"
 #include "gfx_texture_cache_util.h"
 #include "gfx_texture_override.h"
+#ifdef IOS_O2R_SCENE_RUNTIME
+#include "engine/world_scene_file.h"
+#endif
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
 #include "gfx_metal.h"
 #endif
@@ -727,6 +730,46 @@ static bool load_texture(const char *fullpath) {
     return false;
 }
 
+#ifdef IOS_O2R_SCENE_RUNTIME
+/* Package materials use a separate, bounded namespace in Documents. */
+static void load_scene_texture(const char *path, int width, int height) {
+    uint64_t length;
+    uint8_t *png = fs_load_write_file(path, 256 * 1024, &length);
+    uint8_t *rgba = NULL;
+    int w, h;
+    if (png && stbi_info_from_memory(png, (int)length, &w, &h, NULL)
+        && w == width && h == height) {
+        rgba = stbi_load_from_memory(png, (int)length, &w, &h, NULL, 4);
+    }
+    free(png);
+    if (rgba && w == width && h == height) gfx_rapi->upload_texture(rgba, w, h);
+    else {
+        fprintf(stderr, "scene texture missing or invalid: %s\n", path);
+        gfx_rapi->upload_texture(missing_hyrule_texture, 2, 2);
+    }
+    stbi_image_free(rgba);
+}
+
+void gfx_forget_scene_texture(const char *name) {
+    /* Detached cache nodes retain their renderer IDs for the next rollover.
+     * Replace the key before its provider frees the string. */
+    const uint8_t *address = (const uint8_t *)name;
+    for (size_t i = 0; i < sizeof(gfx_texture_cache.pool) / sizeof(gfx_texture_cache.pool[0]); ++i) {
+        if (gfx_texture_cache.pool[i].texture_addr == address) {
+            gfx_texture_cache.pool[i].texture_addr = (const uint8_t *)"";
+        }
+    }
+    if (rdp.texture_to_load.addr == address) rdp.texture_to_load.addr = NULL;
+    for (int i = 0; i < 2; ++i) {
+        if (rdp.loaded_texture[i].addr == address) {
+            rdp.loaded_texture[i].addr = NULL;
+            rendering_state.textures[i] = NULL;
+            rdp.textures_changed[i] = true;
+        }
+    }
+}
+#endif
+
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
 static bool try_load_hd_texture(const char *asset_name, const char *original_path,
                                 uint32_t texture_id) {
@@ -863,6 +906,10 @@ static bool texname_to_texformat(const char *name, u8 *fmt, u8 *siz) {
 // we can get the format and size from the texture files
 // and then cache them using gfx_texture_cache_lookup
 static bool preload_texture(void *user, const char *path) {
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (!strncmp(path, FS_TEXTUREDIR "/scenes/", sizeof(FS_TEXTUREDIR "/scenes/") - 1))
+        return true;
+#endif
     // strip off the extension
     char texname[SYS_MAX_PATH];
     strncpy(texname, path, sizeof(texname));
@@ -908,6 +955,10 @@ static void import_texture(int tile) {
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     hd_variant = gfx_metal_hd_textures_enabled();
 #endif
+#ifdef IOS_O2R_SCENE_RUNTIME
+    bool scene_texture = !strncmp((const char *)rdp.loaded_texture[tile].addr, "scenes/", sizeof("scenes/") - 1);
+    if (scene_texture) hd_variant = false;
+#endif
 #else
     bool hd_variant = false;
 #endif
@@ -923,6 +974,15 @@ static void import_texture(int tile) {
     char texname[SYS_MAX_PATH];
     const char *asset_name = (const char *)rdp.loaded_texture[tile].addr;
     snprintf(texname, sizeof(texname), FS_TEXTUREDIR "/%s.png", asset_name);
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (scene_texture) {
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+        gfx_hd_texture_record_residency(rendering_state.textures[tile]->texture_id, 0);
+#endif
+        load_scene_texture(texname, rdp.texture_tile.lrs / 4 + 1, rdp.texture_tile.lrt / 4 + 1);
+        return;
+    }
+#endif
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     struct TextureHashmapNode *texture_node = rendering_state.textures[tile];
     uint32_t texture_id = texture_node ? texture_node->texture_id : 0;
@@ -2021,6 +2081,28 @@ static inline void *seg_addr(uintptr_t w1) {
 #define C0(pos, width) ((cmd->words.w0 >> (pos)) & ((1U << width) - 1))
 #define C1(pos, width) ((cmd->words.w1 >> (pos)) & ((1U << width) - 1))
 
+#ifdef IOS_O2R_SCENE_RUNTIME
+static void gfx_run_dl(Gfx *cmd);
+
+static void gfx_run_scene_dl(Gfx *cmd) {
+    struct RDP saved_rdp = rdp;
+    u32 geometry_mode = rsp.geometry_mode;
+    u16 scale_s = rsp.texture_scaling_factor.s;
+    u16 scale_t = rsp.texture_scaling_factor.t;
+    struct LoadedVertex vertices[sizeof(rsp.loaded_vertices) / sizeof(rsp.loaded_vertices[0])];
+    memcpy(vertices, rsp.loaded_vertices, sizeof(vertices));
+    gfx_flush();
+    gfx_run_dl(cmd + 1);
+    gfx_flush();
+    rdp = saved_rdp;
+    rdp.textures_changed[0] = rdp.textures_changed[1] = true;
+    rsp.geometry_mode = geometry_mode;
+    rsp.texture_scaling_factor.s = scale_s;
+    rsp.texture_scaling_factor.t = scale_t;
+    memcpy(rsp.loaded_vertices, vertices, sizeof(vertices));
+}
+#endif
+
 static void gfx_run_dl(Gfx* cmd) {
     int dummy = 0;
     for (;;) {
@@ -2080,7 +2162,15 @@ static void gfx_run_dl(Gfx* cmd) {
             case G_DL:
                 if (C0(16, 1) == 0) {
                     // Push return address
-                    gfx_run_dl((Gfx *)seg_addr(cmd->words.w1));
+                    Gfx *list = seg_addr(cmd->words.w1);
+#ifdef IOS_O2R_SCENE_RUNTIME
+                    if (list->words.w0 == ((u32)G_NOOP << 24)
+                        && list->words.w1 == WORLD_SCENE_GFX_TAG) {
+                        gfx_run_scene_dl(list);
+                        break;
+                    }
+#endif
+                    gfx_run_dl(list);
                 } else {
                     cmd = (Gfx *)seg_addr(cmd->words.w1);
                     --cmd; // increase after break

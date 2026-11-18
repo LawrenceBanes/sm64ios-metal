@@ -25,7 +25,7 @@ s32 world_coord_add(s64 origin, s32 local, s64 *world) {
     return 1;
 }
 
-#if defined(IOS_CONNECTED_WORLD_TEST)
+#if defined(IOS_CONNECTED_WORLD_TEST) || defined(IOS_O2R_SCENE_RUNTIME)
 
 #include <math.h>
 #include <stdlib.h>
@@ -197,6 +197,7 @@ enum WorldRegionResult world_region_register(const struct WorldRegionDesc *desc)
     info.id = desc->id;
     info.renderList = desc->renderList;
     info.owner = desc->owner;
+    info.externallyManaged = desc->externallyManaged;
     info.neighborCount = desc->neighborCount;
     memcpy(info.neighbors, desc->neighbors, desc->neighborCount * sizeof(desc->neighbors[0]));
     info.triangleCount = desc->triangleCount;
@@ -352,6 +353,7 @@ enum WorldRegionResult world_region_update(struct WorldPoint player, u32 maxStep
     u64 unloadDistance = loadDistance + prefetchDistance + CELL_SIZE;
     for (i = 0; i < sRegionCount; i++) {
         struct WorldRegionInfo *info = &sRegions[i].info;
+        if (info->externallyManaged) continue;
         u64 dx = outside(player.x, info->min.x, info->max.x);
         u64 dz = outside(player.z, info->min.z, info->max.z);
         if (dx <= loadDistance && dz <= loadDistance) world_region_activate(info->id);
@@ -361,11 +363,11 @@ enum WorldRegionResult world_region_update(struct WorldPoint player, u32 maxStep
     for (i = 0; i < sRegionCount; i++) {
         const struct WorldRegionInfo *info = &sRegions[i].info;
         u32 neighbor;
-        if (outside(player.x, info->min.x, info->max.x) != 0
+        if (info->externallyManaged || outside(player.x, info->min.x, info->max.x) != 0
             || outside(player.z, info->min.z, info->max.z) != 0) continue;
         for (neighbor = 0; neighbor < info->neighborCount; neighbor++) {
             struct WorldRegionSlot *slot = find_slot(info->neighbors[neighbor]);
-            if (slot != NULL) {
+            if (slot != NULL && !slot->info.externallyManaged) {
                 u32 index = (u32)(slot - sRegions);
                 keepNeighbor[index] = 1;
                 world_region_activate(slot->info.id);
@@ -374,6 +376,7 @@ enum WorldRegionResult world_region_update(struct WorldPoint player, u32 maxStep
     }
     for (i = 0; i < sRegionCount; i++) {
         struct WorldRegionInfo *info = &sRegions[i].info;
+        if (info->externallyManaged) continue;
         u64 dx = outside(player.x, info->min.x, info->max.x);
         u64 dz = outside(player.z, info->min.z, info->max.z);
         if (!keepNeighbor[i] && (dx > unloadDistance || dz > unloadDistance))

@@ -12,7 +12,7 @@ struct WorldPoint {
 s32 world_coord_to_s16(s64 world, s64 activeOrigin, s16 *local);
 s32 world_coord_add(s64 origin, s32 local, s64 *world);
 
-#if defined(IOS_CONNECTED_WORLD_TEST)
+#if defined(IOS_CONNECTED_WORLD_TEST) || defined(IOS_O2R_SCENE_RUNTIME)
 
 #define WORLD_REGION_MAX 16
 #define WORLD_REGION_MAX_VERTICES 16384
@@ -30,7 +30,7 @@ struct WorldRegionTriangle {
     s16 force;
 };
 
-/* The render list must remain valid until world_region_reset and must already
+/* The render list must remain valid until region removal and must already
  * use active-area local coordinates matching the translated collision mesh.
  * The descriptor, collision vertices, and triangles are copied into owned
  * metadata and Surface storage during registration. */
@@ -45,6 +45,8 @@ struct WorldRegionDesc {
     u32 neighbors[WORLD_REGION_MAX_NEIGHBORS];
     u8 neighborCount;
     void *owner;
+    /* Keep membership under the caller's lifecycle, outside distance updates. */
+    s32 externallyManaged;
 };
 
 enum WorldRegionResult {
@@ -69,6 +71,7 @@ struct WorldRegionInfo {
     u32 neighbors[WORLD_REGION_MAX_NEIGHBORS];
     u8 neighborCount;
     void *owner;
+    s32 externallyManaged;
 };
 
 /* Reset at area teardown, before the static partition is cleared. The origin
