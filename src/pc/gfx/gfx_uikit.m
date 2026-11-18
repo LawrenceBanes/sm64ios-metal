@@ -228,7 +228,7 @@ static int sm64RenderDiagnosticMode;
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Gameplay test controls"
         message:@"Kart: press L nearby to enter or exit. Touch joystick left/right steers; push up for forward throttle or down for reverse. B accelerates and Z only brakes. Press A to hop; hold A with left/right steering after the hop to powerslide, then release A after charging for a mini-turbo. Use Spawn kart nearby in other levels. Luigi is a temporary green palette on Mario’s model, Yoshi remains available, and the portal surface is an animated fallback, not a linked world view."
         preferredStyle:UIAlertControllerStyleActionSheet];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cheats — Hat, Superman, Bowser" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cheats — Hat, Flight, Bowser, SuperSlide" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self dismissViewControllerAnimated:YES completion:^{ [self showCheats]; }];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {

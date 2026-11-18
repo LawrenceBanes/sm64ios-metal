@@ -24,6 +24,7 @@
 #include "main.h"
 #include "mario.h"
 #include "mario_hat.h"
+#include "mario_superslide.h"
 #include "mario_actions_airborne.h"
 #include "mario_actions_automatic.h"
 #include "mario_actions_cutscene.h"
@@ -3255,6 +3256,9 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         if (playground_step(gMarioState)) inLoop = FALSE;
 #endif
         while (inLoop) {
+#ifdef IOS_BUILD
+            mario_superslide_update(gMarioState);
+#endif
 #ifdef IOS_HAT_MOVEMENT
             if (gMarioState->action == ACT_IOS_HAT_THROW) {
                 mario_hat_execute_throw(gMarioState);
@@ -3365,6 +3369,7 @@ void init_mario(void) {
 #ifdef IOS_BUILD
     sPlaygroundFlying = false;
     sPlaygroundBowser = false;
+    mario_superslide_reset();
 #endif
     Vec3s capPos;
     struct Object *capObject;

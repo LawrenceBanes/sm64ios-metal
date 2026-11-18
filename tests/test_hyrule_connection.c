@@ -33,7 +33,21 @@
 void world_region_reset(struct WorldPoint origin) { (void)origin; }
 #endif
 
-struct CheatList Cheats;
+#include "game/mario_superslide.h"
+#include "game/level_update.h"
+struct Area *gCurrentArea;
+struct WarpDest sWarpDest;
+struct WarpTransition gWarpTransition;
+s16 sDelayedWarpOp;
+
+s16 __wrap_set_mario_animation(struct MarioState *m, s32 animation) { return 0; }
+u32 __wrap_set_mario_action(struct MarioState *m, u32 action, u32 arg) {
+    m->action = action;
+    return TRUE;
+}
+void __wrap_play_sound(s32 sound, f32 *position) {}
+void __wrap_align_with_floor(struct MarioState *m) {}
+
 
 s32 gSurfacesAllocated;
 u32 gGlobalTimer;
@@ -190,6 +204,34 @@ static void flight_collision_checks(void) {
     puts("Flight stock air step: ascent, floor contact and crest rail collision passed");
 }
 
+static void superslide_collision_checks(void) {
+    struct MarioState m;
+    static struct Area area;
+    static struct Controller controller;
+    gCurrentArea = &area;
+    cheats_playground_set(CHEAT_SUPERSLIDE, CHEAT_SUPERSLIDE);
+    cheats_set_superslide_speed(300);
+    for (int direction = -1; direction <= 1; direction += 2) {
+        start_mario(&m, -8180, 1850, HYRULE_CONNECTION_Z);
+        m.controller = &controller;
+        m.health = 0x880;
+        m.waterLevel = -11000;
+        m.action = ACT_IOS_SUPERSLIDE;
+        m.forwardVel = 300;
+        m.faceAngle[1] = direction < 0 ? 0 : -0x8000;
+        m.intendedYaw = m.faceAngle[1];
+        for (int tick = 0; tick < 12 && m.action == ACT_IOS_SUPERSLIDE; ++tick) {
+            mario_act_superslide(&m);
+            assert(fabsf(m.pos[2] - HYRULE_CONNECTION_Z) < 720);
+            assert(fabsf(m.pos[1] - m.floorHeight) < 2);
+        }
+        assert(m.action == ACT_BACKWARD_AIR_KB);
+    }
+    cheats_playground_set(CHEAT_SUPERSLIDE, 0);
+    gCurrentArea = NULL;
+    puts("SuperSlide actual crest collision at speed 300: both rails contain player and trigger knockback");
+}
+
 static void check_frame_transform(void) {
     Mat4 matrix;
     Vec3f origin = { HYRULE_CONNECTION_X, HYRULE_CONNECTION_Y, HYRULE_CONNECTION_Z };
@@ -225,6 +267,7 @@ int main(void) {
         jump_across_crest(1, side);
     }
     flight_collision_checks();
+    superslide_collision_checks();
     puts("Castle and field inlet: both directions, both walkway edges, rail contacts, and crest jump landings passed");
     gMarioState = NULL;
     gCurrentObject = gMarioObject = NULL;

@@ -7,6 +7,7 @@
 
 #import "CheatsViewController.h"
 #import "src/pc/cheats.h"
+#include <math.h>
 
 @implementation CheatsViewController
 
@@ -125,9 +126,9 @@
         initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
 }
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return 3; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return 5; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @"Flight: stick steers, A rises, Z descends. Release the stick to coast. Bowser prototype uses native idle, walk and airborne animations, slower ground movement and Mario collision. Flight and Bowser suspend during warps, death, swimming and scripted actions. Settings last for this session.";
+    return @"Flight: stick steers, A rises, Z descends. Release the stick to coast. Bowser prototype uses native idle, walk and airborne animations, slower ground movement and Mario collision. Flight and Bowser suspend during warps, death, swimming and scripted actions. SuperSlide: running Z+B slide kick or B during a ground pound. A combos out; B rolls out on ground or drops from a wall. Flight, Bowser and an active hat projectile take priority. Settings last for this session.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
@@ -140,16 +141,32 @@
         hat.accessibilityLabel = @"Mario’s hat";
         [hat addTarget:self action:@selector(hatChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = hat;
+    } else if (path.row == 4) {
+        cell.textLabel.text = [NSString stringWithFormat:@"Slide cap %u", cheats_superslide_speed()];
+        UISlider *speed = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 160, 44)];
+        speed.minimumValue = 30;
+        speed.maximumValue = 300;
+        speed.value = cheats_superslide_speed();
+        speed.accessibilityLabel = @"SuperSlide speed cap";
+        speed.accessibilityValue = [NSString stringWithFormat:@"%u", cheats_superslide_speed()];
+        [speed addTarget:self action:@selector(slideSpeedChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = speed;
     } else {
-        cell.textLabel.text = path.row == 1 ? @"Superman flight" : @"Bowser prototype";
+        cell.textLabel.text = path.row == 1 ? @"Superman flight" : path.row == 2 ? @"Bowser prototype" : @"SuperSlide";
         UISwitch *toggle = [[UISwitch alloc] init];
-        toggle.tag = path.row == 1 ? CHEAT_FLIGHT : CHEAT_BOWSER;
+        toggle.tag = path.row == 1 ? CHEAT_FLIGHT : path.row == 2 ? CHEAT_BOWSER : CHEAT_SUPERSLIDE;
         toggle.on = (settings & toggle.tag) != 0;
         toggle.accessibilityLabel = cell.textLabel.text;
         [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
     }
     return cell;
+}
+- (void)slideSpeedChanged:(UISlider *)sender {
+    cheats_set_superslide_speed((unsigned)lroundf(sender.value));
+    sender.accessibilityValue = [NSString stringWithFormat:@"%u", cheats_superslide_speed()];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:4 inSection:0]];
+    cell.textLabel.text = [NSString stringWithFormat:@"Slide cap %u", cheats_superslide_speed()];
 }
 - (void)hatChanged:(UISegmentedControl *)sender {
     unsigned value = sender.selectedSegmentIndex == 1 ? CHEAT_HAT_ON

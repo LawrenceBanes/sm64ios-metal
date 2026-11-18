@@ -12,6 +12,7 @@
 #include "level_update.h"
 #include "mario.h"
 #include "mario_step.h"
+#include "mario_superslide.h"
 #include "save_file.h"
 #include "thread6.h"
 #ifdef BETTERCAMERA
@@ -2219,6 +2220,9 @@ s32 mario_execute_airborne_action(struct MarioState *m) {
         case ACT_THROWN_BACKWARD:      cancel = act_thrown_backward(m);      break;
         case ACT_FLYING_TRIPLE_JUMP:   cancel = act_flying_triple_jump(m);   break;
         case ACT_SLIDE_KICK:           cancel = act_slide_kick(m);           break;
+#ifdef IOS_BUILD
+        case ACT_IOS_SUPERSLIDE:       cancel = mario_act_superslide(m);     break;
+#endif
         case ACT_JUMP_KICK:            cancel = act_jump_kick(m);            break;
         case ACT_FLYING:               cancel = act_flying(m);               break;
         case ACT_RIDING_HOOT:          cancel = act_riding_hoot(m);          break;
