@@ -83,7 +83,7 @@ typedef struct ModCustomActionId ModCustomActionId;
 struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
 struct ModAction { Mod *owner; char *file; uint32_t id; int every_frame_ref; int gravity_ref; bool enabled; ModAction *next_global; ModAction *next_owned; };
 struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; uintptr_t script[5]; ModBehavior *next_global; ModBehavior *next_owned; };
-struct ModObject { struct Object *object; uint32_t token; Mod *owner; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
+struct ModObject { struct Object *object; Mod *owner; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
 struct ModModule { char *name; int value_ref; bool loading; ModModule *next; };
 struct ModRequest { int type; int index; int item_index; int64_t value; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
 struct DynosPack {
@@ -151,6 +151,16 @@ static ModBehavior *sBehaviors;
 static ModObject *sObjects;
 static uint32_t sNextBehaviorId = 1;
 static uint32_t sNextObjectToken = 1;
+/* Native and scripted actors both come from the fixed object pool. A Lua
+ * reference must never start referring to a new actor when a slot is reused. */
+typedef struct {
+    struct Object *object;
+    uint32_t token;
+    Mod *visibility_owner;
+    bool original_visible;
+    bool written_visible;
+} ObjectReference;
+static ObjectReference sObjectRefs[OBJECT_POOL_CAPACITY];
 static unsigned sHookFailures;
 static unsigned sCallbackDepth;
 static int sInstructionBudget;
@@ -521,11 +531,39 @@ static ModObject *find_object(struct Object *object) {
     return NULL;
 }
 
+static ObjectReference *object_reference(struct Object *object, bool create) {
+    ObjectReference *empty = NULL;
+    for (size_t i = 0; i < OBJECT_POOL_CAPACITY; ++i) {
+        ObjectReference *ref = &sObjectRefs[i];
+        if (ref->object == object) return ref;
+        if (!ref->object && !empty) empty = ref;
+    }
+    if (!create || !empty) return NULL;
+    *empty = (ObjectReference){ .object = object, .token = sNextObjectToken++ };
+    if (!sNextObjectToken) sNextObjectToken = 1;
+    return empty;
+}
+
 static bool object_reference_valid(const LuaUserdata *ud) {
     if (!ud || !ud->object) return false;
-    if (!ud->token) return true;
-    ModObject *entry = find_object(ud->object);
-    return entry && entry->token == ud->token;
+    ObjectReference *ref = object_reference(ud->object, false);
+    return ref && ref->token == ud->token &&
+           ref->object->activeFlags != ACTIVE_FLAG_DEACTIVATED;
+}
+
+static void restore_mod_visibility(Mod *owner) {
+    for (size_t i = 0; i < OBJECT_POOL_CAPACITY; ++i) {
+        ObjectReference *ref = &sObjectRefs[i];
+        if (ref->visibility_owner != owner) continue;
+        if (ref->object->activeFlags != ACTIVE_FLAG_DEACTIVATED) {
+            s16 *flags = &ref->object->header.gfx.node.flags;
+            if (((*flags & GRAPH_RENDER_ACTIVE) != 0) == ref->written_visible) {
+                if (ref->original_visible) *flags |= GRAPH_RENDER_ACTIVE;
+                else *flags &= ~GRAPH_RENDER_ACTIVE;
+            }
+        }
+        ref->visibility_owner = NULL;
+    }
 }
 
 static const BehaviorScript *object_behavior_script(struct Object *object) {
@@ -535,9 +573,10 @@ static const BehaviorScript *object_behavior_script(struct Object *object) {
 }
 
 static void push_object(lua_State *L, struct Object *object) {
+    ObjectReference *ref = object_reference(object, true);
+    if (!ref) { lua_pushnil(L); return; }
     LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
-    ModObject *entry = find_object(object);
-    *ud = (LuaUserdata){ .kind = LUA_UD_OBJECT, .object = object, .token = entry ? entry->token : 0 };
+    *ud = (LuaUserdata){ .kind = LUA_UD_OBJECT, .object = object, .token = ref->token };
     luaL_getmetatable(L, "sm64.mod.Object"); lua_setmetatable(L, -2);
 }
 
@@ -773,9 +812,17 @@ static bool object_number_set(struct Object *o, const char *key, lua_State *L, i
     return false;
 }
 
+static int object_equal(lua_State *L) {
+    const LuaUserdata *a = luaL_testudata(L, 1, "sm64.mod.Object");
+    const LuaUserdata *b = luaL_testudata(L, 2, "sm64.mod.Object");
+    lua_pushboolean(L, a && b && a->object == b->object && a->token == b->token);
+    return 1;
+}
+
 static int object_index(lua_State *L) {
-    struct Object *o = checked_object(L, 1);
-    LuaUserdata *ud = lua_touserdata(L, 1);
+    LuaUserdata *ud = luaL_checkudata(L, 1, "sm64.mod.Object");
+    if (!object_reference_valid(ud)) { lua_pushnil(L); return 1; }
+    struct Object *o = ud->object;
     const char *key = luaL_checkstring(L, 2);
     if (!strcmp(key, "header")) push_object_proxy(L, LUA_UD_OBJECT_HEADER, o, ud->token);
     else if (!strcmp(key, "parentObj") && o->parentObj) push_object(L, o->parentObj);
@@ -827,7 +874,17 @@ static int graph_node_newindex(lua_State *L) {
     if (strcmp(key, "flags")) return luaL_error(L, "GraphNode field '%s' is read-only or unsupported", key);
     lua_Integer flags = luaL_checkinteger(L, 3);
     if (flags < 0 || flags > UINT16_MAX) return luaL_argerror(L, 3, "graph flags must fit the engine's 16-bit field");
-    ud->object->header.gfx.node.flags = (s16)(uint16_t)flags;
+    s16 *native_flags = &ud->object->header.gfx.node.flags;
+    bool was_visible = (*native_flags & GRAPH_RENDER_ACTIVE) != 0;
+    bool visible = (flags & GRAPH_RENDER_ACTIVE) != 0;
+    if (sCurrentMod && was_visible != visible) {
+        ObjectReference *ref = object_reference(ud->object, false);
+        if (!ref->visibility_owner || was_visible != ref->written_visible)
+            ref->original_visible = was_visible;
+        ref->visibility_owner = visible == ref->original_visible ? NULL : sCurrentMod;
+        ref->written_visible = visible;
+    }
+    *native_flags = (s16)(uint16_t)flags;
     return 0;
 }
 
@@ -1086,11 +1143,9 @@ static int l_obj_get_next_with_same_behavior_id(lua_State *L) {
 
 static int l_obj_get_first(lua_State *L) {
     lua_Integer list_value = luaL_checkinteger(L, 1);
-    if (!gObjectLists || list_value < 0 || list_value >= NUM_OBJ_LISTS)
-    {
-        char message[128];
-        snprintf(message, sizeof(message), "obj_get_first received invalid object list %lld", (long long)list_value);
-        return luaL_error(L, "%s", message);
+    if (!gObjectLists || list_value < 0 || list_value >= NUM_OBJ_LISTS) {
+        lua_pushnil(L);
+        return 1;
     }
     int list = (int)list_value;
     struct Object *object = find_object_in_list(list, gObjectLists[list].next, NULL, NULL);
@@ -1136,7 +1191,7 @@ static int l_obj_mark_for_deletion(lua_State *L) {
 static ModObject *track_object(struct Object *object, ModBehavior *behavior, Mod *owner) {
     ModObject *record = calloc(1, sizeof(*record));
     if (!record) return NULL;
-    record->object = object; record->owner = owner; record->behavior = behavior; record->token = sNextObjectToken++;
+    record->object = object; record->owner = owner; record->behavior = behavior;
     record->enabled = true; record->next = sObjects; sObjects = record;
     return record;
 }
@@ -2116,6 +2171,10 @@ static void register_api(void) {
     register_metatable("sm64.mod.Vec3f", vector_index, vector_newindex);
     register_metatable("sm64.mod.Vec3s", vector_index, vector_newindex);
     register_metatable("sm64.mod.Object", object_index, object_newindex);
+    luaL_getmetatable(sLua, "sm64.mod.Object");
+    lua_pushcfunction(sLua, object_equal);
+    lua_setfield(sLua, -2, "__eq");
+    lua_pop(sLua, 1);
     register_metatable("sm64.mod.ObjectHeader", object_header_index, NULL);
     register_metatable("sm64.mod.ObjectGfx", object_gfx_index, NULL);
     register_metatable("sm64.mod.GraphNode", graph_node_index, graph_node_newindex);
@@ -2322,11 +2381,14 @@ static bool load_mod(Mod *mod) {
      * scripts stay available to require(), but are not startup entry points. */
     bool root_mod = !strcmp(mod->path, fs_get_write_path("mods"));
     bool found_main = root_mod;
+    size_t root_scripts = 0;
     for (size_t i = 0; i < mod->file_count; ++i) {
         const char *relative = relative_path(mod, mod->files[i]);
-        if (relative && !strcmp(relative, "main.lua")) found_main = true;
+        if (!relative || strchr(relative, '/')) continue;
+        ++root_scripts;
+        if (!strcmp(relative, "main.lua")) found_main = true;
     }
-    if (!found_main) {
+    if (!found_main && root_scripts != 1) {
         mod->load_failed = true;
         mod_log("warning", mod->name, "mod folder has no root-level main.lua");
         return false;
@@ -2372,6 +2434,7 @@ static void release_ref(int *ref) {
 static void unload_mod(Mod *mod) {
     if (!mod) return;
     remove_mod_popups(mod);
+    restore_mod_visibility(mod);
 
     /* Stop scripted objects before freeing the callbacks they reference. */
     ModObject **object_link = &sObjects;
@@ -2790,6 +2853,8 @@ void mod_runtime_behavior_tick(void) {
 
 void mod_runtime_object_unload(struct Object *obj) {
     if (!obj) return;
+    ObjectReference *ref = object_reference(obj, false);
+    if (ref) *ref = (ObjectReference){0};
     ModObject **link = &sObjects;
     while (*link) {
         ModObject *entry = *link;
@@ -2797,6 +2862,15 @@ void mod_runtime_object_unload(struct Object *obj) {
             *link = entry->next;
             free(entry);
         } else link = &entry->next;
+    }
+}
+
+void mod_runtime_clear_objects(void) {
+    memset(sObjectRefs, 0, sizeof(sObjectRefs));
+    while (sObjects) {
+        ModObject *next = sObjects->next;
+        free(sObjects);
+        sObjects = next;
     }
 }
 
@@ -3058,7 +3132,7 @@ void mod_runtime_shutdown(void) {
     sMods = NULL; sHooks = NULL; sActions = NULL; sBehaviors = NULL;
     sNextBehaviorId = 1; sNextObjectToken = 1;
     while (sDynosPacks) { DynosPack *next = sDynosPacks->next; free(sDynosPacks); sDynosPacks = next; }
-    while (sObjects) { ModObject *next = sObjects->next; free(sObjects); sObjects = next; }
+    mod_runtime_clear_objects();
     pthread_mutex_lock(&sRequestMutex);
     while (sRequestHead) {
         ModRequest *next = sRequestHead->next;

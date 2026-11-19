@@ -32,6 +32,7 @@ bool mod_runtime_mario_gravity(struct MarioState *m);
 void mod_runtime_hud_render(void);
 void mod_runtime_level_init(int type, int level, int area, int node, int arg);
 void mod_runtime_object_unload(struct Object *obj);
+void mod_runtime_clear_objects(void);
 
 /* Called by the Lua-backed behavior bytecode and exposed to Lua mods. */
 void mod_runtime_behavior_tick(void);

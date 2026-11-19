@@ -317,6 +317,7 @@ static void reset_game_state(void) {
     memset(sLastGraphSoundPosition, 0, sizeof(sLastGraphSoundPosition));
     gMarioState = &gMarioStates[0];
     gMarioState->marioObj = &sMarioObject;
+    sMarioObject.activeFlags = ACTIVE_FLAG_ACTIVE;
     gMarioState->controller = &sController;
     gMarioState->action = ACT_IDLE;
     sController.buttonPressed = A_BUTTON | D_JPAD;
@@ -386,6 +387,63 @@ int main(int argc, char **argv) {
         for (int i = 0; i < mod_runtime_mod_count(); ++i) {
             printf("external mod %s: %s\n", mod_runtime_mod_name(i),
                    mod_runtime_mod_enabled(i) ? "enabled" : "disabled");
+        }
+        mod_runtime_shutdown();
+        return 0;
+    }
+    if (argc == 4 && (!strcmp(argv[1], "--external-zip") || !strcmp(argv[1], "--possession-zip"))) {
+        bool possession = !strcmp(argv[1], "--possession-zip");
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        reset_game_state();
+        char installed[SYS_MAX_PATH], error[512] = {0};
+        if (!mod_runtime_init() ||
+            !mod_runtime_import_zip(argv[3], installed, sizeof(installed), error, sizeof(error))) {
+            fprintf(stderr, "ZIP import failed: %s\n", error);
+            return 1;
+        }
+        mod_runtime_update();
+        printf("Imported %s, startup %s\n", mod_runtime_mod_name(0), mod_runtime_mod_enabled(0) ? "passed" : "failed");
+        if (!mod_runtime_mod_enabled(0)) {
+            mod_runtime_shutdown();
+            return 1;
+        }
+        if (possession) {
+            append_test_object(OBJ_LIST_PLAYER, &sMarioObject, NULL, ACTIVE_FLAG_ACTIVE, 0);
+            sMarioObject.header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
+            sGoombas[0].oPosX = 80;
+            sGoombas[2].oPosX = 140;
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            sController.buttonPressed = 0;
+            gMarioState->forwardVel = 12;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(gMarioState->pos[0] == 80 && gMarioState->forwardVel == 24);
+            mod_runtime_hud_render();
+            assert(gModHudTestTextCount == 1);
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            assert(mod_runtime_set_enabled(0, false));
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            assert(mod_runtime_set_enabled(0, true));
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            mod_runtime_object_unload(&sGoombas[0]);
+            sGoombas[0].oPosX = 400;
+            sController.buttonPressed = 0;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            assert(gMarioState->pos[0] == 80);
+            puts("Original possession callback: button, actor selection, visibility, following, velocity, and release passed");
+        } else {
+            mod_runtime_before_mario_update(gMarioState);
+            mod_runtime_after_mario_update(gMarioState);
+            mod_runtime_hud_render();
         }
         mod_runtime_shutdown();
         return 0;

@@ -37,3 +37,12 @@ mkdir -p "$BUILD/real-mod"
 if [ -n "${MOD_EXTERNAL_ROOT:-}" ]; then
   "$BUILD/mod_runtime_test" --external-root "$MOD_EXTERNAL_ROOT"
 fi
+
+if [ -n "${MOD_EXTERNAL_ZIP:-}" ]; then
+  mkdir -p "$BUILD/external-zip"
+  "$BUILD/mod_runtime_test" --external-zip "$BUILD/external-zip" "$MOD_EXTERNAL_ZIP"
+fi
+if [ -n "${MOD_POSSESSION_ZIP:-}" ]; then
+  mkdir -p "$BUILD/possession-zip"
+  "$BUILD/mod_runtime_test" --possession-zip "$BUILD/possession-zip" "$MOD_POSSESSION_ZIP"
+fi
