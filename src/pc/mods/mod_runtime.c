@@ -28,6 +28,8 @@
 #include "game/area.h"
 #include "game/level_update.h"
 #include "game/mario.h"
+#include "game/mario_step.h"
+#include "game/mario_actions_submerged.h"
 #include "game/object_helpers.h"
 #include "game/object_list_processor.h"
 #include "game/print.h"
@@ -68,7 +70,7 @@ typedef struct ModCommand ModCommand;
 typedef struct DynosPack DynosPack;
 typedef struct ModCustomActionId ModCustomActionId;
 
-struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; ModHook *next_global; ModHook *next_owned; };
+struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
 struct ModAction { Mod *owner; char *file; uint32_t id; int every_frame_ref; int gravity_ref; bool enabled; ModAction *next_global; ModAction *next_owned; };
 struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; ModBehavior *next_global; ModBehavior *next_owned; };
 struct ModObject { struct Object *object; uint32_t token; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
@@ -742,7 +744,7 @@ static int l_hook_event(lua_State *L) {
     luaL_checktype(L, 2, LUA_TFUNCTION);
     if (event < 0 || event >= MOD_EVENT_COUNT) return luaL_error(L, "unknown CoopDX hook event id %d", event);
     if (event != HOOK_UPDATE && event != HOOK_MARIO_UPDATE && event != HOOK_BEFORE_MARIO_UPDATE
-        && event != HOOK_ON_SET_MARIO_ACTION && event != HOOK_ON_HUD_RENDER
+        && event != HOOK_ON_SET_MARIO_ACTION && event != HOOK_BEFORE_PHYS_STEP && event != HOOK_ON_HUD_RENDER
         && event != HOOK_ON_INTERACT && event != HOOK_ON_LEVEL_INIT && event != 30 && event != HOOK_ON_EXIT)
         return luaL_error(L, "CoopDX hook event %d is not supported by the current engine adapter", event);
     if (!sCurrentMod) return luaL_error(L, "hook_event must be called while loading a mod");
@@ -870,6 +872,33 @@ static int l_set_mario_action(lua_State *L) {
     uint32_t arg = (uint32_t)luaL_optinteger(L, 3, 0);
     uint32_t result = set_mario_action(m, action, arg);
     lua_pushinteger(L, result);
+    return 1;
+}
+
+static struct MarioState *checked_mario_argument(lua_State *L, int index) {
+    LuaUserdata *ud = luaL_checkudata(L, index, "sm64.mod.MarioState");
+    if (ud->kind != LUA_UD_MARIO) luaL_error(L, "expected a MarioState argument");
+    struct MarioState *m = current_mario();
+    if (!m) luaL_error(L, "Mario state is unavailable");
+    return m;
+}
+
+static int l_perform_ground_step(lua_State *L) {
+    struct MarioState *m = checked_mario_argument(L, 1);
+    lua_pushinteger(L, perform_ground_step(m));
+    return 1;
+}
+
+static int l_perform_air_step(lua_State *L) {
+    struct MarioState *m = checked_mario_argument(L, 1);
+    uint32_t step_arg = (uint32_t)luaL_optinteger(L, 2, 0);
+    lua_pushinteger(L, perform_air_step(m, step_arg));
+    return 1;
+}
+
+static int l_perform_water_step(lua_State *L) {
+    struct MarioState *m = checked_mario_argument(L, 1);
+    lua_pushinteger(L, perform_water_step(m));
     return 1;
 }
 
@@ -1243,6 +1272,7 @@ static int l_global_missing(lua_State *L) {
                  || !strncmp(name, "sound_", 6) || !strncmp(name, "sfx_", 4)
                  || !strncmp(name, "level_", 6) || !strncmp(name, "geo_", 4)
                  || !strncmp(name, "gfx_", 4) || !strncmp(name, "find_", 5)
+                 || !strncmp(name, "interact", 8)
                  || !strncmp(name, "load_", 5) || !strncmp(name, "save_", 5)
                  || !strncmp(name, "create_", 7) || !strncmp(name, "get_", 4)
                  || !strncmp(name, "ACT_", 4) || !strncmp(name, "INPUT_", 6)
@@ -1418,6 +1448,29 @@ static int load_mod_file(Mod *mod, const char *relative, bool return_module) {
     return 1;
 }
 
+/* CoopDX archives can ship alternate PUC Lua 5.3 chunks in the same mod,
+ * commonly with -32.lua and -64.lua suffixes. Upstream validates each chunk
+ * against the current process and skips a chunk built for the other pointer
+ * width while continuing to load the rest of that mod. Detect only the exact
+ * Lua 5.3 header here; other malformed or incompatible bytecode still reaches
+ * luaL_loadbufferx and is reported as a script failure. */
+static bool mod_script_targets_other_pointer_width(const char *path, unsigned *target_width) {
+    static const unsigned char lua53_header_prefix[] = {
+        0x1b, 'L', 'u', 'a', 0x53, 0x00, 0x19, 0x93, 0x0d, 0x0a, 0x1a, 0x0a
+    };
+    unsigned char header[14];
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    size_t count = fread(header, 1, sizeof(header), file);
+    fclose(file);
+    if (count != sizeof(header) || memcmp(header, lua53_header_prefix, sizeof(lua53_header_prefix)) != 0)
+        return false;
+    unsigned width = header[13]; /* sizeof(void *) in the Lua 5.3 bytecode header */
+    if ((width != 4 && width != 8) || width == sizeof(void *)) return false;
+    if (target_width) *target_width = width;
+    return true;
+}
+
 static void register_api_function(const char *name, lua_CFunction fn) {
     lua_pushcfunction(sLua, fn); lua_setglobal(sLua, name);
 }
@@ -1447,6 +1500,9 @@ static void register_api(void) {
     register_api_function("spawn_object", l_spawn_object);
     register_api_function("spawn_object_abs_with_rot", l_spawn_object_abs_with_rot);
     register_api_function("set_mario_action", l_set_mario_action);
+    register_api_function("perform_ground_step", l_perform_ground_step);
+    register_api_function("perform_air_step", l_perform_air_step);
+    register_api_function("perform_water_step", l_perform_water_step);
     register_api_function("mario_set_forward_vel", l_mario_set_forward_vel);
     register_api_function("set_mario_animation", l_set_mario_animation);
     register_api_function("require", l_mod_require);
@@ -1471,6 +1527,29 @@ static void register_api(void) {
     expose_int("HOOK_ON_INTERACT", HOOK_ON_INTERACT);
     expose_int("HOOK_ON_LEVEL_INIT", HOOK_ON_LEVEL_INIT);
     expose_int("HOOK_ON_EXIT", HOOK_ON_EXIT);
+
+    expose_int("STEP_TYPE_GROUND", MOD_RUNTIME_STEP_TYPE_GROUND);
+    expose_int("STEP_TYPE_AIR", MOD_RUNTIME_STEP_TYPE_AIR);
+    expose_int("STEP_TYPE_WATER", MOD_RUNTIME_STEP_TYPE_WATER);
+    expose_int("STEP_TYPE_HANG", MOD_RUNTIME_STEP_TYPE_HANG);
+    expose_int("GROUND_STEP_LEFT_GROUND", GROUND_STEP_LEFT_GROUND);
+    expose_int("GROUND_STEP_NONE", GROUND_STEP_NONE);
+    expose_int("GROUND_STEP_HIT_WALL", GROUND_STEP_HIT_WALL);
+    expose_int("GROUND_STEP_HIT_WALL_STOP_QSTEPS", GROUND_STEP_HIT_WALL_STOP_QSTEPS);
+    expose_int("GROUND_STEP_HIT_WALL_CONTINUE_QSTEPS", GROUND_STEP_HIT_WALL_CONTINUE_QSTEPS);
+    expose_int("AIR_STEP_CHECK_LEDGE_GRAB", AIR_STEP_CHECK_LEDGE_GRAB);
+    expose_int("AIR_STEP_CHECK_HANG", AIR_STEP_CHECK_HANG);
+    expose_int("AIR_STEP_NONE", AIR_STEP_NONE);
+    expose_int("AIR_STEP_LANDED", AIR_STEP_LANDED);
+    expose_int("AIR_STEP_HIT_WALL", AIR_STEP_HIT_WALL);
+    expose_int("AIR_STEP_GRABBED_LEDGE", AIR_STEP_GRABBED_LEDGE);
+    expose_int("AIR_STEP_GRABBED_CEILING", AIR_STEP_GRABBED_CEILING);
+    expose_int("AIR_STEP_HIT_LAVA_WALL", AIR_STEP_HIT_LAVA_WALL);
+    expose_int("WATER_STEP_NONE", WATER_STEP_NONE);
+    expose_int("WATER_STEP_HIT_FLOOR", WATER_STEP_HIT_FLOOR);
+    expose_int("WATER_STEP_HIT_CEILING", WATER_STEP_HIT_CEILING);
+    expose_int("WATER_STEP_CANCELLED", WATER_STEP_CANCELLED);
+    expose_int("WATER_STEP_HIT_WALL", WATER_STEP_HIT_WALL);
 
     expose_int("OBJ_LIST_PLAYER", OBJ_LIST_PLAYER); expose_int("OBJ_LIST_GENACTOR", OBJ_LIST_GENACTOR);
     expose_int("OBJ_LIST_PUSHABLE", OBJ_LIST_PUSHABLE); expose_int("OBJ_LIST_LEVEL", OBJ_LIST_LEVEL);
@@ -1568,6 +1647,16 @@ static bool load_mod(Mod *mod) {
     for (size_t i = 0; i < mod->file_count; ++i) {
         const char *relative = relative_path(mod, mod->files[i]);
         if (!relative || strchr(relative, '/')) continue;
+        char script_path[SYS_MAX_PATH];
+        unsigned target_width = 0;
+        int script_path_length = snprintf(script_path, sizeof(script_path), "%s/%s", mod->path, relative);
+        if (script_path_length > 0 && (size_t)script_path_length < sizeof(script_path) &&
+            mod_script_targets_other_pointer_width(script_path, &target_width)) {
+            mod_logf("warning", mod->name,
+                     "skipping %s: Lua 5.3 bytecode targets %u-bit pointers; this runtime uses %u-bit pointers",
+                     relative, target_width * 8, (unsigned)sizeof(void *) * 8);
+            continue;
+        }
         if (!load_mod_file(mod, relative, false)) {
             mod_log("error", mod->name, "startup script failed; discarding registrations created by this mod");
             unload_mod(mod);
@@ -1851,6 +1940,41 @@ void mod_runtime_update(void) {
 }
 void mod_runtime_before_mario_update(struct MarioState *m) { (void)m; call_event(HOOK_BEFORE_MARIO_UPDATE, 1, true, 0); }
 void mod_runtime_after_mario_update(struct MarioState *m) { (void)m; call_event(HOOK_MARIO_UPDATE, 1, true, 0); }
+
+bool mod_runtime_before_phys_step(struct MarioState *m, int step_type, uint32_t step_arg,
+                                  int32_t *step_result_override) {
+    if (!sLua || !m || !step_result_override) return false;
+    for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
+        if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_BEFORE_PHYS_STEP) continue;
+        push_mario(sLua);
+        lua_pushinteger(sLua, step_type);
+        lua_pushinteger(sLua, step_arg);
+        if (!call_ref(hook->owner, hook->file, hook->function_ref, "HOOK_BEFORE_PHYS_STEP", 3, 1)) {
+            hook->enabled = false;
+            release_ref(&hook->function_ref);
+            continue;
+        }
+        if (lua_isnil(sLua, -1)) {
+            lua_pop(sLua, 1);
+            continue;
+        }
+        int is_number = 0;
+        lua_Integer value = lua_tointegerx(sLua, -1, &is_number);
+        lua_pop(sLua, 1);
+        if (!is_number || value < INT32_MIN || value > INT32_MAX) {
+            if (!hook->invalid_output_reported) {
+                mod_logf("warning", hook->owner->name,
+                         "HOOK_BEFORE_PHYS_STEP must return an integer step result; ignoring invalid output from %s",
+                         hook->file);
+                hook->invalid_output_reported = true;
+            }
+            continue;
+        }
+        *step_result_override = (int32_t)value;
+        return true; /* CoopDX's HOOK_RETURN_ON_OUTPUT_SET stops after the first output. */
+    }
+    return false;
+}
 
 void mod_runtime_before_set_action(struct MarioState *m, uint32_t *action, uint32_t action_arg, bool *cancel) {
     (void)m;

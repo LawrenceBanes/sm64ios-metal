@@ -16,6 +16,7 @@
 #include "behavior_data.h"
 #include "level_table.h"
 #include "thread6.h"
+#include "pc/mods/mod_runtime.h"
 
 #define MIN_SWIM_STRENGTH 160
 #define MIN_SWIM_SPEED 16.0f
@@ -164,12 +165,17 @@ static void apply_water_current(struct MarioState *m, Vec3f step) {
     }
 }
 
-static u32 perform_water_step(struct MarioState *m) {
+u32 perform_water_step(struct MarioState *m) {
     UNUSED u32 unused;
     u32 stepResult;
     Vec3f nextPos;
     Vec3f step;
     struct Object *marioObj = m->marioObj;
+    s32 stepResultOverride;
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_WATER, 0, &stepResultOverride)) {
+        return (u32)stepResultOverride;
+    }
 
     vec3f_copy(step, m->vel);
 

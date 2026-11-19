@@ -31,3 +31,9 @@ printf '%s  %s\n' \
 mkdir -p "$BUILD/real-mod"
 "$BUILD/mod_runtime_test" --real-zip "$BUILD/real-mod" \
   "$ROOT/tests/mods/real/sm64coop-achievements-2.1.0.zip"
+
+# Point this at a private, already-extracted CoopDX mod root to inspect its
+# original startup scripts without adding third-party package files to tests/.
+if [ -n "${MOD_EXTERNAL_ROOT:-}" ]; then
+  "$BUILD/mod_runtime_test" --external-root "$MOD_EXTERNAL_ROOT"
+fi

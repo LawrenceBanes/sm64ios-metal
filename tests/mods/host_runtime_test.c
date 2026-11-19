@@ -148,6 +148,21 @@ u32 set_mario_action(struct MarioState *m, u32 action, u32 arg) {
     return TRUE;
 }
 
+s32 perform_ground_step(struct MarioState *m) {
+    assert(m == gMarioState);
+    return GROUND_STEP_HIT_WALL;
+}
+
+s32 perform_air_step(struct MarioState *m, u32 step_arg) {
+    assert(m == gMarioState);
+    return (s32)(100 + step_arg);
+}
+
+u32 perform_water_step(struct MarioState *m) {
+    assert(m == gMarioState);
+    return WATER_STEP_CANCELLED;
+}
+
 s16 set_mario_animation(struct MarioState *m, s32 id) { (void)m; return (s16)id; }
 
 struct Object *spawn_object(struct Object *parent, s32 model, const BehaviorScript *behavior) {
@@ -199,7 +214,56 @@ static void create_bytecode_fixture(const char *fixture_root) {
     lua_close(compiler);
 }
 
+static void write_bytecode_script(const char *path, const char *source, unsigned other_pointer_width) {
+    lua_State *compiler = luaL_newstate();
+    assert(compiler);
+    assert(luaL_loadstring(compiler, source) == LUA_OK);
+    FILE *file = fopen(path, "wb");
+    assert(file);
+    assert(lua_dump(compiler, bytecode_writer, file, 0) == 0);
+    assert(fclose(file) == 0);
+    lua_close(compiler);
+    if (other_pointer_width) {
+        file = fopen(path, "r+b");
+        assert(file);
+        assert(fseek(file, 13, SEEK_SET) == 0);
+        assert(fputc((int)other_pointer_width, file) != EOF);
+        assert(fclose(file) == 0);
+    }
+}
+
+static void create_architecture_variant_fixture(const char *fixture_root) {
+    char directory[SYS_MAX_PATH], path[SYS_MAX_PATH];
+    snprintf(directory, sizeof(directory), "%s/mods/07_architecture_variants", fixture_root);
+    assert(fs_sys_mkdir(directory));
+    snprintf(path, sizeof(path), "%s/main.lua", directory);
+    FILE *file = fopen(path, "wb");
+    assert(file);
+    assert(fputs("-- paired Lua 5.3 bytecode architecture fixture\n", file) >= 0);
+    assert(fclose(file) == 0);
+
+    bool is_64_bit = sizeof(void *) == 8;
+    snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "00-64.lua" : "00-32.lua");
+    write_bytecode_script(path, "gMarioState.numCoins = gMarioState.numCoins + 64", 0);
+    snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "01-32.lua" : "01-64.lua");
+    write_bytecode_script(path, "gMarioState.numCoins = gMarioState.numCoins + 1000", is_64_bit ? 4 : 8);
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--external-root") == 0) {
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        assert(fs_sys_mkdir(fs_writepath));
+        reset_game_state();
+        assert(mod_runtime_init());
+        printf("external mod inventory: %d\n", mod_runtime_mod_count());
+        mod_runtime_update();
+        for (int i = 0; i < mod_runtime_mod_count(); ++i) {
+            printf("external mod %s: %s\n", mod_runtime_mod_name(i),
+                   mod_runtime_mod_enabled(i) ? "enabled" : "disabled");
+        }
+        mod_runtime_shutdown();
+        return 0;
+    }
     if (argc == 4 && strcmp(argv[1], "--real-zip") == 0) {
         snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
         assert(fs_sys_mkdir(fs_writepath));
@@ -244,9 +308,10 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[1]);
     create_bytecode_fixture(argv[1]);
+    create_architecture_variant_fixture(argv[1]);
     reset_game_state();
     assert(mod_runtime_init());
-    assert(mod_runtime_mod_count() == 7);
+    assert(mod_runtime_mod_count() == 8);
     assert(mod_runtime_dynos_pack_count() == 1);
     assert(strcmp(mod_runtime_dynos_pack_name(0), "FixturePack") == 0);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "1 model bins · 2 texture assets") != NULL);
@@ -255,15 +320,18 @@ int main(int argc, char **argv) {
     assert(mod_runtime_mod_enabled(0));
 
     mod_runtime_update();
+    assert(mod_runtime_mod_enabled(7));
+    assert(gMarioState->numCoins == 178); /* Native-width bytecode runs; the alternate-width twin is skipped. */
     assert(!mod_runtime_mod_enabled(4));
-    assert(gMarioState->numCoins == 114); /* Relative modules, per-mod cache isolation, and coroutine budget. */
+    assert(mod_runtime_mod_enabled(2)); /* Missing API callback failure is isolated to that hook. */
+    assert(gMarioState->numCoins == 178); /* Relative modules, per-mod cache isolation, architecture skip, and coroutine budget. */
     assert(gMarioState->numLives == 111); /* Module and callback-relative require plus isolated failure. */
     assert(!mod_runtime_set_enabled(4, true)); /* Failed initialization was cleaned and remains disabled. */
     assert((gMarioState->action & ACT_ID_MASK) >= 0x1c0u);
     assert((gMarioState->action & ACT_ID_MASK) <= 0x1ffu);
 
     mod_runtime_update();
-    assert(gMarioState->numCoins == 128);
+    assert(gMarioState->numCoins == 192);
     assert(gMarioState->numLives == 111);
 
     mod_runtime_after_mario_update(gMarioState);
@@ -289,7 +357,7 @@ int main(int argc, char **argv) {
     assert(sSpawnedObject.oPosY == 4.0f);
     mod_runtime_update();
     assert(gMarioState->numStars == 4);
-    assert(gMarioState->numCoins == 142);
+    assert(gMarioState->numCoins == 206);
 
     assert(mod_runtime_set_enabled(0, false));
     assert(!mod_runtime_mod_enabled(0));
@@ -305,6 +373,28 @@ int main(int argc, char **argv) {
 
     assert(mod_runtime_set_enabled(0, true));
     assert(mod_runtime_mod_enabled(0));
+    int32_t step_result = -1;
+    int coins_before_step_hook = gMarioState->numCoins;
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_AIR, 55, &step_result));
+    assert(step_result == AIR_STEP_LANDED);
+    assert(gMarioState->numCoins == coins_before_step_hook + 1); /* First output stops later physics hooks. */
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_GROUND, 0, &step_result));
+    assert(step_result == GROUND_STEP_NONE);
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_WATER, 0, &step_result));
+    assert(step_result == WATER_STEP_CANCELLED);
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_HANG, 0, &step_result));
+    assert(step_result == 77);
+    assert(!mod_runtime_before_phys_step(gMarioState, 99, 0, &step_result));
+    assert(gMarioState->numCoins == coins_before_step_hook + 1);
+    gMarioState->health = 4660;
+    mod_runtime_update();
+    assert(gMarioState->health == GROUND_STEP_HIT_WALL);
+    gMarioState->health = 4661;
+    mod_runtime_update();
+    assert(gMarioState->health == 123);
+    gMarioState->health = 4662;
+    mod_runtime_update();
+    assert(gMarioState->health == WATER_STEP_CANCELLED);
     mod_runtime_shutdown();
     puts("mod runtime host regression checks passed");
     return 0;

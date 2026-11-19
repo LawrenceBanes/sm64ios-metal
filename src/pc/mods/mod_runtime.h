@@ -8,11 +8,21 @@
 struct MarioState;
 struct Object;
 
+enum {
+    MOD_RUNTIME_STEP_TYPE_GROUND = 1,
+    MOD_RUNTIME_STEP_TYPE_AIR = 2,
+    MOD_RUNTIME_STEP_TYPE_WATER = 3,
+    MOD_RUNTIME_STEP_TYPE_HANG = 4,
+};
+
 bool mod_runtime_init(void);
 void mod_runtime_shutdown(void);
 void mod_runtime_update(void);
 void mod_runtime_before_mario_update(struct MarioState *m);
 void mod_runtime_after_mario_update(struct MarioState *m);
+/* Returns true when a Lua hook supplies the physics step result override. */
+bool mod_runtime_before_phys_step(struct MarioState *m, int step_type, uint32_t step_arg,
+                                  int32_t *step_result_override);
 void mod_runtime_before_set_action(struct MarioState *m, uint32_t *action, uint32_t action_arg, bool *cancel);
 void mod_runtime_after_set_action(struct MarioState *m);
 void mod_runtime_on_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type, bool interacted);
