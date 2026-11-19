@@ -65,6 +65,7 @@
 #include "pc/fs/fs.h"
 #include "pc/configfile.h"
 #include "pc/mods/mod_resource.h"
+#include "pc/gfx/gfx_ios_diagnostics.h"
 #include "levels/scripts.h"
 #include "macro_preset_types.h"
 
@@ -317,6 +318,8 @@ static ModBehavior *sBehaviors;
 static ModAnimation *sAnimations;
 static ModTexture *sTextures;
 static DynosModel *sDynosModels;
+static DynosModel *sPlayerDynosModel;
+static uint64_t sPlayerDynosTraversalFrames;
 static uint32_t sNextDynosModelId = MOD_DYNOS_EXTENDED_MODEL_BASE;
 static size_t sDynosModelBytes;
 static size_t sAnimationCount;
@@ -388,7 +391,8 @@ static const bool sVanillaLevelIds[LEVEL_COUNT] = {
 #undef STUB_LEVEL
 #undef DEFINE_LEVEL
 
-enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP, MOD_REQUEST_MENU_VALUE };
+enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP,
+       MOD_REQUEST_MENU_VALUE, MOD_REQUEST_PLAYER_DYNOS_MODEL, MOD_REQUEST_PLAYER_NATIVE_MODEL };
 enum { MOD_MENU_BUTTON = 0, MOD_MENU_CHECKBOX = 1, MOD_MENU_SLIDER = 2 };
 
 static void mod_log(const char *level, const char *mod, const char *message) {
@@ -6973,6 +6977,12 @@ static void unload_mod(Mod *mod) {
     while (mod->models) {
         DynosModel *model = mod->models;
         mod->models = model->next_owned;
+        if (sPlayerDynosModel == model) {
+            sPlayerDynosModel = NULL;
+            sPlayerDynosTraversalFrames = 0;
+            if (gMarioState && gMarioState->marioObj && gLoadedGraphNodes && gLoadedGraphNodes[MODEL_MARIO])
+                gMarioState->marioObj->header.gfx.sharedChild = gLoadedGraphNodes[MODEL_MARIO];
+        }
         DynosModel **global_link = &sDynosModels;
         while (*global_link && *global_link != model) global_link = &(*global_link)->next_global;
         if (*global_link == model) *global_link = model->next_global;
@@ -7262,6 +7272,16 @@ bool mod_runtime_request_import_zip(const char *zip_path) {
     return enqueue_request(MOD_REQUEST_IMPORT_ZIP, 0, false, zip_path);
 }
 
+bool mod_runtime_request_player_dynos_model(const char *model_name) {
+    if (!model_name || !*model_name || strlen(model_name) >= MOD_MAX_NAME ||
+        !safe_relative_path(model_name) || strchr(model_name, '/')) return false;
+    return enqueue_request(MOD_REQUEST_PLAYER_DYNOS_MODEL, 0, false, model_name);
+}
+
+bool mod_runtime_request_player_native_model(void) {
+    return enqueue_request(MOD_REQUEST_PLAYER_NATIVE_MODEL, 0, false, NULL);
+}
+
 bool mod_runtime_request_menu_set_value(int mod_index, int item_index, int64_t value) {
     if (mod_index < 0 || item_index < 0) return false;
     ModRuntimeMenuItem item_info;
@@ -7351,12 +7371,47 @@ static void process_requests(void) {
                 if (index < mod_runtime_mod_count())
                     ok = mod_runtime_menu_set_value(index, request->item_index, request->value);
             }
+        } else if (request->type == MOD_REQUEST_PLAYER_DYNOS_MODEL) {
+            DynosModel *model = NULL;
+            for (DynosModel *at = sDynosModels; at; at = at->next_global) {
+                if (!strcmp(at->name, request->path) && at->owner && at->owner->enabled &&
+                    at->owner->loaded && gLoadedGraphNodes &&
+                    gLoadedGraphNodes[at->native_slot] == at->graph) {
+                    model = at;
+                    break;
+                }
+            }
+            if (model && gMarioState && gMarioState->marioObj) {
+                sPlayerDynosModel = model;
+                sPlayerDynosTraversalFrames = 0;
+                gMarioState->marioObj->header.gfx.sharedChild = model->graph;
+                mod_logf("info", model->owner->name,
+                         "selected registered DynOS actor %s for local Mario", model->name);
+                ok = true;
+            } else {
+                mod_log("warning", NULL,
+                        "requested local DynOS actor is not active; enable its mod and load its model first");
+            }
+        } else if (request->type == MOD_REQUEST_PLAYER_NATIVE_MODEL) {
+            sPlayerDynosModel = NULL;
+            sPlayerDynosTraversalFrames = 0;
+            if (gMarioState && gMarioState->marioObj && gLoadedGraphNodes && gLoadedGraphNodes[MODEL_MARIO]) {
+                gMarioState->marioObj->header.gfx.sharedChild = gLoadedGraphNodes[MODEL_MARIO];
+                ok = true;
+            }
+            if (ok) mod_log("info", NULL, "restored the native Mario model");
         }
         if (!ok && request->type != MOD_REQUEST_IMPORT_ZIP)
             mod_log("warning", NULL, "queued mod management request could not be applied");
         free(request->path); free(request);
     }
 }
+
+#ifdef MOD_RUNTIME_HOST_TEST
+void mod_runtime_host_process_requests(void) {
+    process_requests();
+}
+#endif
 
 void mod_runtime_update(void) {
     if (!sModsLoaded) {
@@ -7546,6 +7601,17 @@ void mod_runtime_hud_render_behind(void) {
 }
 
 void mod_runtime_object_render(struct Object *object) {
+    if (object && gMarioState && object == gMarioState->marioObj && sPlayerDynosModel && sPlayerDynosModel->owner &&
+        sPlayerDynosModel->owner->enabled && sPlayerDynosModel->owner->loaded &&
+        gLoadedGraphNodes &&
+        gLoadedGraphNodes[sPlayerDynosModel->native_slot] == sPlayerDynosModel->graph) {
+        object->header.gfx.sharedChild = sPlayerDynosModel->graph;
+#if defined(IOS_BUILD)
+        uint64_t traversals = ++sPlayerDynosTraversalFrames;
+        if (traversals == 1 || traversals % 120 == 0)
+            gfx_ios_diag_log("DynOS local actor attached at object render traversal=%llu extendedModel=%u", (unsigned long long)traversals, sPlayerDynosModel->extended_id);
+#endif
+    }
     if (!sLua || !object || !object_has_render_hook(object)) return;
     for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
         if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_ON_OBJECT_RENDER) continue;

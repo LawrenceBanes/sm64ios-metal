@@ -12,6 +12,8 @@
 #import "gfx_uikit.h"
 #include "game/mario.h"
 #include "game/ios_reality.h"
+#include "pc/mods/mod_runtime.h"
+#include "gfx_ios_diagnostics.h"
 #import "src/ios/CheatsViewController.h"
 #if TARGET_OS_IOS
 #import <Metal/Metal.h>
@@ -230,6 +232,18 @@ static int sm64RenderDiagnosticMode;
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cheats — Hat, Flight, Bowser, SuperSlide" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self dismissViewControllerAnimated:YES completion:^{ [self showCheats]; }];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Activate imported OMM Peach model" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        BOOL queued = mod_runtime_request_player_dynos_model("omm_peachy_geo");
+        gfx_ios_diag_log("DynOS Peach selection queued=%d model=omm_peachy_geo", queued);
+        [self appendStatus:queued ? @"Peach selection queued; import and enable OMM in Cheats / Play → Manage CoopDX mods first" : @"Could not queue Peach selection"];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Restore native Mario model" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        BOOL queued = mod_runtime_request_player_native_model();
+        gfx_ios_diag_log("DynOS native Mario model restore queued=%d", queued);
+        [self appendStatus:queued ? @"Native Mario model restore queued" : @"Could not queue model restore"];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Toggle Mario / temporary Luigi look" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;

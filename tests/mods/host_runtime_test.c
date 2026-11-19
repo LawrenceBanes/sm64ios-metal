@@ -1168,19 +1168,27 @@ int main(int argc, char **argv) {
             int peach_id = 0;
             assert(mod_runtime_host_load_dynos_model(0, "omm_peachy_geo", &peach_id,
                                                      model_error, sizeof(model_error)));
-            assert(peach_id >= 0x10000 && gLoadedGraphNodes[0xEC] != NULL);
+            assert(peach_id >= 0x10000);
+            int peach_native_model = -1;
+            for (int slot = 0; slot < 0x100; ++slot)
+                if (gLoadedGraphNodes[slot] && mod_runtime_extended_model_id(slot) == peach_id)
+                    peach_native_model = slot;
+            assert(peach_native_model >= 0);
+            gMarioState->marioObj = &sMarioObject;
             sMarioObject.header.gfx.sharedChild = gLoadedGraphNodes[0xE6];
+            assert(mod_runtime_request_player_dynos_model("omm_peachy_geo"));
+            mod_runtime_host_process_requests();
+            assert(sMarioObject.header.gfx.sharedChild == gLoadedGraphNodes[peach_native_model]);
             assert(mod_runtime_set_enabled(0, false));
             assert(sMarioObject.header.gfx.sharedChild == NULL);
-            for (int slot = 0xE6; slot <= 0xEC; ++slot)
-                assert(gLoadedGraphNodes[slot] == NULL);
+            for (int slot = 0xE6; slot <= 0xFF; ++slot) assert(gLoadedGraphNodes[slot] == NULL);
             assert(mod_runtime_set_enabled(0, true));
             for (int slot = 0xE6; slot <= 0xEB; ++slot)
                 assert(gLoadedGraphNodes[slot] != NULL);
             memset(model_error, 0, sizeof(model_error));
             assert(mod_runtime_host_load_dynos_model(0, "omm_peachy_geo", &peach_id,
                                                      model_error, sizeof(model_error)));
-            assert(gLoadedGraphNodes[0xEC] != NULL);
+            assert(peach_id >= 0x10000);
             printf("original OMM: six startup graphs and Peach model registered across disable/re-enable\n");
         }
         if (getenv("MOD_TEST_MIRROR_RENDER")) {
@@ -1354,6 +1362,20 @@ int main(int argc, char **argv) {
         assert(native_model >= 0);
 
         struct Object *actor = &sMarioObject;
+        gMarioState->marioObj = actor;
+        assert(mod_runtime_request_player_dynos_model(model_name));
+        mod_runtime_host_process_requests();
+        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[native_model]);
+        actor->header.gfx.sharedChild = NULL; /* Simulate a native model reset before object traversal. */
+        mod_runtime_object_render(actor);
+        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[native_model]);
+        struct GraphNode native_mario_graph = {0};
+        struct GraphNode *saved_mario_graph = gLoadedGraphNodes[MODEL_MARIO];
+        if (!saved_mario_graph) gLoadedGraphNodes[MODEL_MARIO] = &native_mario_graph;
+        assert(mod_runtime_request_player_native_model());
+        mod_runtime_host_process_requests();
+        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[MODEL_MARIO]);
+        gLoadedGraphNodes[MODEL_MARIO] = saved_mario_graph;
         struct GraphNodeObject saved_actor_gfx = actor->header.gfx;
         actor->header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
         actor->header.gfx.unk18 = 1;
