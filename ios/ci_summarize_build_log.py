@@ -8,11 +8,16 @@ import re
 
 SOURCE_ERROR = re.compile(r"(?:^|\s)([^\s:]+\.(?:c|cc|cpp|h|m|mm)):(\d+)(?::\d+)?:\s*(?:fatal )?error:")
 LINKER_SYMBOL = re.compile(r'^\s+["\']([A-Za-z0-9_.$@?]+)["\'],\s+referenced from:')
+COMPILE_UNIT = re.compile(r"(?:CompileC|CompileC\+\+|CompileObjectiveC|CompileObjectiveC\+\+)[^\n]*?(?:^|/)([^/\s]+\.(?:c|cc|cpp|m|mm))(?:\s|$)")
 
 
 def summarize(text: str) -> list[str]:
     summary = ["Full iPhoneOS game build: FAILED", "Raw Xcode output remains runner-local and is not published."]
+    compile_unit = None
     for line in text.splitlines():
+        unit_match = COMPILE_UNIT.search(line)
+        if unit_match:
+            compile_unit = Path(unit_match.group(1)).name
         match = SOURCE_ERROR.search(line)
         linker_symbol = LINKER_SYMBOL.match(line)
         if match:
@@ -42,7 +47,8 @@ def summarize(text: str) -> list[str]:
                 kind = "unknown type"
             elif "macro" in lowered:
                 kind = "macro expansion error"
-            summary.append(f"{filename}:{match.group(2)}: {kind}")
+            unit = f" (while compiling {compile_unit})" if compile_unit else ""
+            summary.append(f"{filename}:{match.group(2)}: {kind}{unit}")
         elif "Undefined symbols for architecture" in line:
             summary.append("arm64 linker: undefined symbols")
         elif linker_symbol:
