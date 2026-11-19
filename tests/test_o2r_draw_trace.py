@@ -136,7 +136,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual([e["order"] for e in report["draws"]], [0, 1, 2])
         self.assertEqual(first["geometry"]["vertex_ranges"],
                          [{"resource": VTX, "first": 1, "last": 3, "referenced_count": 3,
-                           "uv_scale_u0_16_at_load": (65535, 32768)}])
+                           "uv_scale_u0_16_at_load": (65535, 32768), "geometry_at_vertex_load": 0}])
         self.assertEqual(after_scroll["geometry"]["vertex_ranges"], first["geometry"]["vertex_ranges"])
         self.assertEqual(translucent["geometry"]["vertex_ranges"][0]["resource"], BAKED_VTX)
         self.assertEqual(after_scroll["primitive_count"], 2)

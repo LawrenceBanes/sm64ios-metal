@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 import json
 import math
@@ -14,9 +14,13 @@ import sys
 from zipfile import BadZipFile, ZipFile
 
 if __package__:
+    from . import fast3d_material, fast3d_pass_state, wsc_material_lowering
     from . import hyrule_importer as o2r
     from .o2r_inventory import archive_index
 else:
+    import fast3d_material
+    import fast3d_pass_state
+    import wsc_material_lowering
     import hyrule_importer as o2r
     from o2r_inventory import archive_index
 
@@ -218,9 +222,13 @@ class PassState:
 
 
 class DrawTracer:
-    def __init__(self, resources, scene, segments=None):
+    def __init__(self, resources, scene, segments=None, profile=None):
         self.resources, self.scene = resources, scene
         self.segments = segments or {}
+        self.profile = profile
+        self.generated = {}
+        self.generated_calls = Counter()
+        self.generated_uses = Counter()
         self.draws, self.issues = [], []
         self.decoded_lists, self.completed_lists, self.failed_lists = set(), set(), set()
         self.roots_seen = self.commands = 0
@@ -230,8 +238,39 @@ class DrawTracer:
                             "command": opcode, "status": error.kind, "reason": str(error)})
         error.reported = True
 
-    def trace_pass(self, room, pass_name, roots):
+    def command_source(self, path, offset):
+        source = {"display_list": path, "offset": offset}
+        if path in self.generated:
+            spec, _ = self.generated[path]
+            source.update(origin="reconstructed", source=spec.source)
+            if spec.helper:
+                source["helper"] = spec.helper
+        return source
+
+    def generated_list(self, pass_name, name, spec):
+        path = f"@generated/{pass_name}/{name}"
+        if path in self.resources.index:
+            raise TraceError("malformed", f"archive resource collides with reserved generated path: {path}")
+        if path not in self.generated:
+            parsed = o2r.parse_display_list(spec.body(), ">", path, max_instructions=MAX_LIST_COMMANDS)
+            base = parsed["instruction_start"]
+            self.generated[path] = (spec, {ins["offset"] - base: {**ins, "offset": ins["offset"] - base}
+                                           for ins in parsed["instructions"]})
+        return Reference(path)
+
+    def trace_pass(self, room, pass_name, roots, room_type=None):
+        if not roots:
+            return
         state = PassState(self.segments)
+        if self.profile:
+            prelude = self.profile.prelude(pass_name, room_type)
+            for segment, spec in prelude.bindings.items():
+                if segment in state.segments:
+                    raise TraceError("malformed", f"explicit segment {segment:02x} conflicts with generated pass binding")
+                state.segments[segment] = self.generated_list(pass_name, f"segment-{segment:02x}", spec)
+            for index, spec in enumerate(prelude.commands):
+                prelude_ref = self.generated_list(pass_name, f"prelude-{index}", spec)
+                self.walk(room, pass_name, state, prelude_ref, ())
         for path in roots:
             self.roots_seen += 1
             try:
@@ -250,14 +289,16 @@ class DrawTracer:
         if ref in stack:
             raise TraceError("malformed", f"display-list call cycle at {ref.path}+{ref.offset}")
         try:
-            listing = self.resources.read(ref.path, ("DisplayList",))
+            listing = (self.generated[ref.path][1] if ref.path in self.generated
+                       else self.resources.read(ref.path, ("DisplayList",)))
             if ref.offset not in listing:
                 raise TraceError("malformed", f"display-list address is not a packet boundary: {ref.path}+{ref.offset}")
         except TraceError as error:
             self.issue(room, pass_name, ref.path, ref.offset, "display_list", error)
             self.failed_lists.add(ref.path)
             raise
-        self.decoded_lists.add(ref.path)
+        if ref.path not in self.generated:
+            self.decoded_lists.add(ref.path)
         stack += (ref,)
         issues_at_entry = len(self.issues)
         for offset, ins in listing.items():
@@ -269,7 +310,8 @@ class DrawTracer:
             opcode, w0, w1 = ins["opcode"], ins["w0"], ins["w1"]
             if opcode == 0xDF:
                 if len(self.issues) == issues_at_entry:
-                    self.completed_lists.add(ref.path)
+                    if ref.path not in self.generated:
+                        self.completed_lists.add(ref.path)
                 return
             try:
                 if opcode in (0x31, 0xDE):
@@ -279,7 +321,11 @@ class DrawTracer:
                     if branch and opcode == 0x31:
                         raise TraceError("unsupported", "hashed tail branch is unsupported by the pinned handler")
                     target = self.resources.hashed(ins) if opcode == 0x31 else state.address(w1)
+                    if target.path in self.generated:
+                        self.generated_calls[target.path] += 1
                     self.walk(room, pass_name, state, target, stack)
+                    if target.path in self.generated:
+                        self.generated_uses[(room, pass_name, ref.path, ins["offset"], target.path)] += 1
                     if branch:
                         if len(self.issues) == issues_at_entry:
                             self.completed_lists.add(ref.path)
@@ -319,7 +365,7 @@ class DrawTracer:
             if rem or first + count > total:
                 raise TraceError("malformed", f"invalid vertex source window: {ref.path}+{ref.offset}")
             scale = (state.texture["s_scale"], state.texture["t_scale"]) if state.texture else None
-            state.vertices[end - count:end] = [(ref.path, first + i, scale) for i in range(count)]
+            state.vertices[end - count:end] = [(ref.path, first + i, scale, state.geometry & 0xE0000) for i in range(count)]
         elif opcode in (0x20, 0xFD):
             state.image = None
             ref = self.resources.hashed(ins) if opcode == 0x20 else state.address(w1)
@@ -344,7 +390,7 @@ class DrawTracer:
             state.combine = combiner(w0, w1)
         elif opcode in (0xF8, 0xF9, 0xFA, 0xFB):
             key = {0xF8: "fog", 0xF9: "blend", 0xFA: "primitive", 0xFB: "environment"}[opcode]
-            state.colors[key] = {"rgba": rgba(w1), "display_list": path, "offset": ins["offset"]}
+            state.colors[key] = {"rgba": rgba(w1), **self.command_source(path, ins["offset"])}
             if key == "primitive":
                 state.colors[key].update(min_lod=bits(w0, 8, 8), lod_fraction=bits(w0, 0, 8))
         elif opcode == 0xEE:
@@ -367,7 +413,7 @@ class DrawTracer:
             if lrs < uls or lrt < ult:
                 raise TraceError("unsupported", "tile bounds cross the 10.2 coordinate wrap")
             state.tiles[ins["tile"]]["bounds_10_2"] = [uls, ult, lrs, lrt]
-            state.tiles[ins["tile"]]["bounds_source"] = {"display_list": path, "offset": ins["offset"]}
+            state.tiles[ins["tile"]]["bounds_source"] = self.command_source(path, ins["offset"])
         elif opcode in (0xF0, 0xF3, 0xF4):
             self.load_texture(state, ins, path)
         else:
@@ -427,8 +473,7 @@ class DrawTracer:
         load.update(image=image, tmem_words=tmem, source_offset=image["offset"] + start, **provenance)
         state.loaded[tmem] = load
 
-    @staticmethod
-    def texture_input(state, number, missing, approximations, gaps):
+    def texture_input(self, state, number, missing, approximations, gaps):
         first = state.texture["tile"]
         # The reference forces both bindings to the base tile at higher LOD
         # bases. Retain that choice explicitly rather than reporting tile 8.
@@ -482,12 +527,23 @@ class DrawTracer:
             if len(covered) != count:
                 missing.add(f"tile {index} palette entries missing ({len(covered)}/{count})")
             lut = bits(state.other[1], 14, 2)
-            if lut not in (2, 3) or state.known[1] & 0xC000 != 0xC000:
-                missing.add(f"tile {index} TLUT interpretation unspecified or disabled")
+            lut_known = state.known[1] & 0xC000 == 0xC000
+            if not lut_known or lut not in (2, 3):
+                if self.profile and lut_known and lut == 0:
+                    # Both CI import routines in the pinned reference always
+                    # unpack 5551. Keep the disabled RDP TLUT setting visible.
+                    approximations.add("Fast3D CI decode uses RGBA5551 despite disabled RDP TLUT")
+                else:
+                    missing.add(f"tile {index} TLUT interpretation unspecified or disabled")
+            if self.profile and lut_known and lut == 3:
+                approximations.add("Fast3D CI decode uses RGBA5551 despite RDP IA88 TLUT")
             entry["palette"] = {"bank": tile["palette"] if count == 16 else None,
                                 "interpretation": {2: "rgba5551", 3: "ia88"}.get(lut),
                                 "first_entry": first_entry, "entry_count": count,
                                 "loaded_entries": len(covered), "sources": list(loads.values())}
+            if self.profile:
+                entry["palette"]["raw_tlut"] = lut if lut_known else None
+                entry["palette"]["reference_interpretation"] = "rgba5551"
         return entry
 
     def draw(self, room, pass_name, state, path, ins):
@@ -505,7 +561,7 @@ class DrawTracer:
             if not vertex:
                 missing.add(f"vertex slot {slot} unavailable")
             else:
-                source_ranges[vertex[0], vertex[2]].add(vertex[1])
+                source_ranges[vertex[0], vertex[2], vertex[3]].add(vertex[1])
 
         low, high = state.other
         if state.known[0] & 0xFFFF != 0xFFFF or state.known[1] & 0x30F000 != 0x30F000:
@@ -521,8 +577,11 @@ class DrawTracer:
             approximations.add("cycle selection is unknown; texture inputs are potential references")
         else:
             cycles = state.combine[:cycle_type + 1] if cycle_type in (0, 1) else []
-        used = mux_textures(cycles)
-        if cycle_type == 1:
+        syntactic = mux_textures(cycles)
+        blender = fast3d_material.reference_blender(low) if state.known[0] == 0xFFFFFFFF else None
+        material = fast3d_material.material_expression(cycles, cycle_type, blender and blender["alpha"])
+        used = material["texture_inputs"] if self.profile and material else syntactic
+        if cycle_type == 1 and not (self.profile and material):
             approximations.add("two-cycle mux selectors recorded; cycle aliasing and blend equations not evaluated")
             gaps.add("two-cycle combiner")
         elif cycle_type in (2, 3):
@@ -531,15 +590,26 @@ class DrawTracer:
             gaps.add("independent texture inputs")
         for name, selector, feature in (("environment", 5, "environment color is distinct from vertex tint"),
                                         ("primitive", 3, "primitive color or LOD constants")):
-            if uses_color(cycles, selector):
+            if (any(value.startswith(name + ".") for value in material["inputs"])
+                    if self.profile and material else uses_color(cycles, selector)):
                 gaps.add(feature)
                 if name not in state.colors:
                     missing.add(f"{name} combiner color absent")
+        if self.profile and material:
+            unresolved_inputs = {"combined.rgb", "combined.a", "key_center", "key_scale", "convert_k4", "convert_k5"}
+            for name in sorted(unresolved_inputs.intersection(material["inputs"])):
+                missing.add(f"active combiner input {name} is unavailable")
+            if "lod_fraction" in material["inputs"]:
+                missing.add("active combiner LOD fraction needs projected primitive evaluation")
+            if "primitive_lod_fraction" in material["inputs"] and "primitive" not in state.colors:
+                missing.add("primitive LOD fraction absent")
+            if low & 4 and state.primitive_depth is None:
+                missing.add("primitive depth value absent")
         if low & 3 or low & 4 or bits(low, 10, 2) == 3:
             gaps.add("alpha compare, decal depth or primitive depth")
         textures = []
         if used:
-            if any(scale is None for _, scale in source_ranges):
+            if any(scale is None for _, scale, _ in source_ranges):
                 missing.add("vertex UV scale not supplied at vertex load")
             if state.texture is None:
                 missing.add("texture command absent for selected combiner")
@@ -558,12 +628,13 @@ class DrawTracer:
             "primitive_count": len(words), "geometry": {
                 "mode": state.geometry, "known_mask": state.geometry_known,
                 "vertex_ranges": [{"resource": source, "first": min(values), "last": max(values),
-                                   "uv_scale_u0_16_at_load": scale,
+                                   "uv_scale_u0_16_at_load": scale, "geometry_at_vertex_load": geometry,
                                    "referenced_count": len(values)}
-                                  for (source, scale), values in sorted(source_ranges.items(),
-                                      key=lambda entry: (entry[0][0], entry[0][1] or (-1, -1)))]},
+                                  for (source, scale, geometry), values in sorted(source_ranges.items(),
+                                      key=lambda entry: (entry[0][0], entry[0][1] or (-1, -1), entry[0][2]))]},
             "textures": textures, "combiner": {"cycle_type": cycle_type, "selectors": state.combine,
-                                               "colors": dict(state.colors), "mux_texture_inputs": used},
+                                               "colors": dict(state.colors), "mux_texture_inputs": syntactic,
+                                               "effective": material},
             "render_state": {"other_mode_low": low, "other_mode_high": high, "known_masks": list(state.known),
                              "depth_test": bool((state.geometry & 1 or low & 4) and low & 0x10)
                              if state.known[0] & 0x14 == 0x14 and state.geometry_known & 1 else None,
@@ -572,7 +643,8 @@ class DrawTracer:
                              "primitive_depth": state.primitive_depth,
                              "alpha_compare": low & 3 if state.known[0] & 3 == 3 else None,
                              "force_blend": bool(low & 0x4000) if state.known[0] & 0x4000 else None,
-                             "blender_raw": low >> 16 if state.known[0] >> 16 == 0xFFFF else None},
+                             "blender_raw": low >> 16 if state.known[0] >> 16 == 0xFFFF else None,
+                             "reference_blender": blender},
             "status": "incomplete" if missing else "approximate" if approximations else "complete",
             "missing": sorted(missing), "approximations": sorted(approximations),
             "wsc2_gaps": sorted(gaps),
@@ -594,6 +666,8 @@ class DrawTracer:
                         raise
                     self.issue(room, None, room, None, "room_header", error)
                     continue
+                room_types = [command["gameplay_flags"] for command in commands if command["id"] == 8]
+                room_type = room_types[-1] if room_types else None
                 for command in commands:
                     if command["id"] != 10:
                         continue
@@ -606,19 +680,32 @@ class DrawTracer:
                     for pass_name in ("opaque", "translucent"):
                         roots = [entry[f"{pass_name}_display_list"] for entry in mesh["polygons"]
                                  if entry[f"{pass_name}_display_list"]]
-                        self.trace_pass(room, pass_name, roots)
+                        self.trace_pass(room, pass_name, roots, room_type)
         except TraceError as error:
             if not error.reported:
                 self.issue(None, None, self.scene, None, "scene_trace", error)
             budget_error = str(error) if error.kind == "limit" else None
         return {
-            "format": "fast3d-draw-state-trace", "version": 1, "scene": self.scene, "rooms": rooms,
+            "format": "fast3d-draw-state-trace", "version": 2, "scene": self.scene, "rooms": rooms,
+            "profile": {"name": "oot-ntsc10-kokiri-normal-room", "inputs": asdict(self.profile),
+                        "sources": [fast3d_pass_state.SCENE_ORDER, fast3d_pass_state.ROOM_DRAW],
+                        "scope": "independent room and pass snapshots; camera, lights, fog parameters and previous room memory are not evaluated"}
+            if self.profile else None,
+            "generated_lists": {path: {"source": spec.source, "helper": spec.helper,
+                                      "packets": [list(pair) for pair in spec.packets],
+                                      "called": self.generated_calls[path]}
+                                for path, (spec, _) in sorted(self.generated.items())},
+            "generated_calls": [{"room": room, "pass": pass_name, "caller": path, "offset": offset,
+                                 "target": target, "executions": count}
+                                for (room, pass_name, path, offset, target), count in sorted(self.generated_uses.items())],
             "ordering": "room-table order, then opaque and translucent source order within each room",
             "coverage": {"commands": self.commands, "mesh_roots_attempted": self.roots_seen,
                          "decoded_display_lists": sorted(self.decoded_lists),
                          "lists_completed_without_issue": sorted(self.completed_lists - self.failed_lists),
                          "lists_with_issues": sorted(self.failed_lists),
                          "draws": dict(sorted(Counter(draw["status"] for draw in self.draws).items())),
+                         "interpreted_state_resolved": sum(not draw["missing"] for draw in self.draws),
+                         "generated_segment_calls_resolved": sum(self.generated_uses.values()),
                          "issues": dict(sorted(Counter(issue["status"] for issue in self.issues).items())),
                          "wsc2_gaps": dict(sorted(Counter(gap for d in self.draws for gap in d["wsc2_gaps"]).items())),
                          "budget_error": budget_error},
@@ -626,12 +713,20 @@ class DrawTracer:
         }
 
 
-def trace_archive(archive_path, scene, segments=None):
+def trace_archive(archive_path, scene, segments=None, profile=None):
     archive_path = Path(archive_path)
     if archive_path.stat().st_size > MAX_ARCHIVE_FILE_BYTES:
         raise o2r.ImportFailure("archive file exceeds trace size limit")
     with ZipFile(archive_path) as archive:
-        return DrawTracer(ArchiveResources(archive), scene, segments).run()
+        if profile:
+            try:
+                with archive.open("version") as version:
+                    marker = version.read(len(fast3d_pass_state.NTSC_10) + 1)
+            except KeyError:
+                marker = b""
+            if marker != fast3d_pass_state.NTSC_10 or scene != fast3d_pass_state.KOKIRI_SCENE:
+                raise ValueError("the Kokiri reconstruction requires its exact scene and OoT NTSC 1.0 marker")
+        return DrawTracer(ArchiveResources(archive), scene, segments, profile).run()
 
 
 def main(argv=None):
@@ -640,6 +735,11 @@ def main(argv=None):
     parser.add_argument("scene", help="exact path of scene resource")
     parser.add_argument("--segment", action="append", default=[], metavar="ID=RESOURCE",
                         help="explicit alias for a segment, in hexadecimal")
+    parser.add_argument("--kokiri-context", nargs=4, type=int, metavar=("FRAME", "LAYER", "EVENT07", "DRAW_PARAM0"),
+                        help="use the pinned Kokiri pass model with explicit runtime scenario inputs (EVENT07 0 or 1)")
+    parser.add_argument("--lower-wsc2", action="store_true", help="classify each draw against WSC2")
+    parser.add_argument("--wsc2-filter", choices=("point", "bilerp"),
+                        help="known inherited WSC2 filtering for the comparison")
     parser.add_argument("--output", required=True, type=Path, help="write the metadata trace to this local file")
     args = parser.parse_args(argv)
     try:
@@ -653,7 +753,15 @@ def main(argv=None):
             if not 0 <= key < 16 or key in segments or not path:
                 raise ValueError(f"invalid or duplicate segment binding: {binding}")
             segments[key] = Reference(o2r.safe_archive_path(path))
-        report = trace_archive(args.archive, o2r.safe_archive_path(args.scene), segments)
+        profile = None
+        if args.kokiri_context is not None:
+            frame, layer, event07, draw_param0 = args.kokiri_context
+            if event07 not in (0, 1):
+                raise ValueError("EVENT07 must be 0 or 1")
+            profile = fast3d_pass_state.KokiriInputs(frame, layer, bool(event07), draw_param0)
+        report = trace_archive(args.archive, o2r.safe_archive_path(args.scene), segments, profile)
+        if args.lower_wsc2 or args.wsc2_filter:
+            wsc_material_lowering.lower_report(report, {None: None, "point": 0, "bilerp": 2}[args.wsc2_filter])
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", encoding="utf-8", newline="\n") as stream:
             json.dump(report, stream, indent=2, sort_keys=True, allow_nan=False)
@@ -664,6 +772,8 @@ def main(argv=None):
     print(f"{len(report['rooms'])} rooms, {len(coverage['decoded_display_lists'])} decoded lists, "
           f"{len(coverage['lists_completed_without_issue'])} completed without issues")
     print("Draws", coverage["draws"], "Issues", coverage["issues"])
+    if "wsc2" in report:
+        print("WSC2 feasibility", report["wsc2"]["classifications"])
     for feature, count in coverage["wsc2_gaps"].items():
         print(f"  WSC2 gap: {feature} ({count} draw records)")
     return int(bool(report["issues"] or coverage["draws"].get("incomplete") or not report["draws"]))
