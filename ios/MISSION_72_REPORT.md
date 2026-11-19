@@ -6,7 +6,7 @@
 
 Implementation branch: `mission-72-fast3d-compat`  
 Starting commit: `93a8f67be79dee48f2b67013c7fdc8bcf70853db`  
-Implementation commit: `27f201214973bf579b1619976a135f550876720e`
+Implementation commit: `2bb532c4cb4d9c6ff2dc17b8aaed51b506c5c90b`
 
 ## Changes
 
@@ -37,7 +37,7 @@ This is host-side authored-fixture evidence, not an authentic Nintendo scene con
 
 **PASS:** Pinned Fast3D tile/TLUT parity and pinned OoT pass-setup parity harnesses passed under ASan/UBSan using `/tmp/mission67h-upstream-audit`. Leak detection had to be disabled (`ASAN_OPTIONS=detect_leaks=0`) because LeakSanitizer aborts under this host's ptrace policy. The modified importer is Python; this is reference-harness sanitizer coverage, not sanitizer coverage of the Python parser.
 
-**BLOCKED:** `xcodebuild` is not installed. GitHub API access currently fails with DNS resolution for `api.github.com`; `gh workflow list` cannot retrieve workflows. No Actions run, private upload, IPA, or physical-device test was performed.
+**BLOCKED:** `xcodebuild` is not installed. Direct GitHub access from the shell fails DNS resolution for `github.com`/`api.github.com`; the isolated branch is not published (the connected GitHub repository API confirmed the branch is absent). The available GitHub connector has no workflow-dispatch operation. No Actions run, private upload, IPA, or physical-device test was performed.
 
 ## Boundaries and next step
 
