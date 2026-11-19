@@ -20,6 +20,10 @@
 #ifdef IOS_SCENE_DIAGNOSTIC
 extern const GeoLayout scene_diagnostic_geo[];
 
+static const Collision scene_external_empty_terrain[] = {
+    COL_INIT(), COL_VERTEX_INIT(0), COL_TRI_STOP(), COL_END(),
+};
+
 // Keep the developer menu usable even if the WSC2 package is missing.
 // The authored room's walkable surface sits 120 units above this safety floor.
 static const Collision scene_diagnostic_safety_floor[] = {
@@ -211,6 +215,15 @@ const LevelScript level_castle_grounds_entry[] = {
         WARP_NODE(0xF1, LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
         OBJECT(MODEL_NONE, 0, 40, 720, 0, 180, 0, SCENE_DIAGNOSTIC_NODE << 16, bhvInstantActiveWarp),
         TERRAIN(scene_diagnostic_safety_floor),
+        SET_BACKGROUND_MUSIC(0, SEQ_SOUND_PLAYER),
+        TERRAIN_TYPE(TERRAIN_STONE),
+    END_AREA(),
+
+    AREA(SCENE_EXTERNAL_AREA, scene_diagnostic_geo),
+        WARP_NODE(SCENE_DIAGNOSTIC_NODE, LEVEL_CASTLE_GROUNDS, SCENE_EXTERNAL_AREA, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
+        WARP_NODE(0xF1, LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, WARP_NO_CHECKPOINT),
+        OBJECT(MODEL_NONE, 0, 0, 0, 0, 0, 0, SCENE_DIAGNOSTIC_NODE << 16, bhvInstantActiveWarp),
+        TERRAIN(scene_external_empty_terrain),
         SET_BACKGROUND_MUSIC(0, SEQ_SOUND_PLAYER),
         TERRAIN_TYPE(TERRAIN_STONE),
     END_AREA(),

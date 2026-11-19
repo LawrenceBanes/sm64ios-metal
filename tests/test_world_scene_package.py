@@ -16,6 +16,7 @@ from tools.hyrule_importer import write_rgba_png
 from tools.world_scene_package import decode_indexed_rgba, encode_scene
 from tools.scene_diagnostic import authored_wsc3_scene, generate
 from ios.validate_ipa import check_scene_diagnostic
+from test_o2r_to_wsc3 import export_fixture
 
 
 def room(room_id, x, neighbors, textured=False):
@@ -154,6 +155,10 @@ class ScenePackageTest(unittest.TestCase):
                 for line in (fixture / "basepack.lst").read_text().splitlines():
                     local, member = line.split()
                     self.assertEqual(Path(local).read_bytes(), archive.read(member))
+            imported = export_fixture(work)
+            (work / "scenes/4100.wsc").write_bytes((imported / "scenes/4100.wsc").read_bytes())
+            for path in (imported / "gfx/scenes").glob("*.png"):
+                (work / "gfx/scenes" / path.name).write_bytes(path.read_bytes())
             executable = work / "scene-test"
             sources = ["tests/test_world_scene_package.c", "src/engine/world_scene_file.c",
                        "src/engine/world_scene.c", "src/engine/world_region.c", "src/engine/surface_collision.c",

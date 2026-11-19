@@ -410,6 +410,12 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
         fprintf(stderr, "Scene package %u requires WSC3 render support\n", id);
         goto fail;
     }
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (id == SCENE_EXTERNAL_PACKAGE && !materialFormat) {
+        fprintf(stderr, "External scene slot requires a WSC3 package\n");
+        goto fail;
+    }
+#endif
     if (!magic || (!legacy && !materialFormat && memcmp(magic, "WSC2", 4)) || fileId != id || reader.failed
         || rooms == 0 || rooms > WORLD_REGION_MAX || entrances == 0
         || entrances > WORLD_SCENE_MAX_ENTRANCES || exits > WORLD_SCENE_MAX_EXITS) goto fail;

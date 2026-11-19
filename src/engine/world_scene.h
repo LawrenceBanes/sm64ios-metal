@@ -113,6 +113,9 @@ enum WorldSceneResult world_scene_update_residency(struct WorldSceneRuntime *run
                                                    struct WorldPoint player,
                                                    u32 maxStep,
                                                    u32 prefetchDistance);
+/* Track a player's room when the caller has already made the full scene
+ * resident. Does not change render or collision registration. */
+void world_scene_track_room(struct WorldSceneRuntime *runtime, struct WorldPoint player);
 void world_scene_close(struct WorldSceneRuntime *runtime);
 u32 world_scene_active_id(const struct WorldSceneRuntime *runtime);
 u32 world_scene_current_room(const struct WorldSceneRuntime *runtime);

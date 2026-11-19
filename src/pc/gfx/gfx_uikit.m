@@ -290,6 +290,12 @@ static int sm64RenderDiagnosticMode;
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_WSC3);
     }]];
+    NSString *externalTitle = area_scene_package_id() == SCENE_EXTERNAL_PACKAGE ?
+        @"Leave Local WSC3 Scene" : @"Load Local WSC3 Scene";
+    [menu addAction:[UIAlertAction actionWithTitle:externalTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL);
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Probe WSC2 failed-load recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD);

@@ -13,6 +13,8 @@ SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PAR
 struct NumTimesCalled gNumCalls;
 struct Object *gCurrentObject;
 struct Object *gMarioObject;
+static struct MarioState test_mario;
+struct MarioState *gMarioState = &test_mario;
 s16 gCheckingSurfaceCollisionsForCamera;
 s16 gFindFloorIncludeSurfaceIntangible;
 s32 gNumFindFloorMisses;
@@ -25,7 +27,7 @@ static struct Object inactive_object;
 static bool base_terrain_loaded;
 
 void load_area_terrain(s16 index, s16 *data, s8 *rooms, s16 *macroObjects) {
-    assert((index == 1 || index == SCENE_DIAGNOSTIC_AREA || index == SCENE_DIAGNOSTIC_WSC3_AREA) && data && !rooms && !macroObjects);
+    assert(index > 0 && index <= SCENE_EXTERNAL_AREA && data && !rooms && !macroObjects);
     assert(world_region_count() == 0);
     base_terrain_loaded = true;
 }
@@ -36,7 +38,8 @@ void spawn_objects_from_info(s32 index, struct SpawnInfo *info) {
 }
 
 void unload_objects_from_area(s32 index, s32 area) {
-    assert(index == 0 && (area == 1 || area == SCENE_DIAGNOSTIC_AREA || area == SCENE_DIAGNOSTIC_WSC3_AREA) && world_region_count() == 1);
+    assert(index == 0 && area > 0 && area <= SCENE_EXTERNAL_AREA);
+    if (area != SCENE_EXTERNAL_AREA) assert(world_region_count() == 1);
 }
 
 void geo_call_global_function_nodes(struct GraphNode *node, s32 context) {
@@ -85,6 +88,7 @@ static unsigned triangles, textures;
 static bool check_materials;
 static bool check_diagnostic;
 static bool check_wsc3;
+static bool check_import;
 static unsigned wsc3_draws, bound_ids[2], bound_s[2], bound_t[2];
 static float wsc3_first_uv[4], wsc3_first_alpha;
 static unsigned translucent_triangles;
@@ -112,17 +116,22 @@ static bool depth_range(void) { return true; }
 static void toggle(bool enabled) { (void)enabled; }
 static void rectangle(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
 static void select_texture(int tile, u32 id) {
-    assert(tile >= 0 && tile <= (check_wsc3 ? 1 : 0) && id > 0);
+    assert(tile >= 0 && tile <= ((check_wsc3 || check_import) ? 1 : 0) && id > 0);
     bound_ids[tile] = id;
 }
 static void sampler(int tile, bool linear, u32 s, u32 t) {
-    assert(tile >= 0 && tile <= (check_wsc3 ? 1 : 0));
+    assert(tile >= 0 && tile <= ((check_wsc3 || check_import) ? 1 : 0));
     (void)linear;
     bound_s[tile] = s;
     bound_t[tile] = t;
 }
 static void upload(const u8 *rgba, int width, int height) {
-    if (check_wsc3) {
+    if (check_import) {
+        assert(width == 4 && height == 4);
+        const u8 ci_first[] = {255, 0, 0, 255, 0, 255, 0, 255};
+        const u8 rgba_first[] = {0, 0, 255, 255, 0, 0, 255, 255};
+        assert(memcmp(rgba, textures % 2 == 0 ? ci_first : rgba_first, 8) == 0);
+    } else if (check_wsc3) {
         assert(width == 16 && height == 16 && rgba);
     } else if (check_diagnostic) {
         assert(width == 16 && height == 16);
@@ -145,7 +154,7 @@ static void upload(const u8 *rgba, int width, int height) {
     textures++;
 }
 static void draw(float *data, size_t length, size_t count) {
-    assert(((check_diagnostic || check_wsc3) ? count > 0 : count == 1) && length > 0);
+    assert(((check_diagnostic || check_wsc3 || check_import) ? count > 0 : count == 1) && length > 0);
     for (size_t i = 0; i < length; ++i) assert(isfinite(data[i]));
     if (check_materials) {
         struct CCFeatures features;
@@ -165,6 +174,22 @@ static void draw(float *data, size_t length, size_t count) {
             assert(data[8] == 0 && fabsf(data[9] - 48.0f / 255.0f) < 1e-6f);
         } else {
             assert(triangles == 2 && data[4] == 1 && data[5] == 1 && data[6] == 1);
+            assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
+        }
+    }
+    if (check_import) {
+        struct CCFeatures features;
+        gfx_cc_get_features(rendering_state.shader_program->id, &features);
+        assert(features.scene_material && rendering_state.depth_test);
+        if (!features.scene_blend) {
+            assert(features.used_textures[0] && features.used_textures[1] && count == 2);
+            assert(bound_s[0] == G_TX_MIRROR && bound_t[0] == G_TX_CLAMP);
+            assert(bound_s[1] == G_TX_WRAP && bound_t[1] == G_TX_WRAP);
+            assert(fabsf(data[4] - (-32.0f / 128.0f)) < 1e-6f);
+            assert(fabsf(data[6] - (-48.0f / 128.0f)) < 1e-6f);
+            assert(fabsf(data[19] - 128.0f / 255.0f) < 1e-6f);
+        } else {
+            assert(!features.used_textures[0] && !features.used_textures[1] && count == 1);
             assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
         }
     }
@@ -383,6 +408,63 @@ static void check_wsc3_diagnostic(void) {
     check_wsc3 = false;
 }
 
+static void check_imported_scene(void) {
+    static struct GraphNodeRoot root;
+    static s16 terrain;
+    const float projection[4][4] = {
+        {0.001f, 0, 0, 0}, {0, 0.001f, 0, 0}, {0, -0.001f, 0, 0}, {0, 0, 0, 1},
+    };
+    gCurrLevelNum = LEVEL_CASTLE_GROUNDS;
+    gAreaData[SCENE_EXTERNAL_AREA] = (struct Area){.index = SCENE_EXTERNAL_AREA,
+        .unk04 = &root, .terrainData = &terrain};
+    check_import = true;
+    textures = 0;
+    assert(area_external_scene_available());
+    for (int visit = 0; visit < 2; ++visit) {
+        load_area(SCENE_EXTERNAL_AREA);
+        assert(area_scene_package_id() == SCENE_EXTERNAL_PACKAGE && world_region_count() == 2);
+        struct SpawnInfo spawn = {0};
+        assert(area_external_scene_spawn(&spawn));
+        assert(spawn.startPos[0] == -180 && spawn.startPos[1] == 16 && spawn.startPos[2] == 0);
+        for (int direction = -1; direction <= 1; direction += 2) {
+            for (int x = -180; x <= 180; x += 10) {
+                struct Surface *floor;
+                assert(find_floor(x * direction, 16, 0, &floor) == 0 && floor);
+                area_external_scene_track((f32[]){x * direction, 16, 0});
+                assert(world_region_count() == 2);
+            }
+        }
+        triangles = 0;
+        for (u32 i = 0; i < 2; ++i) {
+            struct WorldRegionInfo region;
+            assert(world_region_info_at(i, &region) && region.active && region.translucentList);
+            Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
+            frame[0].words.w1 = (uintptr_t)region.renderList;
+            frame[1].words.w1 = (uintptr_t)region.translucentList;
+            prepare_projection();
+            gfx_sp_matrix(G_MTX_PROJECTION | G_MTX_LOAD, (const int32_t *)projection);
+            gfx_run_dl(frame);
+        }
+        assert(triangles == 6 && textures == (unsigned)(visit + 1) * 2u);
+        unload_area();
+        assert(!world_region_count() && !area_external_scene_spawn(NULL));
+    }
+    const char *path = fs_get_write_path("scenes/4100.wsc");
+    FILE *file = fopen(path, "r+b");
+    assert(file && fputc('X', file) != EOF && fclose(file) == 0);
+    assert(area_external_scene_available());
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(!area_external_scene_spawn(NULL) && !world_region_count());
+    unload_area();
+
+    path = fs_get_write_path("scenes/4100.wsc");
+    assert(remove(path) == 0 && !area_external_scene_available());
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(!area_external_scene_spawn(NULL) && !world_region_count());
+    unload_area();
+    check_import = false;
+}
+
 int main(int argc, char **argv) {
     assert(argc == 3);
     const char *rodirs[] = { NULL };
@@ -428,6 +510,7 @@ int main(int argc, char **argv) {
     assert(fs_mount(argv[2]));
     check_bundled_diagnostic();
     check_wsc3_diagnostic();
+    check_imported_scene();
     recorder.supports_scene_materials = false;
     assert(world_scene_open(&runtime, SCENE_DIAGNOSTIC_WSC3_PACKAGE, 0, NULL) == WORLD_SCENE_PROVIDER_FAILED);
     assert(!world_region_count());

@@ -62,6 +62,7 @@ class ArchiveResources:
                 raise o2r.ImportFailure("resource path exceeds trace length limit")
             self.paths_by_hash[o2r.crc64_resource_path(path)].append(path)
         self.bytes_read = 0
+        self.body = lru_cache(maxsize=64)(self._body)
         self.read = lru_cache(maxsize=256)(self._read)
 
     def hashed(self, instruction, offset=0):
@@ -71,7 +72,7 @@ class ArchiveResources:
             raise TraceError("unresolved", f"hash {key} has {len(paths)} matching paths")
         return Reference(paths[0], offset)
 
-    def _read(self, path, expected):
+    def _body(self, path):
         if path not in self.index:
             raise TraceError("unresolved", f"resource path missing: {path}")
         info = self.index[path]
@@ -88,14 +89,22 @@ class ArchiveResources:
             raise TraceError("malformed", f"invalid resource header: {path}")
         if kind == "unknown":
             raise TraceError("unsupported", f"unrecognized resource type: {path}")
-        if kind not in expected:
-            raise TraceError("malformed", f"expected {'/'.join(expected)}, found {kind}: {path}")
         version = header["version"]
         if version != 0 and (kind != "Texture" or version != 1):
             raise TraceError("unsupported", f"{kind} resource version {version}: {path}")
 
         body = data[header["body_offset"]:]
         endian = "<" if header["endian"] == "little" else ">"
+        return kind, version, endian, body
+
+    def typed_body(self, path, expected):
+        kind, version, endian, body = self.body(path)
+        if kind not in expected:
+            raise TraceError("malformed", f"expected {'/'.join(expected)}, found {kind}: {path}")
+        return kind, version, endian, body
+
+    def _read(self, path, expected):
+        kind, version, endian, body = self.typed_body(path, expected)
         try:
             if kind == "DisplayList":
                 if not body:
@@ -222,10 +231,12 @@ class PassState:
 
 
 class DrawTracer:
-    def __init__(self, resources, scene, segments=None, profile=None):
+    def __init__(self, resources, scene, segments=None, profile=None, *, draw_sink=None, pass_preludes=None):
         self.resources, self.scene = resources, scene
         self.segments = segments or {}
         self.profile = profile
+        self.draw_sink = draw_sink
+        self.pass_preludes = pass_preludes or {}
         self.generated = {}
         self.generated_calls = Counter()
         self.generated_uses = Counter()
@@ -271,6 +282,11 @@ class DrawTracer:
             for index, spec in enumerate(prelude.commands):
                 prelude_ref = self.generated_list(pass_name, f"prelude-{index}", spec)
                 self.walk(room, pass_name, state, prelude_ref, ())
+        if pass_name in self.pass_preludes:
+            start_draws = len(self.draws)
+            self.walk(room, pass_name, state, Reference(self.pass_preludes[pass_name]), ())
+            if len(self.draws) != start_draws:
+                raise TraceError("unsupported", f"{pass_name} prelude must contain only state commands")
         for path in roots:
             self.roots_seen += 1
             try:
@@ -419,8 +435,7 @@ class DrawTracer:
         else:
             raise TraceError("unsupported", f"state or command 0x{opcode:02x} has no trace interpretation")
 
-    @staticmethod
-    def load_texture(state, ins, path):
+    def load_texture(self, state, ins, path):
         opcode, w0, w1 = ins["opcode"], ins["w0"], ins["w1"]
         tile = state.tiles[bits(w1, 24, 3)]
         if state.image is None or "tmem_words" not in tile:
@@ -471,6 +486,13 @@ class DrawTracer:
         else:
             load["approximation"] = "unscaled source range for replacement texture"
         load.update(image=image, tmem_words=tmem, source_offset=image["offset"] + start, **provenance)
+        if self.draw_sink is not None:
+            for base, prior in list(state.loaded.items()):
+                extent = prior.get("total_bytes", prior.get("height", 0) * prior.get("row_bytes", 0))
+                if base != tmem and base * 8 < tmem * 8 + length and tmem * 8 < base * 8 + extent:
+                    # Neither partially overwritten source can be sampled as
+                    # the original complete backing texture at the old base.
+                    del state.loaded[base]
         state.loaded[tmem] = load
 
     def texture_input(self, state, number, missing, approximations, gaps):
@@ -580,8 +602,9 @@ class DrawTracer:
         syntactic = mux_textures(cycles)
         blender = fast3d_material.reference_blender(low) if state.known[0] == 0xFFFFFFFF else None
         material = fast3d_material.material_expression(cycles, cycle_type, blender and blender["alpha"])
-        used = material["texture_inputs"] if self.profile and material else syntactic
-        if cycle_type == 1 and not (self.profile and material):
+        effective = self.profile or self.draw_sink is not None
+        used = material["texture_inputs"] if effective and material else syntactic
+        if cycle_type == 1 and not (effective and material):
             approximations.add("two-cycle mux selectors recorded; cycle aliasing and blend equations not evaluated")
             gaps.add("two-cycle combiner")
         elif cycle_type in (2, 3):
@@ -591,11 +614,11 @@ class DrawTracer:
         for name, selector, feature in (("environment", 5, "environment color is distinct from vertex tint"),
                                         ("primitive", 3, "primitive color or LOD constants")):
             if (any(value.startswith(name + ".") for value in material["inputs"])
-                    if self.profile and material else uses_color(cycles, selector)):
+                    if effective and material else uses_color(cycles, selector)):
                 gaps.add(feature)
                 if name not in state.colors:
                     missing.add(f"{name} combiner color absent")
-        if self.profile and material:
+        if effective and material:
             unresolved_inputs = {"combined.rgb", "combined.a", "key_center", "key_scale", "convert_k4", "convert_k5"}
             for name in sorted(unresolved_inputs.intersection(material["inputs"])):
                 missing.add(f"active combiner input {name} is unavailable")
@@ -649,6 +672,8 @@ class DrawTracer:
             "missing": sorted(missing), "approximations": sorted(approximations),
             "wsc2_gaps": sorted(gaps),
         })
+        if self.draw_sink is not None:
+            self.draw_sink(self.draws[-1], [state.vertices[i // 2] for i in packed], state.palette_entries)
 
     def run(self):
         budget_error = None

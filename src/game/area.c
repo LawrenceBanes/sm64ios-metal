@@ -11,6 +11,9 @@
 #include "scene_diagnostic.h"
 #ifdef IOS_SCENE_DIAGNOSTIC
 #include "engine/surface_collision.h"
+#include "surface_terrains.h"
+#include "pc/fs/fs.h"
+#include <math.h>
 #endif
 #if defined(IOS_CONNECTED_WORLD_TEST)
 #include "engine/world_region.h"
@@ -80,11 +83,65 @@ _Static_assert(SCENE_DIAGNOSTIC_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DI
                "WSC2 diagnostic package ID must match the Castle Grounds area key");
 _Static_assert(SCENE_DIAGNOSTIC_WSC3_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DIAGNOSTIC_WSC3_AREA),
                "WSC3 diagnostic package ID must match the Castle Grounds area key");
+_Static_assert(SCENE_EXTERNAL_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_EXTERNAL_AREA),
+               "External package ID must match its reserved Castle Grounds area");
+static struct WorldSceneDestination sExternalSpawn;
 #if defined(IOS_BUILD)
 #define SCENE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
 #else
 #define SCENE_DIAG_LOG(...) ((void)0)
 #endif
+
+bool area_external_scene_available(void) {
+    return fs_sys_file_exists(fs_get_write_path("scenes/4100.wsc"));
+}
+
+bool area_external_scene_spawn(struct SpawnInfo *spawn) {
+    if (area_scene_package_id() != SCENE_EXTERNAL_PACKAGE) return false;
+    if (spawn != NULL) {
+        spawn->startPos[0] = sExternalSpawn.position.x;
+        spawn->startPos[1] = sExternalSpawn.position.y;
+        spawn->startPos[2] = sExternalSpawn.position.z;
+        spawn->startAngle[1] = sExternalSpawn.yaw;
+    }
+    return true;
+}
+
+static bool external_spawn_has_clearance(struct WorldPoint point) {
+    static const s16 samples[][2] = {
+        {0, 0}, {-50, 0}, {50, 0}, {0, -50}, {0, 50},
+        {-35, -35}, {-35, 35}, {35, -35}, {35, 35},
+    };
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+        f32 x = point.x + samples[i][0], z = point.z + samples[i][1];
+        struct Surface *floor, *ceil;
+        f32 height = find_floor(x, point.y, z, &floor);
+        if (!floor || floor->type != SURFACE_DEFAULT || floor->normal.y < 0.707f
+            || point.y - height > 80 || height - point.y > 35 || height < -10000) return false;
+        f32 top = find_ceil(x, height, z, &ceil);
+        if (ceil && top < height + 180) return false;
+    }
+    f32 x = point.x, y = point.y, z = point.z;
+    if (f32_find_wall_collision(&x, &y, &z, 30, 50) != 0) return false;
+    x = point.x;
+    z = point.z;
+    return f32_find_wall_collision(&x, &y, &z, 150, 50) == 0;
+}
+
+void area_external_scene_track(const f32 *position) {
+    if (area_scene_package_id() != SCENE_EXTERNAL_PACKAGE
+        || !isfinite(position[0]) || !isfinite(position[1]) || !isfinite(position[2])
+        || position[0] < -32768 || position[0] > 32767
+        || position[1] < -32768 || position[1] > 32767
+        || position[2] < -32768 || position[2] > 32767) return;
+    struct WorldPoint player = {(s32)position[0], (s32)position[1], (s32)position[2]};
+    u32 previous = world_scene_current_room(&sAreaScene);
+    /* Keep this bounded package resident. Collision and rendering stay
+     * available even when a movement step can cross a narrow room. */
+    world_scene_track_room(&sAreaScene, player);
+    u32 current = world_scene_current_room(&sAreaScene);
+    if (current != previous) SCENE_DIAG_LOG("External WSC3 room %u -> %u", previous, current);
+}
 
 void scene_diagnostic_check_failed_load(void) {
     if (area_scene_package_id() != SCENE_DIAGNOSTIC_PACKAGE) {
@@ -116,8 +173,19 @@ static void load_area_scene(s32 index) {
      * original IDs. Entry 0 is the package's default room. */
     u32 sceneId = ((u32)gCurrLevelNum << 8) | (u32)index;
     world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
-    enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, NULL);
+    struct WorldSceneDestination destination;
+    enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, &destination);
 #ifdef IOS_SCENE_DIAGNOSTIC
+    if (sceneId == SCENE_EXTERNAL_PACKAGE) {
+        if (result == WORLD_SCENE_OK)
+            result = world_scene_update_residency(&sAreaScene, destination.position, UINT32_MAX, 0);
+        if (result == WORLD_SCENE_OK && !external_spawn_has_clearance(destination.position))
+            result = WORLD_SCENE_BAD_PACKAGE;
+        if (result == WORLD_SCENE_OK) sExternalSpawn = destination;
+        else world_scene_close(&sAreaScene);
+        SCENE_DIAG_LOG("External WSC3 load result=%d activeRooms=%u", result,
+                       world_scene_active_room_count(&sAreaScene));
+    }
     if (sceneId == SCENE_DIAGNOSTIC_PACKAGE || sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE) {
         struct Surface *floor;
         f32 height = find_floor(0, 40, 720, &floor);

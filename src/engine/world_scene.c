@@ -331,6 +331,19 @@ enum WorldSceneResult world_scene_update_residency(struct WorldSceneRuntime *run
     return WORLD_SCENE_OK;
 }
 
+void world_scene_track_room(struct WorldSceneRuntime *runtime, struct WorldPoint player) {
+    if (runtime == NULL || !runtime->isOpen) return;
+    const struct WorldScenePackage *package = &runtime->activePackage;
+    u32 current = room_index(package, runtime->currentRoomId);
+    if (current < package->roomCount && same_point_in_bounds(player, &package->rooms[current])) return;
+    for (u32 i = 0; i < package->roomCount; ++i) {
+        if (runtime->activeRooms[i] && same_point_in_bounds(player, &package->rooms[i])) {
+            runtime->currentRoomId = package->rooms[i].id;
+            return;
+        }
+    }
+}
+
 u32 world_scene_active_id(const struct WorldSceneRuntime *runtime) {
     return runtime != NULL && runtime->isOpen ? runtime->activePackage.id : 0;
 }

@@ -389,6 +389,9 @@ void init_mario_after_warp(void) {
         gPlayerSpawnInfos[0].startAngle[1] = spawnNode->object->oMoveAngleYaw;
         gPlayerSpawnInfos[0].startAngle[2] = 0;
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+        area_external_scene_spawn(&gPlayerSpawnInfos[0]);
+#endif
         if (marioSpawnType == MARIO_SPAWN_DOOR_WARP) {
             init_door_warp(&gPlayerSpawnInfos[0], sWarpDest.arg);
         }
@@ -500,6 +503,16 @@ void warp_area(void) {
             level_control_timer(TIMER_CONTROL_HIDE);
             unload_mario_area();
             load_area(sWarpDest.areaIdx);
+#ifdef IOS_SCENE_DIAGNOSTIC
+            if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS && sWarpDest.areaIdx == SCENE_EXTERNAL_AREA
+                && !area_external_scene_spawn(NULL)) {
+                gfx_ios_diag_log("External WSC3 rejected; returning to Castle Grounds");
+                gfx_ios_portal_status("Scene rejected. Check package, textures and default entrance in the log.");
+                unload_area();
+                sWarpDest.areaIdx = 1;
+                load_area(1);
+            }
+#endif
         }
 
         init_mario_after_warp();
@@ -1028,12 +1041,20 @@ static void apply_scene_diagnostic_request(void) {
     }
     if (request == SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD) {
         scene_diagnostic_check_failed_load();
-    } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA || request == SCENE_DIAGNOSTIC_TOGGLE_WSC3) {
+    } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA || request == SCENE_DIAGNOSTIC_TOGGLE_WSC3
+               || request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) {
         if (mario_ios_is_riding_yoshi(gMarioState) || mario_ios_is_driving_kart(gMarioState)) {
             gfx_ios_diag_log("WSC2 warp ignored: dismount before changing area");
             return;
         }
         s16 sceneArea = request == SCENE_DIAGNOSTIC_TOGGLE_WSC3 ? SCENE_DIAGNOSTIC_WSC3_AREA : SCENE_DIAGNOSTIC_AREA;
+        if (request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) {
+            sceneArea = SCENE_EXTERNAL_AREA;
+            if (gCurrentArea->index != sceneArea && !area_external_scene_available()) {
+                gfx_ios_portal_status("Install scenes/4100.wsc and its textures in Documents first.");
+                return;
+            }
+        }
         s16 destination = gCurrentArea->index == sceneArea ? 1 : sceneArea;
         initiate_warp(LEVEL_CASTLE_GROUNDS, destination, SCENE_DIAGNOSTIC_NODE, 0);
     }
@@ -1066,6 +1087,16 @@ s32 play_mode_normal(void) {
     area_update_objects();
     update_hud_values();
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (area_scene_package_id() == SCENE_EXTERNAL_PACKAGE) {
+        area_external_scene_track(gMarioState->pos);
+        if (gMarioState->pos[1] < -10000 && !gWarpTransition.isActive
+            && sDelayedWarpOp == WARP_OP_NONE && sWarpDest.type == WARP_TYPE_NOT_WARPING) {
+            gfx_ios_portal_status("Outside the imported scene. Returning to Castle Grounds.");
+            initiate_warp(LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, 0);
+        }
+    }
+#endif
     if (gCurrentArea != NULL) {
         update_camera(gCurrentArea->camera);
     }
