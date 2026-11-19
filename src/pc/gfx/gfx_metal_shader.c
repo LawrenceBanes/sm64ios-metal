@@ -117,7 +117,7 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
          (features->scene_blend && features->opt_texture_edge) ||
-         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | 15u)))) return false;
+         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_FOG | 15u)))) return false;
     if (!gfx_metal_get_vertex_layout(features, &vertex_layout)) return false;
     out[0] = '\0';
 
@@ -223,6 +223,8 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         if (features->opt_texture_edge)
             write_text(&w, "if(color.a<0.5) discard_fragment();\n");
         if (!features->scene_blend) write_text(&w, "color.a=1.0;\n");
+        if (features->opt_fog)
+            write_text(&w, "color=float4(mix(color.rgb,in.fog.rgb,in.fog.a),color.a);\n");
         write_text(&w, "return color; }\n");
         return w.ok;
     }

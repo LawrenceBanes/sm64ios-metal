@@ -1358,6 +1358,7 @@ static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
     if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
     if (material->texture[1].name[0]) shader |= SHADER_SCENE_TEX1;
     if (material->flags & WORLD_SCENE_CUTOUT) shader |= SHADER_SCENE_CUTOUT;
+    if (material->flags & WORLD_SCENE_FOG) shader |= SHADER_SCENE_FOG;
     bool blend = (material->flags & WORLD_SCENE_BLEND) != 0;
     if (blend) shader |= SHADER_SCENE_BLEND;
 
@@ -1448,6 +1449,17 @@ static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
         for (int tile = 0; tile < 2 && mat->texture[tile].name[0]; ++tile) {
             buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 0, vertex->u);
             buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 1, vertex->v);
+        }
+        if (mat->flags & WORLD_SCENE_FOG) {
+            float w = vertex->w;
+            if (fabsf(w) < 0.001f) w = 0.001f;
+            float winv = 1.0f / w;
+            if (winv < 0.0f) winv = 32767.0f;
+            float fogFactor = vertex->z * winv * mat->fogMultiplier + mat->fogOffset;
+            if (fogFactor < 0.0f) fogFactor = 0.0f;
+            if (fogFactor > 255.0f) fogFactor = 255.0f;
+            for (int c = 0; c < 3; ++c) buf_vbo[buf_vbo_len++] = mat->fogColor[c] / 255.0f;
+            buf_vbo[buf_vbo_len++] = fogFactor / 255.0f;
         }
         buf_vbo[buf_vbo_len++] = vertex->color.r / 255.0f;
         buf_vbo[buf_vbo_len++] = vertex->color.g / 255.0f;

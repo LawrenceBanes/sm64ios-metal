@@ -37,6 +37,7 @@ enum {
 #define SHADER_SCENE_TEX1 2u
 #define SHADER_SCENE_CUTOUT 4u
 #define SHADER_SCENE_BLEND 8u
+#define SHADER_SCENE_FOG 16u
 
 struct CCFeatures {
     uint8_t c[2][4];

@@ -5,6 +5,7 @@ void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
         *cc_features = (struct CCFeatures){
             .scene_material = true, .opt_alpha = true,
             .scene_blend = (shader_id & SHADER_SCENE_BLEND) != 0,
+            .opt_fog = (shader_id & SHADER_SCENE_FOG) != 0,
             .opt_texture_edge = (shader_id & SHADER_SCENE_CUTOUT) != 0,
             .used_textures = {(shader_id & SHADER_SCENE_TEX0) != 0, (shader_id & SHADER_SCENE_TEX1) != 0},
             .num_inputs = 3,

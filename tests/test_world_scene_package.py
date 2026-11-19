@@ -132,6 +132,18 @@ class ScenePackageTest(unittest.TestCase):
             subprocess.run([sys.executable, ROOT / "tools/world_scene_package.py", authored,
                             work / "scenes/21.wsc", "--texture-root", work], check=True)
             self.assertEqual((work / "scenes/21.wsc").read_bytes(), encode_scene(content))
+            fog_scene = copy.deepcopy(authored_wsc3_scene(25))
+            fog_scene["version"] = 4
+            fog_scene["indexed_textures"] = []
+            fog_room = fog_scene["rooms"][0]
+            fog_room["batches"] = [fog_room["batches"][0]]
+            fog_room["batches"][0]["material"]["fog"] = {
+                "multiplier": 128, "offset": 32, "color": [170, 187, 204, 255]}
+            (work / "scenes/25.wsc").write_bytes(encode_scene(fog_scene))
+            legacy_fog_scene = copy.deepcopy(fog_scene)
+            legacy_fog_scene["version"] = 3
+            with self.assertRaisesRegex(ValueError, "requires WSC4"):
+                encode_scene(legacy_fog_scene)
             bad = bytearray(encode_scene({**content, "id": 22}))
             # First room's first batch follows package/room headers, one
             # neighbor and one draw-state slot. Forge an out-of-range slot.

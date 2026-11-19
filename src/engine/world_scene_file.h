@@ -16,6 +16,7 @@
 enum WorldSceneMaterialFlags {
     WORLD_SCENE_DEPTH_TEST = 1, WORLD_SCENE_DEPTH_WRITE = 2,
     WORLD_SCENE_CUTOUT = 4, WORLD_SCENE_BACK_CULL = 8, WORLD_SCENE_BLEND = 16,
+    WORLD_SCENE_FOG = 32,
 };
 
 struct WorldSceneTexture {
@@ -29,6 +30,8 @@ struct WorldSceneMaterial {
     struct WorldSceneTexture texture[2];
     u8 flags, primitive[4], environment[4], alphaPeak;
     u16 alphaPeriod;
+    s16 fogMultiplier, fogOffset;
+    u8 fogColor[4];
 };
 
 bool gfx_supports_scene_materials(void);

@@ -58,7 +58,8 @@ def header(shared):
     return scene(*commands)
 
 
-def fixture(path, *, shared=False, fog=False, format_error=False, crop=None, transform=False):
+def fixture(path, *, shared=False, fog=False, incomplete_fog=False, lighting=False,
+            format_error=False, crop=None, transform=False):
     # The outer image border is red. A byte-exact crop of the inner rows
     # has blue pixels and a green bottom row, making stride mistakes visible.
     pixels = b"".join(b"\x07\xc1" if 2 <= x < 6 and y == 4 else b"\x00\x3f"
@@ -105,6 +106,12 @@ def fixture(path, *, shared=False, fog=False, format_error=False, crop=None, tra
                 packet(0xEF, 0x188000, 0x30), packet(0xD7, 2, 0xFFFF8000),
                 packet(0xFB, 0, 0xFFFFFF80),
                 packet(0xFC, (2 << 20) | (12 << 15), (1 << 28) | (1 << 15)),
+                *((packet(0xDB, 8 << 16, (128 << 16) | 32), packet(0xF8, 0, 0xAABBCCFF))
+                  if fog and not incomplete_fog else ()),
+                *((packet(0xFC, 0, (4 << 15) | (5 << 9)),) if lighting else ()),
+                *((packet(0xD9, 0x00FDFFFF, 0x00020000), packet(0xDB, 2 << 16, 24),
+                   ref(0x42, "workshop/light-directional", 0x0010060A),
+                   ref(0x42, "workshop/light-ambient", 0x0010090A)) if lighting else ()),
                 *(((packet(0xDA, 2, 0x08000001) if transform == "segmented"
                     else ref(0x36, "workshop/translate", 2)),) if transform else ()),
                 ref(0x32, vtx, 0x4008),
@@ -130,6 +137,11 @@ def fixture(path, *, shared=False, fog=False, format_error=False, crop=None, tra
             archive.writestr(room, scene(*commands))
         if shared:
             archive.writestr("workshop/collision", collision(quads))
+        if lighting:
+            archive.writestr("workshop/light-directional", resource(
+                "OBLB", bytes((128, 128, 128, 0, 128, 128, 128, 0, 0, 0, 129, 0))))
+            archive.writestr("workshop/light-ambient", resource(
+                "OBLB", bytes((32, 32, 32, 0, 32, 32, 32, 0, 0, 0, 0, 0))))
 
 
 def export_fixture(work, *, shared=False):
@@ -190,23 +202,28 @@ class ImportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "safe local floor"):
                 self.convert(path, {"collision_rooms": [0, 0, 1, 1]}, scale=Fraction(1, 10))
 
-    def test_unsupported_draw_fails_with_packet_provenance_and_no_export(self):
+    def test_fog_lowers_to_wsc4_with_runtime_coefficients(self):
         with TemporaryDirectory() as temp:
             work = Path(temp)
-            path = work / "unsupported.o2r"
+            path = work / "fog.o2r"
             fixture(path, fog=True)
             package, _, report = self.convert(path)
-            self.assertIsNone(package)
-            self.assertIn("fog", report["draw_issues"][0]["reason"])
-            self.assertEqual(report["draw_issues"][0]["display_list"], ROOMS[0] + "/opa")
-            self.assertIsInstance(report["draw_issues"][0]["offset"], int)
-            self.assertGreater(report["compatibility"]["draws"]["rejected"], 0)
-            self.assertTrue(any("fog" in reason for reason in report["compatibility"]["unsupported_features"]))
-            result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tools/o2r_to_wsc3.py"),
-                                     str(path), ROOT, str(work / "no-output")], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 2)
-            self.assertIn("fog", result.stderr)
-            self.assertFalse((work / "no-output").exists())
+            self.assertIsNotNone(package)
+            self.assertEqual(package[:4], b"WSC4")
+            self.assertEqual(report["compatibility"]["draws"]["rejected"], 0)
+            self.assertEqual(report["rooms"][0]["render_triangles"], 3)
+            self.assertIn(b"\x80\x00\x20\x00\xaa\xbb\xcc\xff", package)
+
+    def test_static_fast3d_lighting_is_evaluated_into_wsc3_shade(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "lighting.o2r"
+            fixture(path, lighting=True)
+            package, _, report = self.convert(path)
+            self.assertIsNotNone(package)
+            self.assertEqual(package[:4], b"WSC3")
+            self.assertEqual(report["compatibility"]["draws"]["rejected"], 0)
+            self.assertIn(bytes((128, 128, 128, 255)), package)
+            self.assertNotIn(bytes((200, 180, 160, 128)), package[:200])
 
     def test_explicit_pass_prelude_and_unresolved_segment(self):
         with TemporaryDirectory() as temp:
@@ -263,7 +280,7 @@ class ImportTest(unittest.TestCase):
     def test_rejected_dry_run_reports_geometry_and_still_checks_collision(self):
         with TemporaryDirectory() as temp:
             path = Path(temp) / "broken.o2r"
-            fixture(path, fog=True)
+            fixture(path, fog=True, incomplete_fog=True)
             code, report = self.dry_run(path)
             self.assertEqual((code, report["status"]), (2, "rejected"))
             self.assertIn("fog", report["draw_issues"][0]["reason"])

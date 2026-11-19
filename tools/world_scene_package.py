@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a WSC1, WSC2 or WSC3 package from original, authored scene JSON."""
+"""Write a WSC1–WSC4 package from original, authored scene JSON."""
 import argparse
 import json
 from pathlib import Path
@@ -100,7 +100,7 @@ def indexed_textures(scene):
         assets[name] = (width, height, decode_indexed_rgba(record))
     for room in scene["rooms"]:
         for batch in room.get("batches", [room]):
-            bindings = batch["material"].get("textures", []) if scene.get("version") == 3 else [batch.get("texture")]
+            bindings = batch["material"].get("textures", []) if scene.get("version") in (3, 4) else [batch.get("texture")]
             for binding in bindings:
                 width, height, name = texture_descriptor(binding)
                 if name in assets and assets[name][:2] != (width, height):
@@ -108,12 +108,16 @@ def indexed_textures(scene):
     return assets
 
 
-def encode_material(append, output, batch, draw_pass, triangles):
+def encode_material(append, output, batch, draw_pass, triangles, version):
     if set(batch) - {"material", "render_vertices", "pass"}:
         raise ValueError("unsupported WSC3 batch field")
     material = batch["material"]
     fields = {"depth_test", "depth_write", "cutout", "cull_back", "primitive", "environment",
               "alpha_period", "alpha_peak", "textures"}
+    if version == 4:
+        fields.add("fog")
+    elif "fog" in material:
+        raise ValueError("per-material camera-depth fog requires WSC4")
     if set(material) - fields:
         raise ValueError("unsupported WSC3 material field")
     translucent = draw_pass == "translucent"
@@ -126,6 +130,19 @@ def encode_material(append, output, batch, draw_pass, triangles):
         flags |= int(value) << i
     if translucent and flags & 4:
         raise ValueError("WSC3 cutout requires the opaque pass")
+    fog = material.get("fog")
+    if fog is not None:
+        if version != 4:
+            raise ValueError("per-material camera-depth fog requires WSC4")
+        if not isinstance(fog, dict) or set(fog) != {"multiplier", "offset", "color"}:
+            raise ValueError("fog requires multiplier, offset, and RGBA color")
+        multiplier = integer(fog["multiplier"], -32768, 32767, "fog multiplier")
+        fog_offset = integer(fog["offset"], -32768, 32767, "fog offset")
+        fog_color = vector(fog["color"], 0, 255, 4, "fog RGBA")
+        flags |= 32
+    elif version == 4:
+        multiplier = fog_offset = 0
+        fog_color = [0, 0, 0, 0]
     primitive = vector(material.get("primitive", [255] * 4), 0, 255, 4, "primitive RGBA")
     environment = vector(material.get("environment", [255, 255, 255, 0]), 0, 255, 4, "environment RGBA")
     period = integer(material.get("alpha_period", 0), 0, 65535, "environment alpha period")
@@ -152,6 +169,8 @@ def encode_material(append, output, batch, draw_pass, triangles):
         scroll = vector(binding.get("scroll", [0, 0]), -32768, 32767, 2, "UV scroll")
         append("<3H6hH", width, height, sampler, *scale, *origin, *scroll, len(name))
         output.extend(name)
+    if version == 4 and fog is not None:
+        append("<2h4B", multiplier, fog_offset, *fog_color)
 
 
 def encode_scene(scene):
@@ -162,8 +181,8 @@ def encode_scene(scene):
     entrance_ids = unique_records(entrances, "entrance ID")
     exits = array(scene.get("exits", []), 0, 4096, "exits")
     unique_records(exits, "exit ID")
-    version = integer(scene.get("version", 1), 1, 3, "scene version")
-    magic = (b"WSC1", b"WSC2", b"WSC3")[version - 1]
+    version = integer(scene.get("version", 1), 1, 4, "scene version")
+    magic = (b"WSC1", b"WSC2", b"WSC3", b"WSC4")[version - 1]
     output = bytearray(struct.pack("<4sI3H", magic, scene_id, len(rooms), len(entrances), len(exits)))
     bounds = {}
 
@@ -216,8 +235,8 @@ def encode_scene(scene):
                 raise ValueError("scene version 2 stores rendering in batches")
             batches = array(room["batches"], 1, 64, "batches")
             states = array(room.get("states", []), 0, 64, "draw-state slots")
-            if version == 3 and states:
-                raise ValueError("WSC3 stores draw state per material")
+            if version in (3, 4) and states:
+                raise ValueError("WSC3/WSC4 store draw state per material")
             append("<I6h5H", room["id"], *low, *high, len(neighbors), len(batches),
                    len(collision), len(triangles), len(states))
             for neighbor in neighbors:
@@ -235,8 +254,8 @@ def encode_scene(scene):
                 draw_pass = batch.get("pass", "opaque")
                 if draw_pass not in ("opaque", "translucent"):
                     raise ValueError("invalid scene render pass")
-                if version == 3:
-                    encode_material(append, output, batch, draw_pass, len(render) // 3)
+                if version in (3, 4):
+                    encode_material(append, output, batch, draw_pass, len(render) // 3, version)
                 else:
                     state = integer(batch.get("state", 0), 0, len(states), "draw-state slot")
                     width, height, texture = texture_descriptor(batch.get("texture"))

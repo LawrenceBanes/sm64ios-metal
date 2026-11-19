@@ -126,6 +126,15 @@ class ArchiveResources:
         return tuple(tuple(integers[row * 4 + col] + fractions[row * 4 + col] / 65536.0
                            for col in range(4)) for row in range(4))
 
+    def rsp_light(self, path, offset):
+        """Read the 12-byte Light_t prefix copied by the pinned F3DEX2 handler."""
+        kind, _, _, body = self.body(path)
+        if kind != "Blob" or offset < 0 or offset + 12 > len(body):
+            raise TraceError("malformed", f"MOVEMEM light is not a bounded 12-byte Blob record: {path}+{offset}")
+        raw = body[offset:offset + 12]
+        signed = lambda value: value - 256 if value >= 128 else value
+        return {"color": list(raw[:3]), "direction": [signed(value) for value in raw[8:11]]}
+
     def _read(self, path, expected):
         kind, version, endian, body = self.typed_body(path, expected)
         try:
@@ -256,6 +265,7 @@ class PassState:
         self.primitive_depth = None
         self.fog_factor = None
         self.num_directional_lights = None
+        self.lights = {}
         self.tainted = set()
         self.approximations = set()
         self.matrix_stack = [identity_matrix()]
@@ -428,7 +438,8 @@ class DrawTracer:
                 (ref.path, first + i, scale, state.geometry & 0xF0000, matrix,
                  json.dumps(state.fog_factor, sort_keys=True) if state.fog_factor is not None else None,
                  json.dumps(state.num_directional_lights, sort_keys=True)
-                 if state.num_directional_lights is not None else None) for i in range(count)]
+                 if state.num_directional_lights is not None else None,
+                 json.dumps(state.lights, sort_keys=True)) for i in range(count)]
         elif opcode in (0x20, 0xFD):
             state.image = None
             ref = self.resources.hashed(ins) if opcode == 0x20 else state.address(w1)
@@ -458,6 +469,18 @@ class DrawTracer:
                                                 **self.command_source(path, ins["offset"])}
             else:
                 raise TraceError("unsupported", f"MOVEWORD index 0x{index:02x} offset 0x{offset:04x} is not interpreted")
+        elif opcode in (0x42, 0xDC):
+            index = bits(w0, 0, 8)
+            offset = bits(w0, 8, 8) * 8
+            if index != 10 or offset < 48 or offset % 24:
+                raise TraceError("unsupported", f"MOVEMEM index {index} offset 0x{offset:04x} is not a directional/ambient light slot")
+            slot = offset // 24 - 2
+            if not 0 <= slot <= 7:
+                raise TraceError("unsupported", f"MOVEMEM light slot {slot} exceeds Fast3D bounds")
+            ref = self.resources.hashed(ins) if opcode == 0x42 else state.address(w1)
+            record = self.resources.rsp_light(ref.path, ref.offset)
+            record.update(self.command_source(path, ins["offset"]))
+            state.lights[slot] = record
         elif opcode == 0xD8:
             count, remainder = divmod(w1, 64)
             if remainder or count == 0 or count >= len(state.matrix_stack):
@@ -671,7 +694,7 @@ class DrawTracer:
             if not vertex:
                 missing.add(f"vertex slot {slot} unavailable")
             else:
-                source_ranges[vertex[0], vertex[2], vertex[3], vertex[4], vertex[5], vertex[6]].add(vertex[1])
+                source_ranges[vertex[0], vertex[2], vertex[3], vertex[4], vertex[5], vertex[6], vertex[7]].add(vertex[1])
 
         low, high = state.other
         if state.known[0] & 0xFFFF != 0xFFFF or state.known[1] & 0x30F000 != 0x30F000:
@@ -720,30 +743,49 @@ class DrawTracer:
             gaps.add("alpha compare, decal depth or primitive depth")
         fog_enabled = any(geometry & G_FOG for _, _, geometry, *_ in source_ranges)
         vertex_fog_factors = sorted({factor if factor is not None else "null"
-                                     for _, _, geometry, _, factor, _ in source_ranges if geometry & G_FOG})
+                                     for _, _, geometry, _, factor, _, _ in source_ranges if geometry & G_FOG})
         fog = {"enabled": fog_enabled,
                "vertex_factors": [json.loads(factor) for factor in vertex_fog_factors],
                "color": state.colors.get("fog") if fog_enabled else None,
                "depth_source": "runtime clip-space z/w" if fog_enabled else None}
         if fog_enabled:
-            gaps.add("camera-dependent fog")
+            gaps.add("per-material clip-depth fog (WSC4)")
+            if any(not (geometry & G_FOG) for _, _, geometry, _, _, _, _ in source_ranges):
+                missing.add("one draw mixes fog-enabled and fog-disabled vertex loads")
             if "null" in vertex_fog_factors:
                 missing.add("fog geometry mode is active but MOVEWORD fog coefficients are absent")
             if "fog" not in state.colors:
                 missing.add("fog geometry mode is active but fog color is absent")
-            approximations.add("fog coefficients and color traced; per-vertex factor requires runtime camera-space depth and is not lowered to WSC3")
+            if len(set(vertex_fog_factors) - {"null"}) > 1:
+                missing.add("one draw uses multiple fog coefficient states")
         vertex_light_counts = sorted({count if count is not None else "null"
-                                      for _, _, geometry, _, _, count in source_ranges if geometry & G_LIGHTING})
+                                      for _, _, geometry, _, _, count, _ in source_ranges if geometry & G_LIGHTING})
+        vertex_light_states = sorted({lights for _, _, geometry, _, _, _, lights in source_ranges
+                                      if geometry & G_LIGHTING})
         lighting = {"enabled": bool(vertex_light_counts),
-                    "directional_light_counts": [json.loads(count) for count in vertex_light_counts]}
-        if lighting["enabled"]:
+                    "shade_rgb_consumed": bool(material and "shade.rgb" in material.get("inputs", [])),
+                    "directional_light_counts": [json.loads(count) for count in vertex_light_counts],
+                    "light_records_at_vertex_load": [json.loads(lights) for lights in vertex_light_states]}
+        if lighting["enabled"] and lighting["shade_rgb_consumed"]:
             gaps.add("vertex lighting")
             if "null" in vertex_light_counts:
                 missing.add("lighting mode is active but MOVEWORD NUMLIGHT is absent")
-            approximations.add("lighting mode and light count traced; MOVEMEM light records and vertex normals are not lowered")
+            missing_lights = False
+            for count in vertex_light_counts:
+                if count == "null":
+                    continue
+                required = {str(index) for index in range(json.loads(count)["count"] + 1)}
+                if any(not required.issubset(json.loads(light_state)) for light_state in vertex_light_states):
+                    missing_lights = True
+            if missing_lights:
+                missing.add("lighting mode is active but directional or ambient MOVEMEM records are absent")
+            else:
+                gaps.add("static RSP vertex lighting baked into shade color")
+        elif lighting["enabled"]:
+            lighting["output_effect"] = "none; active combiner does not consume shade RGB"
         textures = []
         if used:
-            if any(scale is None for _, scale, _, _, _, _ in source_ranges):
+            if any(scale is None for _, scale, _, _, _, _, _ in source_ranges):
                 missing.add("vertex UV scale not supplied at vertex load")
             if state.texture is None:
                 missing.add("texture command absent for selected combiner")
@@ -766,13 +808,14 @@ class DrawTracer:
                                    "modelview_at_vertex_load": [list(row) for row in matrix],
                                    "fog_factor_at_vertex_load": json.loads(fog_factor) if fog_factor else None,
                                    "num_directional_lights_at_vertex_load": json.loads(num_lights) if num_lights else None,
+                                   "light_records_at_vertex_load": json.loads(lights),
                                    "referenced_count": len(values)}
-                                  for (source, scale, geometry, matrix, fog_factor, num_lights), values in sorted(source_ranges.items(),
+                                  for (source, scale, geometry, matrix, fog_factor, num_lights, lights), values in sorted(source_ranges.items(),
                                       key=lambda entry: (entry[0][0], entry[0][1] or (-1, -1), entry[0][2]))]},
             "textures": textures, "combiner": {"cycle_type": cycle_type, "selectors": state.combine,
                                                "colors": dict(state.colors), "mux_texture_inputs": syntactic,
                                                "effective": material},
-            "fog": fog, "lighting": lighting,
+                "fog": fog, "lighting": lighting,
             "render_state": {"other_mode_low": low, "other_mode_high": high, "known_masks": list(state.known),
                              "depth_test": bool((state.geometry & 1 or low & 4) and low & 0x10)
                              if state.known[0] & 0x14 == 0x14 and state.geometry_known & 1 else None,

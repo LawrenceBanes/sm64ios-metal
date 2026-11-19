@@ -78,10 +78,10 @@ def base(mode, *, textured=False):
             packet(0xFB, 0, 0x80FF407F), ref(0x32, VTX, 0x3006, 16))
 
 
-def fixture(*, fog=False, lighting=False):
+def fixture(*, fog=False, lighting=False, light_records=False):
     # Palette bank 3 is loaded after the full TLUT. Both units observe the
     # overwrite because the physical entries share the same TLUT.
-    return {
+    entries = {
         ROOT: scene((4, struct.pack(">I", 1) + text(ROOM) + bytes(8))),
         ROOM: scene((10, bytes((0, 0, 1, 0)) + text(OPA) + text(XLU))),
         VTX: resource("OVTX", struct.pack(">I", 4) + bytes(64)),
@@ -96,7 +96,10 @@ def fixture(*, fog=False, lighting=False):
                packet(0xDB, 8 << 16, (128 << 16) | 32),
                packet(0xF8, 0, 0xAABBCCFF)) if fog else ()),
             *((packet(0xD9, 0x00FDFFFF, 0x00020000),
-               packet(0xDB, 2 << 16, 24)) if lighting else ()),
+               packet(0xDB, 2 << 16, 24),
+               packet(0xFC, 0, (4 << 15) | (5 << 9))) if lighting else ()),
+            *((ref(0x42, "studio/light-directional", 0x0010060A),
+               ref(0x42, "studio/light-ambient", 0x0010090A)) if light_records else ()),
             *((ref(0x32, VTX, 0x3006, 16),) if fog or lighting else ()),
             ref(0x20, PAL8, (2 << 19) | 255), tile(7, 256, fmt=0, size=2),
             packet(0xF0, 0, (7 << 24) | (255 << 14)),
@@ -114,6 +117,12 @@ def fixture(*, fog=False, lighting=False):
         XLU: display_list(*base(0x4411), ref(0x32, BAKED_VTX, 0x3006),
                           packet(0x05, 0x000204)),
     }
+    if light_records:
+        directional = bytes((128, 128, 128, 0, 128, 128, 128, 0, 0, 0, 127, 0))
+        ambient = bytes((32, 32, 32, 0, 32, 32, 32, 0, 0, 0, 0, 0))
+        entries["studio/light-directional"] = resource("OBLB", directional)
+        entries["studio/light-ambient"] = resource("OBLB", ambient)
+    return entries
 
 
 class TraceTests(unittest.TestCase):
@@ -148,7 +157,8 @@ class TraceTests(unittest.TestCase):
                                                         [0.0, 0.0, 1.0, 0.0],
                                                         [0.0, 0.0, 0.0, 1.0]],
                            "fog_factor_at_vertex_load": None,
-                           "num_directional_lights_at_vertex_load": None}])
+                           "num_directional_lights_at_vertex_load": None,
+                           "light_records_at_vertex_load": {}}])
         self.assertEqual(after_scroll["geometry"]["vertex_ranges"], first["geometry"]["vertex_ranges"])
         self.assertEqual(translucent["geometry"]["vertex_ranges"][0]["resource"], BAKED_VTX)
         self.assertEqual(after_scroll["primitive_count"], 2)
@@ -311,15 +321,26 @@ class TraceTests(unittest.TestCase):
                           draw["fog"]["vertex_factors"][0]["offset_coefficient"]), (128, 32))
         self.assertEqual(draw["fog"]["color"]["rgba"], [170, 187, 204, 255])
         self.assertEqual(draw["fog"]["depth_source"], "runtime clip-space z/w")
-        self.assertIn("camera-dependent fog", draw["wsc2_gaps"])
-        self.assertTrue(any("runtime camera-space depth" in reason for reason in draw["approximations"]))
+        self.assertIn("per-material clip-depth fog (WSC4)", draw["wsc2_gaps"])
+        self.assertFalse(draw["approximations"])
 
     def test_vertex_lighting_and_numlight_state_are_explicitly_incomplete(self):
         draw = self.run_trace(fixture(lighting=True), {8: trace.Reference(SCROLL)})["draws"][0]
         self.assertTrue(draw["lighting"]["enabled"])
         self.assertEqual(draw["lighting"]["directional_light_counts"][0]["count"], 1)
         self.assertIn("vertex lighting", draw["wsc2_gaps"])
-        self.assertTrue(any("MOVEMEM light records" in reason for reason in draw["approximations"]))
+        self.assertTrue(any("MOVEMEM records are absent" in reason for reason in draw["missing"]))
+
+    def test_static_movemem_lights_are_resolved_with_provenance(self):
+        draw = self.run_trace(fixture(lighting=True, light_records=True),
+                              {8: trace.Reference(SCROLL)})["draws"][0]
+        self.assertEqual(draw["status"], "complete")
+        records = draw["geometry"]["vertex_ranges"][0]["light_records_at_vertex_load"]
+        self.assertEqual(sorted(records), ["0", "1"])
+        self.assertEqual(records["0"]["color"], [128, 128, 128])
+        self.assertEqual(records["0"]["direction"], [0, 0, 127])
+        self.assertEqual(records["1"]["color"], [32, 32, 32])
+        self.assertEqual((records["0"]["display_list"], records["0"]["offset"]), (OPA, 88))
 
     def test_cli_cannot_overwrite_archive(self):
         with TemporaryDirectory() as tmp:

@@ -166,12 +166,12 @@ static bool read_texture(struct SceneReader *reader, char texture[96], u16 width
 #endif
 }
 
-static bool read_material(struct SceneReader *reader, struct FileBatch *batch) {
+static bool read_material(struct SceneReader *reader, struct FileBatch *batch, bool fogFormat) {
     struct WorldSceneMaterial *material = batch->material = calloc(1, sizeof(*material));
     if (!material) return false;
     u16 flags = read_u16(reader);
     const u8 *colors = read_bytes(reader, 8);
-    if (!colors || (flags & ~31u) || !!(flags & WORLD_SCENE_BLEND) != !!batch->pass
+    if (!colors || (flags & ~(fogFormat ? 63u : 31u)) || !!(flags & WORLD_SCENE_BLEND) != !!batch->pass
         || ((flags & WORLD_SCENE_BLEND) && (flags & WORLD_SCENE_CUTOUT))) return false;
     material->flags = flags;
     memcpy(material->primitive, colors, 4);
@@ -193,6 +193,14 @@ static bool read_material(struct SceneReader *reader, struct FileBatch *batch) {
         for (int i = 0; i < 2; ++i) texture->origin[i] = read_s16(reader);
         for (int i = 0; i < 2; ++i) texture->scroll[i] = read_s16(reader);
         if (!read_texture(reader, texture->name, texture->width, texture->height, false)) return false;
+    }
+    if (material->flags & WORLD_SCENE_FOG) {
+        if (!fogFormat) return false;
+        material->fogMultiplier = read_s16(reader);
+        material->fogOffset = read_s16(reader);
+        const u8 *fogColor = read_bytes(reader, sizeof(material->fogColor));
+        if (!fogColor) return false;
+        memcpy(material->fogColor, fogColor, sizeof(material->fogColor));
     }
     return !material->texture[1].name[0] || material->texture[0].name[0];
 }
@@ -287,7 +295,7 @@ static bool read_render_vertices(struct SceneReader *reader, const struct WorldS
 }
 
 static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *desc,
-                      struct FileRoom *room, bool legacy, bool materialFormat) {
+                                 struct FileRoom *room, bool legacy, bool materialFormat, bool fogFormat) {
     desc->id = read_u32(reader);
     desc->min = read_point(reader);
     desc->max = read_point(reader);
@@ -335,7 +343,7 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
         if (materialFormat) {
             batch->pass = read_u16(reader);
             batch->triangleCount = read_u16(reader);
-            if (batch->pass > 1 || !read_material(reader, batch)) return false;
+            if (batch->pass > 1 || !read_material(reader, batch, fogFormat)) return false;
         } else if (!legacy) {
             batch->pass = read_u16(reader);
             batch->state = read_u16(reader);
@@ -405,14 +413,15 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     u16 exits = read_u16(&reader);
     struct FileScene *scene = NULL;
     bool legacy = magic && !memcmp(magic, "WSC1", 4);
-    bool materialFormat = magic && !memcmp(magic, "WSC3", 4);
+    bool materialFormat = magic && (!memcmp(magic, "WSC3", 4) || !memcmp(magic, "WSC4", 4));
+    bool fogFormat = magic && !memcmp(magic, "WSC4", 4);
     if (materialFormat && !gfx_supports_scene_materials()) {
-        fprintf(stderr, "Scene package %u requires WSC3 render support\n", id);
+        fprintf(stderr, "Scene package %u requires WSC3/WSC4 render support\n", id);
         goto fail;
     }
 #ifdef IOS_SCENE_DIAGNOSTIC
     if (id == SCENE_EXTERNAL_PACKAGE && !materialFormat) {
-        fprintf(stderr, "External scene slot requires a WSC3 package\n");
+        fprintf(stderr, "External scene slot requires a WSC3 or WSC4 package\n");
         goto fail;
     }
 #endif
@@ -431,7 +440,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     if (!scene->rooms || !scene->descs || !scene->entrances || (exits && !scene->exits)) goto fail;
 
     for (u32 i = 0; i < rooms; ++i) {
-        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy, materialFormat)) goto fail;
+        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy, materialFormat, fogFormat)) goto fail;
     }
     for (u32 i = 0; i < entrances; ++i) {
         struct WorldSceneEntranceDesc *entrance = &scene->entrances[i];

@@ -188,8 +188,8 @@ def crop_ci4(payload, source_width, source_height, left, top, width, height):
 def lower_material(draw, resources, entries, pngs):
     state, combiner = draw["render_state"], draw["combiner"]
     mode, known = draw["geometry"]["mode"], draw["geometry"]["known_mask"]
-    if known & 0x0F0601 != 0x0F0601 or mode & 0x0F0200:
-        raise ValueError("unknown or unsupported fog, lighting, texgen or front-face culling")
+    if known & 0x0F0601 != 0x0F0601 or mode & 0x0C0200:
+        raise ValueError("unknown or unsupported texgen or front-face culling state")
     blender, effective = state["reference_blender"], combiner["effective"]
     if blender is None or effective is None or state["depth_test"] is None or state["depth_write"] is None:
         raise ValueError("incomplete blender, combiner or depth state")
@@ -222,6 +222,16 @@ def lower_material(draw, resources, entries, pngs):
                 "cull_back": bool(mode & 0x400),
                 "primitive": (rgb[1] if isinstance(rgb[1], list) else [rgb[1]] * 3) + [alpha[1]],
                 "environment": (rgb[2] if isinstance(rgb[2], list) else [rgb[2]] * 3) + [env_alpha]}
+    if draw["fog"]["enabled"]:
+        factors = draw["fog"]["vertex_factors"]
+        if len(factors) != 1 or not isinstance(factors[0], dict):
+            raise ValueError("fogged draw needs one complete MOVEWORD fog coefficient state")
+        fog_color = draw["fog"]["color"]
+        if not fog_color or len(fog_color.get("rgba", [])) != 4:
+            raise ValueError("fogged draw needs a complete SETFOGCOLOR state")
+        material["fog"] = {"multiplier": factors[0]["multiplier"],
+                            "offset": factors[0]["offset_coefficient"],
+                            "color": fog_color["rgba"]}
     return material, rgb[0], alpha[0]
 
 
@@ -249,7 +259,8 @@ class Conversion:
         kind, _, endian, body = self.resources.typed_body(path, ("Array", "Vertex"))
         header = 4 if kind == "Vertex" else 8
         values = struct.unpack_from(endian + "3hH2h4B", body, header + index * 16)
-        return values[:3], values[4:6], values[6:]
+        normal = [value - 256 if value >= 128 else value for value in values[6:9]]
+        return values[:3], values[4:6], values[6:], normal
 
     def draw(self, draw, refs, palettes):
         try:
@@ -257,20 +268,23 @@ class Conversion:
                 raise ValueError("; ".join(draw["missing"] + draw["approximations"]))
             material, shade_rgb, shade_alpha = lower_material(draw, self.resources, palettes, self.pngs)
             vertices = []
-            for path, index, scale, geometry, matrix, fog_factor, num_lights in refs:
-                if geometry & trace.G_FOG:
-                    raise ValueError("fogged vertices need camera-space clip-depth evaluation, which static WSC3 geometry cannot preserve")
-                if geometry & trace.G_LIGHTING:
-                    raise ValueError("lit vertices need RSP light records and normal-based vertex-color evaluation, which are not lowered")
+            for path, index, scale, geometry, matrix, fog_factor, num_lights, light_state in refs:
                 if geometry & (trace.G_TEXTURE_GEN | trace.G_TEXTURE_GEN_LINEAR):
                     raise ValueError("generated texture coordinates need transformed normals and texgen state, which are not lowered")
-                if geometry:
-                    raise ValueError(f"unsupported vertex geometry mode bits 0x{geometry:05x}")
-                position, source_uv, cn = self.vertex(path, index)
+                unsupported_geometry = geometry & ~(trace.G_FOG | trace.G_LIGHTING)
+                if unsupported_geometry:
+                    raise ValueError(f"unsupported vertex geometry mode bits 0x{unsupported_geometry:05x}")
+                position, source_uv, cn, normal = self.vertex(path, index)
                 position = transform_position(position, matrix)
                 uv = [0, 0] if not material["textures"] else [
                     coordinate * factor >> 16 for coordinate, factor in zip(source_uv, scale)]
-                color = (list(cn[:3]) if shade_rgb else WHITE[:3]) + [cn[3] if shade_alpha else 255]
+                if geometry & trace.G_LIGHTING and shade_rgb:
+                    lights = json.loads(light_state)
+                    count = json.loads(num_lights)["count"]
+                    color_rgb = rsp_vertex_lighting(normal, matrix, lights, count)
+                else:
+                    color_rgb = list(cn[:3]) if shade_rgb else WHITE[:3]
+                color = color_rgb + [cn[3] if shade_alpha else 255]
                 vertices.append({"position": self.point(position), "uv": uv, "color": color})
             for i in range(0, len(vertices), 3):
                 if not any(cross(*(v["position"] for v in vertices[i:i + 3]))):
@@ -390,7 +404,8 @@ class Conversion:
         if any(self.report[key] for key in ("trace_issues", "draw_issues", "scene_issues")):
             return None
         self.converted_sources.update({self.root, *room_paths})
-        return {"version": 3, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
+        version = 4 if any(batch["material"].get("fog") for room in rooms for batch in room["batches"]) else 3
+        return {"version": version, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
 
     def compatibility_summary(self, package=None):
         reasons = Counter(failure["reason"] for failure in self.failures)
@@ -427,7 +442,7 @@ class Conversion:
                                 "collision_vertex_payload_bytes": collision_vertices * 6 if collision_vertices is not None else None,
                                 "collision_triangle_payload_bytes": collision_triangles * 8,
                                 "method": "serialized WSC payload and decoded RGBA texture bytes; excludes allocator/GPU overhead"},
-            "unsupported_features": sorted(set(self.report.get("unmapped_metadata", [])) |
+        "unsupported_features": sorted(set(self.report.get("unmapped_metadata", [])) |
                                             {failure["reason"] for failure in self.failures} |
                                             {issue["reason"] for issue in self.report.get("trace_issues", [])}),
             "trace_issue_reasons": dict(sorted(trace_reasons.items())),
@@ -436,7 +451,8 @@ class Conversion:
                                    "explicit static segment bindings", "hashed/segmented static model-view matrices"],
                 "textures": ["whole-image loads", "validated 4/8/16-bit LOADTILE crops", "CI4/CI8 palette baking"],
                 "materials": ["validated dual-texture environment-alpha subset", "point/three-point filter",
-                              "per-axis repeat/clamp/mirror where WSC3 addressing is equivalent"],
+                              "per-axis repeat/clamp/mirror where WSC3 addressing is equivalent",
+                              "WSC4 runtime clip-depth fog", "static RSP vertex lighting baked into shade color"],
                 "scene": ["room-local collision", "validated spawn floors", "room adjacency and safe re-entry"]},
         }
 
@@ -470,6 +486,29 @@ def transform_position(position, matrix):
         raise ValueError("projective or non-affine model-view matrix cannot be baked into world coordinates")
     return [sum(position[row] * matrix[row][column] for row in range(3)) + matrix[3][column]
             for column in range(3)]
+
+
+def rsp_vertex_lighting(normal, modelview, lights, directional_count):
+    """Bake the pinned gfx_pc RSP shade equation from static Light_t records."""
+    if not 0 <= directional_count <= 7:
+        raise ValueError("RSP directional light count exceeds the seven-light limit")
+    required = {str(index) for index in range(directional_count + 1)}
+    if not required.issubset(lights):
+        raise ValueError("lighting draw is missing a directional or ambient Light_t record")
+    result = list(lights[str(directional_count)]["color"])
+    for index in range(directional_count):
+        record = lights[str(index)]
+        direction = [component / 127.0 for component in record["direction"]]
+        transformed = [sum(direction[row] * modelview[row][column] for row in range(3))
+                       for column in range(3)]
+        magnitude = sum(component * component for component in transformed) ** 0.5
+        if magnitude < 1e-12:
+            raise ValueError(f"directional light {index} has a zero transformed direction")
+        transformed = [component / magnitude for component in transformed]
+        intensity = sum(normal[axis] * transformed[axis] for axis in range(3)) / 127.0
+        if intensity > 0:
+            result = [component + intensity * color for component, color in zip(result, record["color"])]
+    return [max(0, min(255, int(component))) for component in result]
 
 
 def connect_rooms(rooms, transitions, links):
