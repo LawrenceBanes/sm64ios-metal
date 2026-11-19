@@ -9,11 +9,14 @@ LUA_SRC="$ROOT/vendor/lua53/src"
 cp -R "$ROOT/tests/mods/fixtures" "$BUILD/fixtures"
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.
-${CC:-cc} -std=gnu99 -O1 -g ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_REAL_ZIP \
+${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-sections ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_HOST_TEST -DMOD_RUNTIME_REAL_ZIP \
   -DNON_MATCHING=1 -DAVOID_UB=1 \
   -I"$ROOT/include" -I"$ROOT/src" -I"$ROOT" -I"$LUA_SRC" \
   "$ROOT/tests/mods/host_runtime_test.c" \
   "$ROOT/src/pc/mods/mod_runtime.c" "$ROOT/src/pc/mods/mod_audio.c" "$ROOT/src/pc/mods/mod_resource.c" \
+  "$ROOT/src/pc/mods/dynos_actor.c" "$ROOT/src/pc/mods/dynos_actor_native.c" \
+  "$ROOT/src/engine/geo_layout.c" "$ROOT/src/engine/graph_node.c" \
+  "$ROOT/src/engine/graph_node_manager.c" \
   "$ROOT/src/pc/fs/fs_packtype_zip.c" "$ROOT/src/pc/fs/dirtree.c" \
   "$LUA_SRC/lapi.c" "$LUA_SRC/lcode.c" "$LUA_SRC/lctype.c" "$LUA_SRC/ldebug.c" \
   "$LUA_SRC/ldo.c" "$LUA_SRC/ldump.c" "$LUA_SRC/lfunc.c" "$LUA_SRC/lgc.c" \

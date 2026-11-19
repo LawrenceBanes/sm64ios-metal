@@ -19,11 +19,21 @@ payload += b'\x04' + name('test_gfx') + struct.pack('<I', 3)
 payload += struct.pack('<II', 0x01000000, 0x52544e50) + name('test_vertices') + struct.pack('<I', 0)
 payload += struct.pack('<II', 0x05000000, 0)  # F3DEX2 G_TRI1
 payload += struct.pack('<II', 0xdf000000, 0)  # F3DEX2 G_ENDDL
-payload += b'\x05' + name('test_geo') + struct.pack('<I', 1)
+payload += b'\x05' + name('test_geo') + struct.pack('<I', 6)
+payload += struct.pack('<III', 0x0b, 0x04, 0x15)
 payload += struct.pack('<I', 0x52544e50) + name('test_gfx') + struct.pack('<I', 0)
+payload += struct.pack('<II', 0x05, 0x01)
 def write(file, body, declared=None):
     (directory / file).write_bytes(b'DYNOSBIN' + struct.pack('<Q', len(body) if declared is None else declared) + zlib.compress(body))
 write('synthetic.bin', payload)
+offset_payload = payload.replace(
+    b'PNTR' + name('test_vertices') + struct.pack('<I', 0),
+    b'PNTR' + name('test_vertices') + struct.pack('<I', 1),
+).replace(
+    b'PNTR' + name('test_gfx') + struct.pack('<I', 0),
+    b'PNTR' + name('test_gfx') + struct.pack('<I', 1),
+)
+write('offsets.bin', offset_payload)
 vertex_pointer = b'PNTR' + name('test_vertices') + struct.pack('<I', 0)
 write('bad-ref.bin', payload.replace(vertex_pointer,
                                      b'PNTR' + name('gone_vertices') + struct.pack('<I', 0)))
@@ -42,6 +52,7 @@ ${CC:-cc} -std=gnu99 -O1 -g ${MOD_TEST_CFLAGS:-} -Wall -Wextra -Werror \
   -o "$BUILD/dynos_actor_test"
 
 "$BUILD/dynos_actor_test" "$BUILD/synthetic.bin"
+"$BUILD/dynos_actor_test" "$BUILD/offsets.bin"
 "$BUILD/dynos_actor_test" --reject "$BUILD/bad-ref.bin" "$BUILD/cycle.bin" \
   "$BUILD/unknown.bin" "$BUILD/oversize.bin" "$BUILD/truncated.bin"
 

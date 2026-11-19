@@ -96,6 +96,11 @@ void mod_runtime_behavior_unsupported_command(unsigned opcode);
  * Return true to skip the native behavior script for this frame. */
 bool mod_runtime_native_behavior_tick(void);
 const uintptr_t *mod_runtime_behavior_for_list(int list);
+#ifdef MOD_RUNTIME_HOST_TEST
+bool mod_runtime_host_load_dynos_model(size_t mod_index, const char *name,
+                                       int *extended_id, char *error,
+                                       size_t error_size);
+#endif
 
 /* ZIP importing uses this after a platform document picker has copied the ZIP
  * into app-owned temporary storage. Returns an owned, installed mod directory. */

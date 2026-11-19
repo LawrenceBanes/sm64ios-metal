@@ -38,6 +38,8 @@
 #include "game/sound_init.h"
 #include "game/level_update.h"
 #include "game/object_helpers.h"
+#include "game/mario_misc.h"
+#include "game/behavior_actions.h"
 #include "game/object_list_processor.h"
 #include "engine/surface_collision.h"
 #include "engine/math_util.h"
@@ -65,6 +67,50 @@ struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
 struct ObjectNode *gObjectLists = gObjectListArray;
 static struct GraphNode *sLoadedGraphNodeStorage[0x100];
 struct GraphNode **gLoadedGraphNodes = sLoadedGraphNodeStorage;
+void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
+    if (!pool || size <= 0) return NULL;
+    size = (size + 7) & ~7;
+    if (size > pool->totalSpace - pool->usedSpace) return NULL;
+    void *result = pool->freePtr;
+    pool->freePtr += size;
+    pool->usedSpace += size;
+    return result;
+}
+void *vec3s_copy(Vec3s dest, Vec3s src) {
+    memcpy(dest, src, sizeof(Vec3s));
+    return dest;
+}
+void *vec3s_set(Vec3s dest, s16 x, s16 y, s16 z) {
+    dest[0] = x; dest[1] = y; dest[2] = z;
+    return dest;
+}
+Gfx *geo_switch_anim_state(s32 callContext, struct GraphNode *node, void *context) {
+    (void)callContext; (void)node; (void)context;
+    return NULL;
+}
+Gfx *geo_update_layer_transparency(s32 callContext, struct GraphNode *node, void *context) {
+    (void)callContext; (void)node; (void)context;
+    return NULL;
+}
+#define TEST_GEO_CALLBACK(name) \
+    Gfx *name(s32 callContext, struct GraphNode *node, Mat4 *matrix) { \
+        (void)callContext; (void)node; (void)matrix; return NULL; \
+    }
+TEST_GEO_CALLBACK(geo_mirror_mario_set_alpha)
+TEST_GEO_CALLBACK(geo_switch_mario_eyes)
+TEST_GEO_CALLBACK(geo_mario_head_rotation)
+TEST_GEO_CALLBACK(geo_switch_mario_hand)
+TEST_GEO_CALLBACK(geo_switch_mario_cap_effect)
+TEST_GEO_CALLBACK(geo_switch_mario_cap_on_off)
+TEST_GEO_CALLBACK(geo_mario_rotate_wing_cap_wings)
+TEST_GEO_CALLBACK(geo_mirror_mario_backface_culling)
+#undef TEST_GEO_CALLBACK
+Gfx *geo_switch_mario_hand_grab_pos(s32 callContext, struct GraphNode *node, Mat4 *matrix) {
+    (void)callContext; (void)node; (void)matrix; return NULL;
+}
+Gfx *geo_move_mario_part_from_parent(s32 callContext, struct GraphNode *node, Mat4 matrix) {
+    (void)callContext; (void)node; (void)matrix; return NULL;
+}
 f32 gGlobalSoundSource[3];
 f32 gDefaultSoundArgs[3];
 s16 gCurrSaveFileNum = 1;
@@ -1061,6 +1107,30 @@ int main(int argc, char **argv) {
         if (!mod_runtime_mod_enabled(0)) {
             mod_runtime_shutdown();
             return 1;
+        }
+        if (getenv("MOD_TEST_EXPECT_OMM_MODELS")) {
+            for (int slot = 0xE6; slot <= 0xEB; ++slot) {
+                assert(gLoadedGraphNodes[slot] != NULL);
+                assert(mod_runtime_extended_model_id(slot) >= 0x10000);
+            }
+            char model_error[400] = {0};
+            int peach_id = 0;
+            assert(mod_runtime_host_load_dynos_model(0, "omm_peachy_geo", &peach_id,
+                                                     model_error, sizeof(model_error)));
+            assert(peach_id >= 0x10000 && gLoadedGraphNodes[0xEC] != NULL);
+            sMarioObject.header.gfx.sharedChild = gLoadedGraphNodes[0xE6];
+            assert(mod_runtime_set_enabled(0, false));
+            assert(sMarioObject.header.gfx.sharedChild == NULL);
+            for (int slot = 0xE6; slot <= 0xEC; ++slot)
+                assert(gLoadedGraphNodes[slot] == NULL);
+            assert(mod_runtime_set_enabled(0, true));
+            for (int slot = 0xE6; slot <= 0xEB; ++slot)
+                assert(gLoadedGraphNodes[slot] != NULL);
+            memset(model_error, 0, sizeof(model_error));
+            assert(mod_runtime_host_load_dynos_model(0, "omm_peachy_geo", &peach_id,
+                                                     model_error, sizeof(model_error)));
+            assert(gLoadedGraphNodes[0xEC] != NULL);
+            printf("original OMM: six startup graphs and Peach model registered across disable/re-enable\n");
         }
         if (getenv("MOD_TEST_MIRROR_RENDER")) {
             struct GraphNodeObject mirror = {0};

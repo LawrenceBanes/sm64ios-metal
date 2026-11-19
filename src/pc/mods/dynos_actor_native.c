@@ -40,6 +40,112 @@ const void *dynos_actor_native_find(const DynosActorBundle *bundle,
     return NULL;
 }
 
+/* The engine's GeoLayout interpreter has no step budget. Admit only bounded
+ * command streams with balanced node nesting and acyclic references before
+ * passing mod data to process_geo_layout(). Review new opcodes against
+ * geo_layout.c before adding them here. */
+static bool validate_geo_record(const DynosActorBundle *bundle,
+                                const DynosNativeActor *actor,
+                                const DynosActorRecord *rec, bool require_root,
+                                char *error, size_t error_size) {
+    const char *name = rec->name;
+    if (!rec->count) return errorf(error, error_size, "empty geolayout", name);
+    if (rec->count > 256)
+        return errorf(error, error_size, "geolayout exceeds 256-word graph budget", name);
+    size_t index = (size_t)(rec - bundle->records);
+    if (index >= actor->count || !actor->resources[index])
+        return errorf(error, error_size, "geolayout is not linked", name);
+    const GeoLayout *words = actor->resources[index];
+    unsigned depth = 0;
+    bool has_node_root = false;
+    for (uint32_t cursor = 0; cursor < rec->count;) {
+        uint32_t command = (uint32_t)words[cursor];
+        uint8_t opcode = (uint8_t)command;
+        uint8_t params = (uint8_t)(command >> 8);
+        uint32_t width = 0;
+        switch (opcode) {
+            case 0x01: /* GEO_END */
+                if (cursor != rec->count - 1 || depth || (require_root && !has_node_root))
+                    return errorf(error, error_size, "unbalanced geolayout end", name);
+                return true;
+            case 0x00: /* GEO_BRANCH_AND_LINK: target pointer is a separate word. */
+            case 0x02: /* GEO_BRANCH */
+                width = 2; break;
+            case 0x03: /* GEO_RETURN */
+                if (cursor != rec->count - 1 || depth || (require_root && !has_node_root))
+                    return errorf(error, error_size, "unbalanced geolayout return", name);
+                return true;
+            case 0x04: /* GEO_OPEN_NODE */
+                if (++depth > 30) return errorf(error, error_size, "geolayout nesting exceeds limit", name);
+                width = 1; break;
+            case 0x05: /* GEO_CLOSE_NODE */
+                if (!depth) return errorf(error, error_size, "geolayout close underflows", name);
+                --depth; width = 1; break;
+            case 0x0b: /* GEO_NODE_START */
+                has_node_root = true;
+                width = 1; break;
+            case 0x20: /* GEO_CULLING_RADIUS */
+            case 0x17: /* GEO_RENDER_OBJ */
+            case 0x1b: /* GEO_COPY_VIEW */
+                width = 1; break;
+            case 0x0d: /* GEO_RENDER_RANGE */
+            case 0x0e: /* GEO_SWITCH_CASE */
+            case 0x15: /* GEO_DISPLAY_LIST */
+            case 0x16: /* GEO_SHADOW */
+            case 0x18: /* GEO_ASM */
+                width = 2; break;
+            case 0x10: { /* GEO_TRANSLATE_ROTATE family. */
+                unsigned layout = (params & 0x70u) >> 4;
+                static const uint8_t words_by_layout[] = { 4, 2, 2, 1 };
+                if (layout >= sizeof(words_by_layout))
+                    return errorf(error, error_size, "invalid GEO_TRANSLATE_ROTATE layout", name);
+                width = words_by_layout[layout] + !!(params & 0x80u);
+                break;
+            }
+            case 0x11: /* GEO_TRANSLATE_NODE */
+            case 0x12: /* GEO_ROTATION_NODE */
+            case 0x14: /* GEO_BILLBOARD_WITH_PARAMS */
+                width = 2 + !!(params & 0x80); break;
+            case 0x13: /* GEO_ANIMATED_PART */
+            case 0x1c: /* GEO_HELD_OBJECT */
+                width = 3; break;
+            case 0x1d: /* GEO_SCALE */
+                width = 2 + !!(params & 0x80); break;
+            case 0x1a: /* GEO_NOP_1A */
+            case 0x1e: /* GEO_NOP_1E */
+                width = 2; break;
+            case 0x1f: /* GEO_NOP_1F */
+                width = 4; break;
+            default: {
+                char message[100];
+                snprintf(message, sizeof(message), "unsupported GeoLayout opcode 0x%02x", opcode);
+                return errorf(error, error_size, message, name);
+            }
+        }
+        if (width > rec->count - cursor)
+            return errorf(error, error_size, "truncated GeoLayout command", name);
+        cursor += width;
+    }
+    return errorf(error, error_size, "geolayout has no GEO_END", name);
+}
+
+bool dynos_actor_native_validate_root_geo(const DynosActorBundle *bundle,
+                                          const DynosNativeActor *actor,
+                                          const char *name,
+                                          char *error, size_t error_size) {
+    const DynosActorRecord *root = dynos_actor_find(bundle, 5, name);
+    if (!root || !actor) return errorf(error, error_size, "geolayout not found", name);
+    /* Every linked GeoLayout can be reached through a branch. Validate every
+     * command stream before the engine's unbounded graph interpreter sees it. */
+    for (size_t i = 0; i < bundle->record_count; ++i) {
+        const DynosActorRecord *rec = &bundle->records[i];
+        if (rec->type == 5 &&
+            !validate_geo_record(bundle, actor, rec, rec == root, error, error_size))
+            return false;
+    }
+    return true;
+}
+
 static bool vertex_array(const DynosActorBundle *bundle, const DynosActorRecord *rec,
                          void **result) {
     if (!rec->count) return false;
@@ -89,7 +195,13 @@ static const void *reference_target(const DynosActorBundle *bundle,
             return NULL;
         case 3:
             return ref->aux < rec->count ? base + (size_t)ref->aux * sizeof(Vtx) : NULL;
-        case 2: case 4: case 5:
+        case 4:
+            return ref->aux < rec->count ? base + (size_t)ref->aux * sizeof(Gfx) : NULL;
+        case 5:
+            return ref->aux < rec->count ? base + (size_t)ref->aux * sizeof(GeoLayout) : NULL;
+        case 2:
+            /* Texture records are renderer handles, not byte-addressable
+             * source buffers. Upstream pointer offsets cannot be applied. */
             return ref->aux == 0 ? base : NULL;
         default:
             return NULL;

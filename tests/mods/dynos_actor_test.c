@@ -86,6 +86,28 @@ int main(int argc, char **argv) {
                 assert(dynos_actor_native_find(&bundle, &native, 5, record->name) == native.resources[i]);
         }
         assert(triangles);
+        const DynosActorRecord *root = NULL;
+        for (size_t i = 0; i < bundle.record_count; ++i)
+            if (bundle.records[i].type == 5) root = &bundle.records[i];
+        assert(root);
+        if (!strcmp(root->name, "test_geo")) {
+            const Gfx *display_list = dynos_actor_native_find(&bundle, &native, 4, "test_gfx");
+            const Vtx *vertices = dynos_actor_native_find(&bundle, &native, 3, "test_vertices");
+            const uintptr_t *geo = dynos_actor_native_find(&bundle, &native, 5, "test_geo");
+            bool uses_offsets = strstr(argv[arg], "offsets.bin") != NULL;
+            assert(display_list && vertices && geo);
+            assert(display_list[0].words.w1 == (uintptr_t)(vertices + (uses_offsets ? 1 : 0)));
+            assert(geo[3] == (uintptr_t)(display_list + (uses_offsets ? 1 : 0)));
+        }
+        bool root_valid = dynos_actor_native_validate_root_geo(&bundle, &native,
+                                                                root->name, error, sizeof(error));
+        if (strstr(root->name, "sparkle") || !strcmp(root->name, "test_geo") ||
+            !strcmp(root->name, "omm_peachy_geo")) {
+            if (!root_valid) fprintf(stderr, "expected supported GeoLayout: %s\n", error);
+            assert(root_valid);
+        }
+        printf("  root GeoLayout %s: %s\n", root->name,
+               root_valid ? "bounded native subset accepted" : error);
         printf("  native arrays linked; %u triangle commands\n", triangles);
         dynos_actor_native_free(&native);
         printf("%s: %zu records, %zu references, %u textures, %u vertices, %u Gfx, %u GeoLayout\n",

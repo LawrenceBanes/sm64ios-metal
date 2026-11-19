@@ -25,5 +25,9 @@ void dynos_actor_native_free(DynosNativeActor *actor);
 const void *dynos_actor_native_find(const DynosActorBundle *bundle,
                                     const DynosNativeActor *actor,
                                     uint8_t type, const char *name);
+bool dynos_actor_native_validate_root_geo(const DynosActorBundle *bundle,
+                                          const DynosNativeActor *actor,
+                                          const char *name,
+                                          char *error, size_t error_size);
 
 #endif

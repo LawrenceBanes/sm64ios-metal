@@ -1,5 +1,7 @@
 #include "mod_runtime.h"
 #include "mod_audio.h"
+#include "dynos_actor.h"
+#include "dynos_actor_native.h"
 
 #ifndef EXTERNAL_DATA
 #define STB_IMAGE_IMPLEMENTATION
@@ -49,6 +51,8 @@
 #include "game/mario_actions_airborne.h"
 #include "game/interaction.h"
 #include "game/object_helpers.h"
+#include "game/mario_misc.h"
+#include "game/behavior_actions.h"
 #include "game/object_list_processor.h"
 #include "game/print.h"
 #include "game/spawn_object.h"
@@ -63,6 +67,20 @@
 #include "pc/mods/mod_resource.h"
 #include "levels/scripts.h"
 #include "macro_preset_types.h"
+
+/* The native engine supplies these callbacks in production. Host-only mod
+ * tests may omit the gameplay objects; weak references let those builds
+ * report the missing callback through the normal DynOS diagnostic path. */
+#pragma weak geo_mirror_mario_set_alpha
+#pragma weak geo_switch_mario_eyes
+#pragma weak geo_mario_head_rotation
+#pragma weak geo_switch_mario_hand
+#pragma weak geo_switch_mario_cap_effect
+#pragma weak geo_switch_mario_cap_on_off
+#pragma weak geo_mario_rotate_wing_cap_wings
+#pragma weak geo_switch_mario_hand_grab_pos
+#pragma weak geo_mirror_mario_backface_culling
+#pragma weak geo_move_mario_part_from_parent
 
 #ifdef VERSION_EU
 #include "eu_translation.h"
@@ -106,6 +124,11 @@ extern s32 gInGameLanguage;
 #define MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD (16u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_BYTES_GLOBAL (64u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_KEYS 2048u
+#define MOD_MAX_DYNOS_MODEL_BYTES_PER_MOD (16u * 1024u * 1024u)
+#define MOD_MAX_DYNOS_MODEL_BYTES_GLOBAL (64u * 1024u * 1024u)
+#define MOD_DYNOS_MODEL_SLOT_FIRST 0xE6
+#define MOD_DYNOS_MODEL_SLOT_LAST 0xFF
+#define MOD_DYNOS_EXTENDED_MODEL_BASE 0x10000u
 #define MOD_NATIVE_BEHAVIOR_COUNT 541
 #define MOD_BEHAVIOR_WARNING_WORDS ((MOD_NATIVE_BEHAVIOR_COUNT + 63) / 64)
 
@@ -138,6 +161,7 @@ typedef struct DynosPack DynosPack;
 typedef struct ModCustomActionId ModCustomActionId;
 typedef struct ModSyncHook ModSyncHook;
 typedef struct ModTexture ModTexture;
+typedef struct DynosModel DynosModel;
 static float checked_lua_finite_float(lua_State *L, int index, const char *name);
 
 struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
@@ -156,6 +180,18 @@ struct ModNativeBehaviorState { struct Object *object; uint32_t token; ModBehavi
 struct ModModule { char *name; int value_ref; bool loading; ModModule *next; };
 struct ModAnimation { Mod *owner; char *name; struct Animation *animation; s16 *values; u16 *index; size_t values_length; size_t index_length; size_t bytes; ModAnimation *next_global; ModAnimation *next_owned; };
 struct ModTexture { Mod *owner; char *name; char *file; char *key; uint8_t *rgba16; uint8_t *rgba32; uint32_t width; uint32_t height; int format; int size; size_t bytes; ModTexture *next_global; ModTexture *next_owned; };
+struct DynosModel {
+    Mod *owner;
+    char *name;
+    uint32_t extended_id;
+    uint8_t native_slot;
+    DynosActorBundle bundle;
+    DynosNativeActor native;
+    struct AllocOnlyPool *graph_pool;
+    struct GraphNode *graph;
+    DynosModel *next_global;
+    DynosModel *next_owned;
+};
 struct ModRequest { int type; int index; int item_index; int64_t value; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
 struct DynosPack {
     char name[MOD_MAX_NAME];
@@ -186,11 +222,13 @@ struct Mod {
     ModBehavior *behaviors;
     ModAnimation *animations;
     ModTexture *textures;
+    DynosModel *models;
     ModCustomActionId *custom_action_ids;
     size_t animation_count;
     size_t animation_bytes;
     size_t dynos_texture_count;
     size_t dynos_texture_bytes;
+    size_t dynos_model_bytes;
     ModStorageEntry *storage;
     size_t storage_count;
     size_t storage_bytes;
@@ -278,6 +316,9 @@ static ModAction *sActions;
 static ModBehavior *sBehaviors;
 static ModAnimation *sAnimations;
 static ModTexture *sTextures;
+static DynosModel *sDynosModels;
+static uint32_t sNextDynosModelId = MOD_DYNOS_EXTENDED_MODEL_BASE;
+static size_t sDynosModelBytes;
 static size_t sAnimationCount;
 static size_t sAnimationBytes;
 static size_t sDynosTextureBytes;
@@ -842,6 +883,75 @@ static char *dynos_texture_key_intern(const uint8_t *bytes, size_t size) {
     return sDynosTextureKeys[sDynosTextureKeyCount++];
 }
 
+/* Actor-bundle textures share the same renderer key and per-mod ownership as
+ * standalone .tex files. The caller rolls back newly added textures if a
+ * model fails to link or register. */
+static const void *register_dynos_actor_texture(void *context, const char *name,
+                                                 const uint8_t *encoded, size_t encoded_size) {
+    Mod *mod = context;
+    if (!mod || !name || !*name || !encoded || encoded_size < 8 ||
+        encoded_size > MOD_MAX_DYNOS_TEXTURE_FILE_BYTES ||
+        memcmp(encoded, "\x89PNG\r\n\x1a\n", 8) ||
+        mod->dynos_texture_count >= MOD_MAX_DYNOS_TEXTURES_PER_MOD) return NULL;
+    int width, height, channels;
+    if (!stbi_info_from_memory(encoded, (int)encoded_size, &width, &height, &channels) ||
+        width <= 0 || height <= 0 || width > MOD_MAX_DYNOS_TEXTURE_DIMENSION ||
+        height > MOD_MAX_DYNOS_TEXTURE_DIMENSION) return NULL;
+    size_t pixels = (size_t)width * (size_t)height;
+    if (pixels > SIZE_MAX / 6u) return NULL;
+    size_t bytes = pixels * 6u;
+    if (bytes > MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD ||
+        mod->dynos_texture_bytes > MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD - bytes ||
+        bytes > MOD_MAX_DYNOS_TEXTURE_BYTES_GLOBAL ||
+        sDynosTextureBytes > MOD_MAX_DYNOS_TEXTURE_BYTES_GLOBAL - bytes) return NULL;
+    uint8_t *rgba = stbi_load_from_memory(encoded, (int)encoded_size, &width, &height, NULL, 4);
+    if (!rgba) return NULL;
+    if (width <= 0 || height <= 0 || width > MOD_MAX_DYNOS_TEXTURE_DIMENSION ||
+        height > MOD_MAX_DYNOS_TEXTURE_DIMENSION || (size_t)width * height != pixels) {
+        stbi_image_free(rgba);
+        return NULL;
+    }
+    uint8_t *rgba16 = malloc(pixels * 2u);
+    ModTexture *texture = calloc(1, sizeof(*texture));
+    char *key = dynos_texture_key_intern(encoded, encoded_size);
+    if (!rgba16 || !texture || !key || !(texture->name = strdup(name)) ||
+        !(texture->file = strdup("embedded DynOS actor"))) {
+        free(rgba16);
+        if (texture) { free(texture->name); free(texture->file); free(texture); }
+        stbi_image_free(rgba);
+        return NULL;
+    }
+    for (size_t i = 0; i < pixels; ++i) {
+        uint16_t color = (uint16_t)(((rgba[i * 4] >> 3) << 11) |
+                                    ((rgba[i * 4 + 1] >> 3) << 6) |
+                                    ((rgba[i * 4 + 2] >> 3) << 1) |
+                                    (rgba[i * 4 + 3] >= 128));
+        rgba16[i * 2] = (uint8_t)(color >> 8);
+        rgba16[i * 2 + 1] = (uint8_t)color;
+    }
+    texture->owner = mod;
+    texture->key = key;
+    texture->rgba16 = rgba16;
+    texture->rgba32 = rgba;
+    texture->width = (uint32_t)width;
+    texture->height = (uint32_t)height;
+    texture->format = G_IM_FMT_RGBA;
+#ifdef EXTERNAL_DATA
+    texture->size = G_IM_SIZ_32b;
+#else
+    texture->size = G_IM_SIZ_16b;
+#endif
+    texture->bytes = bytes;
+    texture->next_global = sTextures;
+    sTextures = texture;
+    texture->next_owned = mod->textures;
+    mod->textures = texture;
+    ++mod->dynos_texture_count;
+    mod->dynos_texture_bytes += bytes;
+    sDynosTextureBytes += bytes;
+    return key;
+}
+
 /* DynOS texture files contain DATA_TYPE_TEXTURE, a length-prefixed symbol,
  * a little-endian PNG byte count, and a PNG payload. Return 0 for a different
  * symbol, 1 for an activated texture, and -1 for a matching malformed asset. */
@@ -1001,6 +1111,195 @@ bool mod_runtime_dynamic_texture_lookup(const char *key, const uint8_t **rgba,
     }
     return false;
 }
+
+static void rollback_dynos_actor_textures(Mod *mod, ModTexture *previous_head) {
+    while (mod->textures != previous_head) {
+        ModTexture *texture = mod->textures;
+        mod->textures = texture->next_owned;
+        ModTexture **link = &sTextures;
+        while (*link && *link != texture) link = &(*link)->next_global;
+        if (*link == texture) *link = texture->next_global;
+        if (mod->dynos_texture_count) --mod->dynos_texture_count;
+        if (mod->dynos_texture_bytes >= texture->bytes) mod->dynos_texture_bytes -= texture->bytes;
+        if (sDynosTextureBytes >= texture->bytes) sDynosTextureBytes -= texture->bytes;
+        stbi_image_free(texture->rgba32);
+        free(texture->rgba16);
+        free(texture->name);
+        free(texture->file);
+        free(texture);
+    }
+}
+
+/* Mario GeoLayout callbacks use Mat4 * in their declarations while the scene
+ * graph ABI carries an untyped context pointer. Adapt at the ABI boundary so
+ * sanitizer builds and native graph dispatch use the exact GraphNodeFunc
+ * signature without casting incompatible function pointers. */
+#define DYNOS_MARIO_GEO_ADAPTER(adapter, target) \
+    static Gfx *adapter(s32 call, struct GraphNode *node, void *context) { \
+        return target(call, node, (Mat4 *)context); \
+    }
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_mirror_mario_set_alpha, geo_mirror_mario_set_alpha)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_switch_mario_eyes, geo_switch_mario_eyes)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_mario_head_rotation, geo_mario_head_rotation)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_switch_mario_hand, geo_switch_mario_hand)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_switch_mario_cap_effect, geo_switch_mario_cap_effect)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_switch_mario_cap_on_off, geo_switch_mario_cap_on_off)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_mario_rotate_wing_cap_wings, geo_mario_rotate_wing_cap_wings)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_switch_mario_hand_grab_pos, geo_switch_mario_hand_grab_pos)
+DYNOS_MARIO_GEO_ADAPTER(dynos_geo_mirror_mario_backface_culling, geo_mirror_mario_backface_culling)
+static Gfx *dynos_geo_move_mario_part_from_parent(s32 call, struct GraphNode *node,
+                                                   void *context) {
+    return geo_move_mario_part_from_parent(call, node, *(Mat4 *)context);
+}
+#undef DYNOS_MARIO_GEO_ADAPTER
+
+static const void *dynos_actor_geo_function(void *context, uint32_t index) {
+    (void)context;
+    switch (index) {
+        /* Indexes from upstream's ordered sDynosBuiltinFuncs table. These
+         * callbacks are implemented by the native engine and used by OMM's
+         * original Peach actor GeoLayouts. Do not compact/reorder this map. */
+        case 0: return geo_mirror_mario_set_alpha ? (const void *)dynos_geo_mirror_mario_set_alpha : NULL;
+        case 2: return geo_switch_mario_eyes ? (const void *)dynos_geo_switch_mario_eyes : NULL;
+        case 4: return geo_mario_head_rotation ? (const void *)dynos_geo_mario_head_rotation : NULL;
+        case 5: return geo_switch_mario_hand ? (const void *)dynos_geo_switch_mario_hand : NULL;
+        case 7: return geo_switch_mario_cap_effect ? (const void *)dynos_geo_switch_mario_cap_effect : NULL;
+        case 8: return geo_switch_mario_cap_on_off ? (const void *)dynos_geo_switch_mario_cap_on_off : NULL;
+        case 9: return geo_mario_rotate_wing_cap_wings ? (const void *)dynos_geo_mario_rotate_wing_cap_wings : NULL;
+        case 10: return geo_switch_mario_hand_grab_pos ? (const void *)dynos_geo_switch_mario_hand_grab_pos : NULL;
+        case 12: return geo_mirror_mario_backface_culling ? (const void *)dynos_geo_mirror_mario_backface_culling : NULL;
+        case 14: return (const void *)geo_update_layer_transparency;
+        case 15: return (const void *)geo_switch_anim_state;
+        case 37: return geo_move_mario_part_from_parent ? (const void *)dynos_geo_move_mario_part_from_parent : NULL;
+        default: return NULL;
+    }
+}
+
+static DynosModel *find_dynos_model(Mod *mod, const char *name) {
+    for (DynosModel *model = mod ? mod->models : NULL; model; model = model->next_owned)
+        if (!strcmp(model->name, name)) return model;
+    return NULL;
+}
+
+static DynosModel *load_dynos_model(Mod *mod, const char *name,
+                                    char *reason, size_t reason_size) {
+    DynosModel *existing = find_dynos_model(mod, name);
+    if (existing) return existing;
+    if (!mod || !safe_relative_path(name) || strchr(name, '/') ||
+        sNextDynosModelId == UINT32_MAX) {
+        snprintf(reason, reason_size, "invalid model name or exhausted model IDs");
+        return NULL;
+    }
+    unsigned slot = 0;
+    for (unsigned candidate = MOD_DYNOS_MODEL_SLOT_FIRST;
+         candidate <= MOD_DYNOS_MODEL_SLOT_LAST; ++candidate) {
+        bool used = false;
+        for (DynosModel *model = sDynosModels; model; model = model->next_global)
+            used |= model->native_slot == candidate;
+        if (!used && gLoadedGraphNodes && !gLoadedGraphNodes[candidate]) {
+            slot = candidate;
+            break;
+        }
+    }
+    if (!slot) {
+        snprintf(reason, reason_size, "no free native model slots (0xE6–0xFF)");
+        return NULL;
+    }
+    char relative[320];
+    if (snprintf(relative, sizeof(relative), "actors/%s.bin", name) >= (int)sizeof(relative)) {
+        snprintf(reason, reason_size, "model path exceeds limit");
+        return NULL;
+    }
+    size_t file_size = 0;
+    uint8_t *file = mod_resource_read(mod->path, relative, 8u * 1024u * 1024u, &file_size);
+    if (!file) {
+        snprintf(reason, reason_size, "actor bundle was not found or was blocked by sandbox validation");
+        return NULL;
+    }
+    DynosModel *model = calloc(1, sizeof(*model));
+    ModTexture *previous_textures = mod->textures;
+    if (!model) snprintf(reason, reason_size, "out of memory allocating model");
+    bool ready = model && dynos_actor_decode(file, file_size, &model->bundle, reason, reason_size);
+    if (ready && (model->bundle.size > MOD_MAX_DYNOS_MODEL_BYTES_PER_MOD ||
+                  mod->dynos_model_bytes > MOD_MAX_DYNOS_MODEL_BYTES_PER_MOD - model->bundle.size ||
+                  model->bundle.size > MOD_MAX_DYNOS_MODEL_BYTES_GLOBAL ||
+                  sDynosModelBytes > MOD_MAX_DYNOS_MODEL_BYTES_GLOBAL - model->bundle.size)) {
+        snprintf(reason, reason_size, "DynOS actor memory budget exceeded");
+        ready = false;
+    }
+    ready = ready &&
+        dynos_actor_native_build(&model->bundle, register_dynos_actor_texture,
+                                 dynos_actor_geo_function, mod, &model->native,
+                                 reason, reason_size) &&
+        dynos_actor_native_validate_root_geo(&model->bundle, &model->native,
+                                             name, reason, reason_size);
+    free(file);
+    if (ready) {
+        const GeoLayout *geo = dynos_actor_native_find(&model->bundle, &model->native, 5, name);
+        const size_t graph_bytes = 64u * 1024u;
+        model->graph_pool = malloc(sizeof(*model->graph_pool) + graph_bytes);
+        if (model->graph_pool) {
+            model->graph_pool->totalSpace = (s32)graph_bytes;
+            model->graph_pool->usedSpace = 0;
+            model->graph_pool->startPtr = (u8 *)(model->graph_pool + 1);
+            model->graph_pool->freePtr = model->graph_pool->startPtr;
+            model->graph = process_geo_layout(model->graph_pool, (void *)geo);
+        }
+        ready = model->graph != NULL;
+        if (!ready) snprintf(reason, reason_size, "native geolayout graph allocation failed");
+    }
+    if (!ready) {
+        rollback_dynos_actor_textures(mod, previous_textures);
+        if (model) {
+            free(model->graph_pool);
+            dynos_actor_native_free(&model->native);
+            dynos_actor_free(&model->bundle);
+            free(model);
+        }
+        return NULL;
+    }
+    model->name = strdup(name);
+    if (!model->name) {
+        rollback_dynos_actor_textures(mod, previous_textures);
+        free(model->graph_pool);
+        dynos_actor_native_free(&model->native);
+        dynos_actor_free(&model->bundle);
+        free(model);
+        snprintf(reason, reason_size, "out of memory naming model");
+        return NULL;
+    }
+    model->owner = mod;
+    mod->dynos_model_bytes += model->bundle.size;
+    sDynosModelBytes += model->bundle.size;
+    model->native_slot = (uint8_t)slot;
+    model->extended_id = sNextDynosModelId++;
+    gLoadedGraphNodes[slot] = model->graph;
+    model->next_global = sDynosModels;
+    sDynosModels = model;
+    model->next_owned = mod->models;
+    mod->models = model;
+    mod_logf("info", mod->name,
+             "activated DynOS actor %s as extended model %u (native slot 0x%02x, %zu records)",
+             name, model->extended_id, slot, model->bundle.record_count);
+    return model;
+}
+
+#ifdef MOD_RUNTIME_HOST_TEST
+bool mod_runtime_host_load_dynos_model(size_t mod_index, const char *name,
+                                       int *extended_id, char *error,
+                                       size_t error_size) {
+    Mod *mod = sMods;
+    while (mod && mod_index) { mod = mod->next; --mod_index; }
+    if (!mod || !name || !sLua) return false;
+    Mod *previous = sCurrentMod;
+    sCurrentMod = mod;
+    DynosModel *model = load_dynos_model(mod, name, error, error_size);
+    sCurrentMod = previous;
+    if (!model) return false;
+    if (extended_id) *extended_id = (int)model->extended_id;
+    return true;
+}
+#endif
 
 static void load_dynos_behaviors(Mod *mod) {
     fs_pathlist_t paths = fs_sys_enumerate(mod->path, true);
@@ -2680,6 +2979,10 @@ static int behavior_id_error(lua_State *L, lua_Integer id, const char *api) {
 }
 
 static int native_model_from_id(lua_State *L, lua_Integer id, const char *api) {
+    for (DynosModel *dynamic = sDynosModels; dynamic; dynamic = dynamic->next_global)
+        if ((uint64_t)id == dynamic->extended_id && gLoadedGraphNodes &&
+            gLoadedGraphNodes[dynamic->native_slot] == dynamic->graph)
+            return dynamic->native_slot;
     const size_t count = sizeof(sNativeModels) / sizeof(sNativeModels[0]);
     char message[384];
     if (id < 0 || (uint64_t)id >= count) {
@@ -2703,36 +3006,30 @@ static int native_model_from_id(lua_State *L, lua_Integer id, const char *api) {
 }
 
 int mod_runtime_extended_model_id(int native_model) {
+    for (DynosModel *dynamic = sDynosModels; dynamic; dynamic = dynamic->next_global)
+        if (dynamic->native_slot == native_model) return (int)dynamic->extended_id;
     for (size_t i = 0; i < sizeof(sNativeModels) / sizeof(sNativeModels[0]); ++i)
         if (sNativeModels[i].native_model == native_model) return (int)sNativeModels[i].id;
     return 159; /* E_MODEL_ERROR_MODEL for a model without a CoopDX mapping. */
 }
 
-/* CoopDX resolves these names through DynOS's geolayout registry. This port
- * currently preserves the upstream missing-geolayout result while clearly
- * diagnosing that an asset could not be activated. Returning
- * E_MODEL_ERROR_MODEL is the documented ModelExtendedId failure value, not a
- * fabricated custom ID; callers that try to spawn it still receive the normal
- * native_model_from_id capability error. */
+/* Actors are activated only when their binary resources link to native Gfx
+ * and their root GeoLayout falls within the bounded engine-backed subset. */
 static int l_smlua_model_util_get_id(lua_State *L) {
     size_t length = 0;
     const char *name = luaL_checklstring(L, 1, &length);
     if (!length || length > 240 || memchr(name, '\0', length) != NULL)
         return luaL_error(L, "smlua_model_util_get_id expects a non-empty model name of at most 240 bytes");
 
-    char path[SYS_MAX_PATH];
-    bool package_has_asset = false;
-    if (sCurrentMod && safe_relative_path(name) &&
-        snprintf(path, sizeof(path), "%s/actors/%s.bin", sCurrentMod->path, name) < (int)sizeof(path))
-        package_has_asset = fs_sys_file_exists(path);
-
-    char message[512];
-    snprintf(message, sizeof(message),
+    char reason[400] = "no active DynOS geolayout matches this name";
+    DynosModel *model = sCurrentMod ? load_dynos_model(sCurrentMod, name, reason, sizeof(reason)) : NULL;
+    if (model) {
+        lua_pushinteger(L, model->extended_id);
+        return 1;
+    }
+    mod_logf("warning", sCurrentMod ? sCurrentMod->name : NULL,
              "smlua_model_util_get_id('%s'): %s; returning E_MODEL_ERROR_MODEL (159)",
-             name, package_has_asset
-                 ? "the package contains this geolayout asset, but DynOS decoding/registration is unavailable"
-                 : "no active native or DynOS geolayout matches this name");
-    mod_log("warning", sCurrentMod ? sCurrentMod->name : NULL, message);
+             name, reason);
     lua_pushinteger(L, 159); /* E_MODEL_ERROR_MODEL from CoopDX v1.5.1. */
     return 1;
 }
@@ -3240,6 +3537,13 @@ static int l_obj_has_model_extended(lua_State *L) {
     if (!object) {
         lua_pushboolean(L, false);
         return 1;
+    }
+
+    for (DynosModel *dynamic = sDynosModels; dynamic; dynamic = dynamic->next_global) {
+        if ((uint64_t)model_id == dynamic->extended_id) {
+            lua_pushboolean(L, object->header.gfx.sharedChild == dynamic->graph);
+            return 1;
+        }
     }
 
     const size_t model_count = sizeof(sNativeModels) / sizeof(sNativeModels[0]);
@@ -6503,7 +6807,7 @@ static bool load_mod(Mod *mod) {
     resolve_dynos_behavior_functions(mod);
     if (mod->contains_dynos_assets) {
         mod_log("warning", mod->name,
-                "package contains DynOS resources: PNG-backed .tex lookup is supported and the .bhv subset (BEGIN, OR_INT, loops, ID, CALL_NATIVE_EXT) is active; .bin models/geolayouts, animation playback, .col collision, and other behavior commands remain unsupported");
+                "package contains DynOS resources: PNG-backed .tex, the bounded .bhv subset, and validated .bin actor models are active where supported; unsupported GeoLayout functions/opcodes, animation playback, .col collision, and other behavior commands remain unavailable");
     }
     pthread_mutex_lock(&sModListMutex);
     mod->loaded = true;
@@ -6538,6 +6842,26 @@ static void clear_animation_references(struct Animation *animation) {
         }
     }
     if (gMarioState) clear_animation_reference(gMarioState->marioObj, animation);
+}
+
+static void clear_dynos_model_references(struct GraphNode *graph) {
+    if (!graph) return;
+    if (gObjectLists) {
+        for (int list = 0; list < NUM_OBJ_LISTS; ++list) {
+            struct ObjectNode *head = &gObjectLists[list];
+            struct ObjectNode *node = head->next;
+            size_t visited = 0;
+            while (node && node != head && visited++ < OBJECT_POOL_CAPACITY) {
+                struct Object *object = (struct Object *)node;
+                if (object->header.gfx.sharedChild == graph)
+                    object->header.gfx.sharedChild = NULL;
+                node = node->next;
+            }
+        }
+    }
+    if (gMarioState && gMarioState->marioObj &&
+        gMarioState->marioObj->header.gfx.sharedChild == graph)
+        gMarioState->marioObj->header.gfx.sharedChild = NULL;
 }
 
 static void unload_mod(Mod *mod) {
@@ -6625,6 +6949,23 @@ static void unload_mod(Mod *mod) {
     }
     mod->behaviors = NULL;
     mod->dynos_behavior_count = 0;
+    while (mod->models) {
+        DynosModel *model = mod->models;
+        mod->models = model->next_owned;
+        DynosModel **global_link = &sDynosModels;
+        while (*global_link && *global_link != model) global_link = &(*global_link)->next_global;
+        if (*global_link == model) *global_link = model->next_global;
+        clear_dynos_model_references(model->graph);
+        if (gLoadedGraphNodes && gLoadedGraphNodes[model->native_slot] == model->graph)
+            gLoadedGraphNodes[model->native_slot] = NULL;
+        if (mod->dynos_model_bytes >= model->bundle.size) mod->dynos_model_bytes -= model->bundle.size;
+        if (sDynosModelBytes >= model->bundle.size) sDynosModelBytes -= model->bundle.size;
+        free(model->graph_pool);
+        dynos_actor_native_free(&model->native);
+        dynos_actor_free(&model->bundle);
+        free(model->name);
+        free(model);
+    }
     while (mod->animations) {
         ModAnimation *animation = mod->animations;
         mod->animations = animation->next_owned;
