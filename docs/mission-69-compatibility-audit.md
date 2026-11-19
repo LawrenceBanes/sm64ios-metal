@@ -79,7 +79,7 @@ The original sandbox, ZIP validation, Lua API boundaries, existing native gamepl
 - `ASAN_OPTIONS=detect_leaks=0 CC=clang MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' bash tests/mods/run_host_tests.sh`: pass with AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer had to be disabled because the sandbox reports that ptrace-based leak detection is unavailable; leak detection is therefore not verified.
 - `MOD_EXTERNAL_ROOT=/tmp/mission69-omm-probe bash tests/mods/run_host_tests.sh`: existing host tests pass; the OMM source probe is discovered, skips its 32-bit chunk, and fails on the missing `audio_sample_load` binding as described above.
 - GitHub Actions `Metal Apple SDK validation` run 44446368613 passed both Linux checks and its `ios-metal-compile` job on the `xcode-27` runner. This validates the Metal backend/MSL toolchain but does not compile the full SM64 iOS app for arm64.
-- `Native iOS Metal IPA` run 44448837769 passed its Linux gate and SDL2/Metal validation, then failed at the full-app arm64 link on `_gGlobalSoundSource`. That missing engine definition is fixed in the current worktree; the next compile-only run is pending. No IPA was packaged.
+- `Native iOS Metal IPA` run 44449726460 passed its Linux checks, SDL2/Metal validation, and the full iPhoneOS arm64 compile-only step. Its IPA packaging step was skipped. An earlier run exposed the missing `_gGlobalSoundSource` definition, which is now supplied by the native audio engine.
 - Physical iPhone behavior has not been tested.
 
 ## M1 gaps and next work
