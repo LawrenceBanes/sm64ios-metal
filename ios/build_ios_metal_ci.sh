@@ -218,6 +218,7 @@ build_full_game() {
     local app="$product_dir/sm64ios.app"
     local ipa="$private_dir/sm64ios-connected-world-arm64-unsigned.ipa"
     [[ -d "$app" ]] || { echo 'Xcode did not create the app bundle' >&2; return 1; }
+    python3 ios/validate_app_identity.py "$app/Info.plist"
     python3 ios/package_unsigned_ipa.py "$app" "$ipa" >"$private_dir/packaging.log" 2>&1
     python3 ios/validate_ipa.py "$ipa" --require-system-deps --require-game-textures \
         >"$private_dir/ipa-validation.log" 2>&1
@@ -260,6 +261,7 @@ compile_full_game() {
         return 1
     fi
     [[ -d "$product_dir/sm64ios.app" ]] || { echo 'Xcode did not create the app bundle' >&2; return 1; }
+    python3 ios/validate_app_identity.py "$product_dir/sm64ios.app/Info.plist"
     python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-compile-summary.txt"
     printf 'Full iPhoneOS arm64 Metal game compilation: PASS\n' >>"$safe_dir/ios-compile-summary.txt"
     cat "$safe_dir/ios-compile-summary.txt"
