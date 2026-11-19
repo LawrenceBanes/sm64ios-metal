@@ -1,46 +1,48 @@
-# Mission 72 — Compatibility Implementation Report
+# Mission 72 — Fast3D Compatibility Report
 
 ## Result
 
-**PARTIAL — host-side compatibility increased; Apple build and device IPA blocked.**
+**PARTIAL — Fast3D import compatibility expanded and host-validated; branch publication and Apple/device validation remain blocked.**
 
-Implementation branch: `mission-72-fast3d-compat`  
-Starting commit: `93a8f67be79dee48f2b67013c7fdc8bcf70853db`  
-Implementation commit: `2bb532c4cb4d9c6ff2dc17b8aaed51b506c5c90b`
+- Branch: `mission-72-fast3d-compat`
+- Mission 72 starting baseline: `93a8f67be79dee48f2b67013c7fdc8bcf70853db`
+- Previously committed local work: `2bb532c4cb4d9c6ff2dc17b8aaed51b506c5c90b`, `b9ee36f17757e68253fbbcdc35008566134b0fb4`
+- Recovery implementation is committed locally; this report and progress handoff are the final documentation commit.
 
-## Changes
+## Implemented
 
-- `tools/o2r_draw_trace.py` reads and validates bounded 64-byte O2R N64 fixed 16.16 matrices. It interprets hashed `MTX_OTR` and segmented `G_MTX` model-view operations (load, multiply, push, pop), rejects projection/non-affine use, snapshots the matrix at vertex-load time, and records it in deterministic draw traces.
-- `tools/o2r_to_wsc3.py` bakes supported static affine transforms into WSC3 vertex positions. `LOADTILE` now lowers supported 4-, 8-, and 16-bit crops when source and TMEM strides agree; CI4 handles odd-nibble origins and packs the crop before palette expansion. Invalid alignment, bounds, or layout remains a conversion error.
-- The dry-run and conversion reports include draw acceptance/rejection reasons, geometry/material/texture counts, collision and room/link coverage, used matrix resources, and bounded package/payload estimates.
-- The tracer now decodes F3DEX2 `MOVEWORD G_MW_FOG` and `G_MW_NUMLIGHT`, preserving coefficients, fog color, provenance, and per-vertex-load timing. Fogged geometry remains rejected for WSC3 export because fog depends on runtime clip-space depth; lit geometry remains rejected because light records, normal transforms, and vertex-light evaluation are not lowered.
-- No WSC binary version, native Metal shader, gameplay, or runtime loader was changed. WSC1/WSC2/WSC3 package layouts remain untouched.
-
-## Fixture evidence
-
-The original authored two-room fixture combining opaque/translucent draws, CI4/CI8, two texture inputs, TLUT data, odd-nibble CI4 cropping, a hashed translation matrix, collision, safe spawns, and a room link converted deterministically:
-
-- 4 of 4 candidate draws translated
-- 2 rooms, 6 render triangles, 4 collision triangles
-- 2 materials, 2 textures, 1 room link
-- 1,006-byte WSC3 payload
-
-This is host-side authored-fixture evidence, not an authentic Nintendo scene conversion or an iPhone rendering result.
+- Static hashed/segmented affine model-view replay and position baking; supported 4/8/16-bit texture crops, including odd-nibble CI4 handling.
+- Fog state tracing and WSC4 encoding for homogeneous per-material fog. Native scene loading accepts WSC4 while preserving WSC1/WSC2/WSC3 layouts. The renderer computes the source SM64 clip-depth fog factor and blends fog RGB in the scene-material Metal shader path.
+- Static directional-plus-ambient `G_LIGHTING` conversion. The tracer resolves bounded `Light_t` records and per-vertex normals. When the combiner consumes shade RGB, the importer applies the source `calculate_normal_dir` and vertex-light equation, then bakes the result into the existing WSC3 vertex color. No new material format is needed for static lighting.
+- Explicit rejection for incomplete/mixed fog state, missing or unsupported lighting state, positional lights, and unsupported texgen. No silent substitute colors are emitted.
+- `ios/WSC4_FORMAT.md` specifies the versioned fog record and the compatibility boundaries.
 
 ## Validation
 
-**PASS:** `tests/run_linux_checks.sh` completed with exit code 0 after the final implementation and tests. This includes the repository Linux regression suite and host syntax builds for existing iOS/Metal C interfaces. Existing warnings remain in `src/pc/platform.c` and `src/game/mario_actions_airborne.c`.
+- **PASS:** `./tests/run_linux_checks.sh` completed with exit code 0, including the full Linux regression script and its host-side compilation/replay checks. Existing compiler warnings in `src/pc/platform.c` and `src/game/mario_actions_airborne.c` remain.
+- **PASS:** Fast3D tile/TLUT and pass-state reference harnesses against pinned upstream checkouts, with ASan/UBSan. `ASAN_OPTIONS=detect_leaks=0` is required because LeakSanitizer is unavailable under this host's ptrace policy.
+- **PASS:** `CC='clang -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=0 python3 tests/test_world_scene_package.py` — 5 package/runtime tests passed, including WSC4 fog loading, shader feature selection, fog-factor calculation, and teardown. Existing WSC1/WSC2/WSC3 coverage remains in the suite.
+- **PASS:** Focused converter suites: `tests/test_o2r_draw_trace.py` (14 tests) and `tests/test_o2r_to_wsc3.py` (13 tests).
+- **PASS:** `git diff --check`.
+- **UNVERIFIED:** Apple/Xcode build and Metal compiler validation; `xcodebuild` is not installed.
+- **UNVERIFIED:** Physical-iPhone rendering. Host MSL source generation/replay does not establish native Apple Metal execution or visual correctness.
 
-**PASS:** `tests/test_o2r_draw_trace.py` (13 tests), `tests/test_o2r_to_wsc3.py` (12 tests), and both focused suites under `PYTHONMALLOC=debug`.
+## Real archive check
 
-**PASS:** `git diff --check`; worktree is clean after commit.
+The locally supplied archive was read-only and remains outside Git. SHA-256:
 
-**PASS:** Pinned Fast3D tile/TLUT parity and pinned OoT pass-setup parity harnesses passed under ASan/UBSan using `/tmp/mission67h-upstream-audit`. Leak detection had to be disabled (`ASAN_OPTIONS=detect_leaks=0`) because LeakSanitizer aborts under this host's ptrace policy. The modified importer is Python; this is reference-harness sanitizer coverage, not sanitizer coverage of the Python parser.
+`e3bf3ae3565768998026e60113ed3fc506fc5415e23299de41b9b42a5fbc3807`
 
-**BLOCKED:** `xcodebuild` is not installed. Direct GitHub access from the shell fails DNS resolution for `github.com`/`api.github.com`; the isolated branch is not published (the connected GitHub repository API confirmed the branch is absent). The available GitHub connector has no workflow-dispatch operation. No Actions run, private upload, IPA, or physical-device test was performed.
+A raw trace of `scenes/shared/spot04_scene/spot04_scene` found 3 rooms, 40 decoded display lists, 1,054 candidate draws, and 6 unresolved dynamic display-list calls. Without the required runtime/pass prelude, all 1,054 candidates are incomplete, including absent fog coefficients/color and incomplete render state. All records mark lighting enabled, but none consume `shade.rgb`; therefore static vertex lighting does not currently change this scene's traced output. This trace is not a valid Kokiri conversion and no scene was exported or called playable.
 
-## Boundaries and next step
+## Publication and build status
 
-Fog, vertex lighting, generated texture coordinates, non-equivalent alpha/coverage/depth modes, dynamic runtime display lists, actors, water boxes, camera scripts, and game events remain unsupported or explicitly diagnosed. No WSC4 change was justified by the authored fixture. The affine matrix path assumes a matrix is a static model/world transform; the importer cannot infer whether an O2R matrix encodes a runtime camera transform, so those inputs must not be baked as world geometry.
+- **BLOCKED:** The shell cannot resolve `github.com`; the attempted Git push failed with `Could not resolve host: github.com`. No remote update is claimed.
+- **BLOCKED:** No Apple validation workflow was run. The local checkout has no `xcodebuild`, and the established workflow does not provide a usable local substitute for Apple's SDK/Metal compiler.
+- No IPA, private upload, or physical-device test was produced.
 
-After GitHub connectivity is restored, push this isolated branch and run the existing manual asset-free Apple validation first. A full-game IPA additionally requires the authorized private base-asset bundle and private release access. No proprietary assets or generated worlds are present in this commit.
+The initial local HEAD and full reachable Git history were preserved before implementation in `/tmp/sm64ios-mission72-b9ee36f.bundle` (verified with `git bundle verify`). A second bundle will preserve the final committed recovery work.
+
+## Remaining compatibility limits
+
+Dynamic runtime-generated display lists, runtime-varying lights, positional lighting, generated texture coordinates, several alpha/coverage/depth modes, scene actors, water boxes, camera scripts, and game events remain unsupported or explicitly rejected. Static matrix lowering assumes camera-independent model/world transforms. The local Kokiri trace requires accurate runtime pass initialization and resolution of six dynamic calls before a scene conversion can establish meaningful fog behavior.
