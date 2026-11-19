@@ -7,9 +7,12 @@ trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
 
 LUA_SRC="$ROOT/vendor/lua53/src"
 cp -R "$ROOT/tests/mods/fixtures" "$BUILD/fixtures"
-python3 - "$BUILD/fixtures/mods/00_core/actors" <<'PY'
+python3 - "$BUILD/fixtures/mods/00_core/actors" \
+  "${MOD_TEST_DYNOS_ACTOR_ZIP:-}" "${MOD_TEST_DYNOS_ACTOR_ENTRY:-}" \
+  "${MOD_TEST_DYNOS_ACTOR_NAME:-}" <<'PY'
 import struct, sys, zlib
 from pathlib import Path
+import zipfile
 root = Path(sys.argv[1]); root.mkdir(parents=True, exist_ok=True)
 def name(value):
     raw = value.encode(); return bytes([len(raw)]) + raw
@@ -28,6 +31,18 @@ body += struct.pack('<I', 0x52544e50) + name('fixture_dl') + struct.pack('<I', 0
 body += struct.pack('<II', 0x05, 0x01)
 compressed = zlib.compress(body)
 (root / 'fixture_actor.bin').write_bytes(b'DYNOSBIN' + struct.pack('<Q', len(body)) + compressed)
+archive_path, member_name, model_name = sys.argv[2:5]
+if archive_path or member_name or model_name:
+    if not archive_path or not member_name or not model_name:
+        raise SystemExit('set MOD_TEST_DYNOS_ACTOR_ZIP, _ENTRY, and _NAME together')
+    if not model_name.replace('_', '').replace('-', '').isalnum():
+        raise SystemExit('invalid model name for temporary actor fixture')
+    with zipfile.ZipFile(archive_path) as archive:
+        info = archive.getinfo(member_name)
+        if info.file_size <= 0 or info.file_size > 8 * 1024 * 1024:
+            raise SystemExit('actor bundle has invalid or oversized length')
+        (root / f'{model_name}.bin').write_bytes(archive.read(info))
+    print(f'private DynOS actor fixture: {member_name} ({info.file_size} bytes)')
 PY
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.

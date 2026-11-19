@@ -44,6 +44,8 @@ bool rendering_graph_host_process_object(struct Object *object,
                                          struct AllocOnlyPool *display_list_pool,
                                          void *gfx_scratch, size_t gfx_scratch_size);
 unsigned int rendering_graph_host_display_list_submissions(void);
+unsigned int rendering_graph_host_geo_callbacks(void);
+unsigned int rendering_graph_host_transform_nodes(void);
 #endif
 
 #endif // RENDERING_GRAPH_NODE_H

@@ -152,6 +152,10 @@ void mtxf_identity(Mat4 matrix) {
     memset(matrix, 0, sizeof(Mat4));
     for (int i = 0; i < 4; ++i) matrix[i][i] = 1.0f;
 }
+void mtxf_copy(Mat4 dest, Mat4 src) { memcpy(dest, src, sizeof(Mat4)); }
+void mtxf_translate(Mat4 dest, Vec3f pos) {
+    mtxf_identity(dest); dest[3][0] = pos[0]; dest[3][1] = pos[1]; dest[3][2] = pos[2];
+}
 void mtxf_mul(Mat4 out, Mat4 a, Mat4 b) {
     Mat4 result;
     for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
@@ -162,6 +166,13 @@ void mtxf_mul(Mat4 out, Mat4 a, Mat4 b) {
 }
 void mtxf_rotate_zxy_and_translate(Mat4 out, Vec3f pos, Vec3s angles) {
     (void)angles; mtxf_identity(out); out[3][0] = pos[0]; out[3][1] = pos[1]; out[3][2] = pos[2];
+}
+void mtxf_rotate_xyz_and_translate(Mat4 out, Vec3f pos, Vec3s angles) {
+    mtxf_rotate_zxy_and_translate(out, pos, angles);
+}
+void *vec3s_to_vec3f(Vec3f dest, Vec3s src) {
+    dest[0] = src[0]; dest[1] = src[1]; dest[2] = src[2];
+    return NULL;
 }
 void mtxf_scale_vec3f(Mat4 out, Mat4 in, Vec3f scale) {
     memcpy(out, in, sizeof(Mat4));
@@ -1324,14 +1335,23 @@ int main(int argc, char **argv) {
 #ifdef MOD_RUNTIME_HOST_TEST
     if (getenv("MOD_TEST_DYNOS_GRAPH_RENDER")) {
         char model_error[400] = {0};
+        const char *model_name = getenv("MOD_TEST_DYNOS_ACTOR_NAME");
+        if (!model_name || !*model_name) model_name = "fixture_actor";
         int extended_id = 0;
-        if (!mod_runtime_host_load_dynos_model(0, "fixture_actor", &extended_id,
+        if (!mod_runtime_host_load_dynos_model(0, model_name, &extended_id,
                                                model_error, sizeof(model_error))) {
-            fprintf(stderr, "synthetic actor activation failed: %s\n", model_error);
+            fprintf(stderr, "DynOS actor activation failed: %s\n", model_error);
             assert(false);
         }
-        assert(extended_id >= 0x10000 && gLoadedGraphNodes[0xE6] != NULL);
-        assert(mod_runtime_extended_model_id(0xE6) == extended_id);
+        assert(extended_id >= 0x10000);
+        int native_model = -1;
+        for (int i = 0; i < 0x100; ++i) {
+            if (gLoadedGraphNodes[i] && mod_runtime_extended_model_id(i) == extended_id) {
+                native_model = i;
+                break;
+            }
+        }
+        assert(native_model >= 0);
 
         struct Object *actor = &sMarioObject;
         struct GraphNodeObject saved_actor_gfx = actor->header.gfx;
@@ -1341,9 +1361,10 @@ int main(int argc, char **argv) {
         actor->header.gfx.pos[1] = 34.0f;
         actor->header.gfx.pos[2] = -1000.0f;
         vec3f_set(actor->header.gfx.scale, 1.0f, 1.0f, 1.0f);
+        memset(&actor->header.gfx.unk38, 0, sizeof(actor->header.gfx.unk38));
         assert(mod_runtime_host_set_object_model(actor, extended_id, model_error,
                                                  sizeof(model_error)));
-        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[0xE6]);
+        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[native_model]);
 
         struct GraphNodeRoot root = {0};
         struct GraphNodePerspective frustum = {0};
@@ -1362,10 +1383,23 @@ int main(int argc, char **argv) {
         assert(rendering_graph_host_process_object(actor, &root, &frustum, &camera,
                                                    &master, &display_pool, gfx_scratch,
                                                    sizeof(gfx_scratch)));
-        assert(rendering_graph_host_display_list_submissions() == 1);
-        assert(master.listHeads[0] != NULL);
-        assert(master.listHeads[0]->displayList != NULL);
-        assert(master.listHeads[0]->next == NULL);
+        unsigned int submissions = rendering_graph_host_display_list_submissions();
+        assert(submissions > 0);
+        unsigned int listed_submissions = 0;
+        for (int layer = 0; layer < GFX_NUM_MASTER_LISTS; ++layer) {
+            for (struct DisplayListNode *entry = master.listHeads[layer]; entry; entry = entry->next) {
+                assert(entry->displayList != NULL);
+                listed_submissions++;
+            }
+        }
+        assert(listed_submissions == submissions);
+        assert((model_name && strcmp(model_name, "fixture_actor") != 0) || submissions == 1);
+        unsigned int callbacks = rendering_graph_host_geo_callbacks();
+        unsigned int transform_nodes = rendering_graph_host_transform_nodes();
+        if (strcmp(model_name, "omm_peachy_geo") == 0) {
+            assert(callbacks > 0);
+            assert(transform_nodes > 1);
+        }
         assert(actor->header.gfx.cameraToObject[0] == 12.0f &&
                actor->header.gfx.cameraToObject[1] == 34.0f &&
                actor->header.gfx.cameraToObject[2] == -1000.0f);
@@ -1375,7 +1409,8 @@ int main(int argc, char **argv) {
                                                     sizeof(gfx_scratch)));
         assert(rendering_graph_host_display_list_submissions() == 0);
         actor->header.gfx = saved_actor_gfx;
-        puts("DynOS host integration: registered model -> object -> geo_process_object -> geo_append_display_list passed");
+        printf("DynOS host integration: %s (extended %d, native slot 0x%x), geo_process_object -> %u display-list submission(s), %u callback(s), %u transform node(s)\n",
+               model_name, extended_id, native_model, submissions, callbacks, transform_nodes);
     }
 #endif
     assert(sMarioBodyState.modelState == 0x25 && sMarioBodyState.capState == 2 &&
