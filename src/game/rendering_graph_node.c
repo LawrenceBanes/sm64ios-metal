@@ -16,6 +16,7 @@
 #include "level_update.h"
 #include "object_list_processor.h"
 #include "pc/mods/mod_runtime.h"
+#include "pc/gfx/gfx_ios_diagnostics.h"
 #include "actors/group12.h"
 #endif
 
@@ -54,6 +55,9 @@ static unsigned int sHostTransformNodes;
 #define GEO_HOST_NOTE_TRANSFORM() (++sHostTransformNodes)
 #else
 #define GEO_HOST_NOTE_TRANSFORM() ((void)0)
+#endif
+#if defined(IOS_BUILD)
+static uint64_t sPlayerDynosDisplayListAppends;
 #endif
 
 /**
@@ -191,6 +195,19 @@ static void geo_process_master_list_sub(struct GraphNodeMasterList *node) {
  * render modes of layers.
  */
 static void geo_append_display_list(void *displayList, s16 layer) {
+
+#if defined(IOS_BUILD)
+    if (gMarioState && gMarioState->marioObj &&
+        gCurGraphNodeObject == (struct GraphNodeObject *)gMarioState->marioObj) {
+        uint32_t model_id = mod_runtime_player_dynos_model_id();
+        if (model_id) {
+            uint64_t appends = ++sPlayerDynosDisplayListAppends;
+            if (appends == 1 || appends % 30 == 0)
+                gfx_ios_diag_log("DynOS local actor display-list append count=%llu extendedModel=%u layer=%d",
+                                 (unsigned long long)appends, model_id, layer);
+        }
+    }
+#endif
 
 #ifdef F3DEX_GBI_2
     gSPLookAt(gDisplayListHead++, &lookAt);

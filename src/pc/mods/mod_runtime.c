@@ -7282,6 +7282,13 @@ bool mod_runtime_request_player_native_model(void) {
     return enqueue_request(MOD_REQUEST_PLAYER_NATIVE_MODEL, 0, false, NULL);
 }
 
+uint32_t mod_runtime_player_dynos_model_id(void) {
+    DynosModel *model = sPlayerDynosModel;
+    if (!model || !model->owner || !model->owner->enabled || !model->owner->loaded ||
+        !gLoadedGraphNodes || gLoadedGraphNodes[model->native_slot] != model->graph) return 0;
+    return model->extended_id;
+}
+
 bool mod_runtime_request_menu_set_value(int mod_index, int item_index, int64_t value) {
     if (mod_index < 0 || item_index < 0) return false;
     ModRuntimeMenuItem item_info;

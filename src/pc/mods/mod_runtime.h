@@ -136,6 +136,8 @@ bool mod_runtime_request_import_zip(const char *zip_path);
 /* Queued game-thread controls for the current local player's native actor. */
 bool mod_runtime_request_player_dynos_model(const char *model_name);
 bool mod_runtime_request_player_native_model(void);
+/* Returns the active local-player DynOS ID, or zero when native Mario is selected. */
+uint32_t mod_runtime_player_dynos_model_id(void);
 int mod_runtime_dynos_pack_count(void);
 const char *mod_runtime_dynos_pack_name(int index);
 const char *mod_runtime_dynos_pack_summary(int index);

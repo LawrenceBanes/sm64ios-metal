@@ -1366,6 +1366,7 @@ int main(int argc, char **argv) {
         assert(mod_runtime_request_player_dynos_model(model_name));
         mod_runtime_host_process_requests();
         assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[native_model]);
+        assert(mod_runtime_player_dynos_model_id() == (uint32_t)extended_id);
         actor->header.gfx.sharedChild = NULL; /* Simulate a native model reset before object traversal. */
         mod_runtime_object_render(actor);
         assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[native_model]);
@@ -1375,6 +1376,7 @@ int main(int argc, char **argv) {
         assert(mod_runtime_request_player_native_model());
         mod_runtime_host_process_requests();
         assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[MODEL_MARIO]);
+        assert(mod_runtime_player_dynos_model_id() == 0);
         gLoadedGraphNodes[MODEL_MARIO] = saved_mario_graph;
         struct GraphNodeObject saved_actor_gfx = actor->header.gfx;
         actor->header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
