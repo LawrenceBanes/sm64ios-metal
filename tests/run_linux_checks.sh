@@ -17,6 +17,7 @@ $cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/controller_dpa
 "$controller_dpad_test_bin"
 rm -f "$controller_dpad_test_bin"
 CC="$cc" sh "$repo_dir/tests/mods/run_host_tests.sh"
+CC="$cc" sh "$repo_dir/tests/mods/run_dynos_actor_tests.sh"
 CC="$cc" sh "$repo_dir/tests/mods/run_zip_import_tests.sh"
 python3 "$repo_dir/ios/test_render_diagnostics.py"
 python3 "$repo_dir/ios/test_metal_graphics_foundation.py"

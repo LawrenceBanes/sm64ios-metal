@@ -1,6 +1,48 @@
 /* Run the production display-list interpreter up to the graphics API boundary.
  * The test mounts the generated base pack and records draws and texture uploads. */
 #include "src/pc/gfx/gfx_pc.c"
+#include "pc/mods/dynos_actor.h"
+#include "pc/mods/dynos_actor_native.h"
+
+static bool sDynosReplay;
+static struct {
+    char key[32];
+    uint8_t *pixels;
+    uint32_t width, height;
+} sDynosTextures[256];
+static size_t sDynosTextureCount;
+
+static const void *dynos_test_texture(void *context, const char *name,
+                                      const uint8_t *png, size_t size) {
+    (void)context;
+    (void)name;
+    if (sDynosTextureCount >= 256 || size > INT_MAX) return NULL;
+    int width, height;
+    uint8_t *pixels = stbi_load_from_memory(png, (int)size, &width, &height, NULL, 4);
+    if (!pixels || width <= 0 || height <= 0 || width > 512 || height > 512) {
+        stbi_image_free(pixels);
+        return NULL;
+    }
+    size_t index = sDynosTextureCount++;
+    snprintf(sDynosTextures[index].key, sizeof(sDynosTextures[index].key),
+             "m69tex:actor%zu", index);
+    sDynosTextures[index].pixels = pixels;
+    sDynosTextures[index].width = (uint32_t)width;
+    sDynosTextures[index].height = (uint32_t)height;
+    return sDynosTextures[index].key;
+}
+
+static void *dynos_test_geo_function(void *node, int context) {
+    (void)node;
+    (void)context;
+    return NULL;
+}
+
+static const void *dynos_test_function(void *context, uint32_t index) {
+    (void)context;
+    /* The renderer replay does not invoke GeoLayout callbacks. */
+    return index < 64 ? (const void *)dynos_test_geo_function : NULL;
+}
 
 static const uint8_t sDynamicModTextureRgba[] = {
     255, 32, 16, 255, 16, 32, 255, 192,
@@ -12,6 +54,14 @@ static unsigned sDynamicModTextureUploads;
 // branch independently from Lua/mod ownership.
 bool mod_runtime_dynamic_texture_lookup(const char *key, const uint8_t **rgba,
                                         uint32_t *width, uint32_t *height) {
+    for (size_t i = 0; i < sDynosTextureCount; ++i) {
+        if (key && !strcmp(key, sDynosTextures[i].key)) {
+            *rgba = sDynosTextures[i].pixels;
+            *width = sDynosTextures[i].width;
+            *height = sDynosTextures[i].height;
+            return true;
+        }
+    }
     if (!key || strcmp(key, "m69tex:host-fixture") != 0 || !rgba || !width || !height)
         return false;
     *rgba = sDynamicModTextureRgba;
@@ -41,6 +91,7 @@ static struct CCFeatures features;
 static void record_draw(float *stream, size_t floats, size_t triangles) {
     for (size_t i = 0; i < floats; ++i) assert(isfinite(stream[i]));
 #ifdef REPLAY_FIXTURE
+    if (!sDynosReplay) {
     // The static water uses the authored primitive opacity (102/255). Check
     // the actual shader input and its alpha in the interleaved vertex stream.
     assert(features.opt_alpha && features.do_single[1]);
@@ -53,12 +104,21 @@ static void record_draw(float *stream, size_t floats, size_t triangles) {
     for (size_t v = 0; v < floats; v += stride) {
         assert(fabsf(stream[v + input_start + (alpha_input - 1) * 4 + 3] - 0.4f) < 1.e-6f);
     }
+    }
 #endif
     draws += triangles;
 }
 
 static void record_upload(const uint8_t *rgba, int width, int height) {
     assert(rgba != missing_texture && width > 0 && height > 0);
+    for (size_t i = 0; i < sDynosTextureCount; ++i) {
+        if (rgba == sDynosTextures[i].pixels) {
+            assert(width == (int)sDynosTextures[i].width &&
+                   height == (int)sDynosTextures[i].height);
+            ++uploads;
+            return;
+        }
+    }
     if (rgba == sDynamicModTextureRgba) {
         static const uint8_t expected[] = {255, 32, 16, 255, 16, 32, 255, 192};
         assert(width == 2 && height == 1 && !memcmp(rgba, expected, sizeof(expected)));
@@ -76,6 +136,7 @@ static void record_upload(const uint8_t *rgba, int width, int height) {
         return;
     }
 #ifdef REPLAY_FIXTURE
+    assert(!sDynosReplay);
     const uint8_t expected[] = {255,0,0,255, 0,255,0,255};
     assert(width == 1 && height == 2 && !memcmp(rgba, expected, sizeof(expected)));
 #endif
@@ -133,6 +194,46 @@ static void test_dynamic_mod_texture_upload(void) {
     rdp.loaded_texture[0].size_bytes = sizeof(sDynamicModTextureRgba);
     import_texture(0);
     assert(sDynamicModTextureUploads == 1);
+}
+
+static void replay_dynos_actor(const char *path) {
+    FILE *file = fopen(path, "rb");
+    assert(file && !fseek(file, 0, SEEK_END));
+    long length = ftell(file);
+    assert(length > 16 && length < 8 * 1024 * 1024 && !fseek(file, 0, SEEK_SET));
+    uint8_t *bytes = malloc((size_t)length);
+    assert(bytes && fread(bytes, 1, (size_t)length, file) == (size_t)length);
+    fclose(file);
+    DynosActorBundle bundle;
+    DynosNativeActor native;
+    char error[400];
+    assert(dynos_actor_decode(bytes, (size_t)length, &bundle, error, sizeof(error)));
+    assert(dynos_actor_native_build(&bundle, dynos_test_texture,
+                                    dynos_test_function, NULL, &native, error, sizeof(error)));
+    sDynosReplay = true;
+    unsigned old_draws = draws, old_uploads = uploads;
+    for (size_t i = 0; i < bundle.record_count; ++i) {
+        if (bundle.records[i].type != 4) continue;
+        const Gfx *commands = native.resources[i];
+        bool textured = false;
+        for (uint32_t j = 0; j < bundle.records[i].count; ++j)
+            textured |= ((uint8_t)(commands[j].words.w0 >> 24) == G_SETTIMG);
+        if (!textured) continue;
+        gfx_sp_reset();
+        gfx_run_dl((Gfx *)commands);
+        gfx_flush();
+        if (draws > old_draws && uploads > old_uploads) break;
+    }
+    assert(draws > old_draws && uploads > old_uploads);
+    fprintf(stderr, "DynOS host renderer: %u triangles, %u texture uploads\n",
+            draws - old_draws, uploads - old_uploads);
+    sDynosReplay = false;
+    dynos_actor_native_free(&native);
+    dynos_actor_free(&bundle);
+    free(bytes);
+    for (size_t i = 0; i < sDynosTextureCount; ++i)
+        stbi_image_free(sDynosTextures[i].pixels);
+    sDynosTextureCount = 0;
 }
 
 static void replay_passes(bool connected) {
@@ -202,5 +303,9 @@ int main(int argc, char **argv) {
         assert(missing_hyrule_uploads == 0);
     test_dynamic_mod_texture_upload();
     printf("Hyrule host replay: %u triangles submitted, %u texture uploads\n", draws, uploads);
+    if (getenv("DYNOS_REPLAY_BUNDLE")) {
+        gfx_sp_matrix(G_MTX_MODELVIEW | G_MTX_LOAD, (const int32_t *)identity);
+        replay_dynos_actor(getenv("DYNOS_REPLAY_BUNDLE"));
+    }
     return 0;
 }

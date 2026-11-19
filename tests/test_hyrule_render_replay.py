@@ -122,7 +122,8 @@ class HyruleRenderTest(unittest.TestCase):
             executable = work / "replay"
             sources = ["tests/hyrule_render_replay.c", "src/pc/gfx/gfx_cc.c",
                        "src/pc/gfx/gfx_scene_capture.c", "src/pc/platform.c",
-                       "src/engine/graph_node_manager.c", "src/engine/math_util.c"]
+                       "src/engine/graph_node_manager.c", "src/engine/math_util.c",
+                       "src/pc/mods/dynos_actor.c", "src/pc/mods/dynos_actor_native.c"]
             sources.extend(sorted((ROOT / "src/pc/fs").glob("*.c")))
             subprocess.run(shlex.split(os.environ.get("CC", "cc")) + [
                 "-std=gnu99", "-O1", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
@@ -130,7 +131,17 @@ class HyruleRenderTest(unittest.TestCase):
                 "-Iinclude", "-Isrc", "-I.", "-I" + str(render),
                 *([] if private_render else ["-DREPLAY_FIXTURE"]), *sources, "-lm", "-o", executable
             ], cwd=ROOT, check=True)
-            subprocess.run([executable, pack], check=True)
+            replay_env = os.environ.copy()
+            private_mod = os.environ.get("MOD_EXTERNAL_ZIP")
+            if private_mod:
+                with zipfile.ZipFile(private_mod) as source:
+                    actors = sorted(name for name in source.namelist()
+                                    if name.endswith(".bin") and "/actors/" in name)
+                    if actors:
+                        actor_path = work / "dynos-replay.bin"
+                        actor_path.write_bytes(source.read(actors[0]))
+                        replay_env["DYNOS_REPLAY_BUNDLE"] = str(actor_path)
+            subprocess.run([executable, pack], check=True, env=replay_env)
 
             # Simulate an incomplete private pack: the renderer must upload
             # a visible, opaque Hyrule diagnostic material for a sampled draw.
