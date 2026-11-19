@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "lua.h"
@@ -26,6 +27,7 @@
 #include "types.h"
 #include "object_fields.h"
 #include "engine/behavior_script.h"
+#include "engine/graph_node.h"
 #include "behavior_data.h"
 #include "mod_behavior_weak.inc"
 #include "game/area.h"
@@ -56,6 +58,8 @@
 #define MOD_MAX_COMMANDS 128u
 #define MOD_MAX_OWNED_OBJECTS 64u
 #define MOD_MAX_TRACKED_OBJECTS 128u
+#define MOD_MAX_POPUPS 16u
+#define MOD_MAX_POPUP_TEXT 256u
 
 enum { HOOK_UPDATE = 0, HOOK_MARIO_UPDATE = 1, HOOK_BEFORE_MARIO_UPDATE = 2,
        HOOK_ON_SET_MARIO_ACTION = 3, HOOK_BEFORE_PHYS_STEP = 4,
@@ -72,6 +76,7 @@ typedef struct ModRequest ModRequest;
 typedef struct ModStorageEntry ModStorageEntry;
 typedef struct ModMenuItem ModMenuItem;
 typedef struct ModCommand ModCommand;
+typedef struct ModPopup ModPopup;
 typedef struct DynosPack DynosPack;
 typedef struct ModCustomActionId ModCustomActionId;
 
@@ -91,6 +96,7 @@ struct ModCustomActionId { Mod *owner; uint32_t id; unsigned slot; ModCustomActi
 struct ModStorageEntry { char *key; size_t key_length; char *value; size_t value_length; ModStorageEntry *next; };
 struct ModMenuItem { char label[256]; int type; lua_Integer value, minimum, maximum; int callback_ref; char *file; };
 struct ModCommand { char name[64]; char description[256]; int callback_ref; char *file; ModCommand *next; };
+struct ModPopup { Mod *owner; char text[MOD_MAX_POPUP_TEXT]; int lines; double created_at; bool active; bool render_warning_reported; };
 
 struct Mod {
     char name[MOD_MAX_NAME];
@@ -118,17 +124,19 @@ struct Mod {
     bool contains_dynos_assets;
     bool pointer_warned;
     bool texture_lookup_warned;
+    bool popup_markup_warned;
     Mod *next;
 };
 
 typedef struct { size_t bytes; } LuaAllocator;
 typedef struct { lua_Integer id; const char *name; const BehaviorScript *script; } NativeBehavior;
 typedef struct { lua_Integer id; const char *name; int native_model; } NativeModel;
-typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT, LUA_UD_SURFACE } LuaUserdataKind;
+typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT,
+               LUA_UD_OBJECT_HEADER, LUA_UD_OBJECT_GFX, LUA_UD_GRAPH_NODE, LUA_UD_SURFACE } LuaUserdataKind;
 typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; struct Surface surface; } LuaUserdata;
 
 enum { VEC_MARIO_POS, VEC_MARIO_VEL, VEC_MARIO_FACE_ANGLE, VEC_MARIO_ANGLE_VEL,
-       VEC_GLOBAL_SOUND_SOURCE, VEC_DEFAULT_SOUND_ARGS };
+       VEC_GLOBAL_SOUND_SOURCE, VEC_DEFAULT_SOUND_ARGS, VEC_OBJECT_CAMERA_TO_OBJECT };
 enum { HOOK_FN_INIT, HOOK_FN_LOOP, HOOK_FN_ACTION, HOOK_FN_GRAVITY };
 
 static lua_State *sLua;
@@ -149,6 +157,7 @@ static int sInstructionBudget;
 static bool sInitialized;
 static bool sModsLoaded;
 static bool sActionSlots[MOD_ACTION_ID_CAPACITY];
+static ModPopup sPopups[MOD_MAX_POPUPS];
 static pthread_mutex_t sRequestMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t sModListMutex = PTHREAD_MUTEX_INITIALIZER;
 static ModRequest *sRequestHead;
@@ -512,6 +521,13 @@ static ModObject *find_object(struct Object *object) {
     return NULL;
 }
 
+static bool object_reference_valid(const LuaUserdata *ud) {
+    if (!ud || !ud->object) return false;
+    if (!ud->token) return true;
+    ModObject *entry = find_object(ud->object);
+    return entry && entry->token == ud->token;
+}
+
 static const BehaviorScript *object_behavior_script(struct Object *object) {
     ModObject *entry = find_object(object);
     if (entry && entry->behavior) return (const BehaviorScript *)entry->behavior->script;
@@ -523,6 +539,21 @@ static void push_object(lua_State *L, struct Object *object) {
     ModObject *entry = find_object(object);
     *ud = (LuaUserdata){ .kind = LUA_UD_OBJECT, .object = object, .token = entry ? entry->token : 0 };
     luaL_getmetatable(L, "sm64.mod.Object"); lua_setmetatable(L, -2);
+}
+
+static void push_object_proxy(lua_State *L, LuaUserdataKind kind, struct Object *object, uint32_t token) {
+    LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
+    *ud = (LuaUserdata){ .kind = kind, .object = object, .token = token };
+    const char *metatable = kind == LUA_UD_OBJECT_HEADER ? "sm64.mod.ObjectHeader" :
+                            kind == LUA_UD_OBJECT_GFX ? "sm64.mod.ObjectGfx" : "sm64.mod.GraphNode";
+    luaL_getmetatable(L, metatable); lua_setmetatable(L, -2);
+}
+
+static void push_object_camera_vector(lua_State *L, struct Object *object, uint32_t token) {
+    LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
+    *ud = (LuaUserdata){ .kind = LUA_UD_VEC_F, .field = VEC_OBJECT_CAMERA_TO_OBJECT,
+                         .object = object, .token = token };
+    luaL_getmetatable(L, "sm64.mod.Vec3f"); lua_setmetatable(L, -2);
 }
 
 static void push_surface(lua_State *L, const struct Surface *surface) {
@@ -547,6 +578,8 @@ static float *vec_f_pointer(LuaUserdata *ud) {
     switch (ud->field) {
         case VEC_GLOBAL_SOUND_SOURCE: return gGlobalSoundSource;
         case VEC_DEFAULT_SOUND_ARGS: return gDefaultSoundArgs;
+        case VEC_OBJECT_CAMERA_TO_OBJECT:
+            return object_reference_valid(ud) ? ud->object->header.gfx.cameraToObject : NULL;
         default: break;
     }
     struct MarioState *m = current_mario();
@@ -577,7 +610,11 @@ static int vector_index(lua_State *L) {
         axis = key[0] == 'x' ? 0 : key[0] == 'y' ? 1 : key[0] == 'z' ? 2 : -1;
     }
     if (axis < 0 || axis > 2) return luaL_error(L, "vector index must be x/y/z or 1..3");
-    if (ud->kind == LUA_UD_VEC_F) { float *v = vec_f_pointer(ud); lua_pushnumber(L, v ? v[axis] : 0); }
+    if (ud->kind == LUA_UD_VEC_F) {
+        float *v = vec_f_pointer(ud);
+        if (ud->field == VEC_OBJECT_CAMERA_TO_OBJECT && !v) return luaL_error(L, "stale Object cameraToObject reference");
+        lua_pushnumber(L, v ? v[axis] : 0);
+    }
     else { int16_t *v = vec_s_pointer(ud); lua_pushinteger(L, v ? v[axis] : 0); }
     return 1;
 }
@@ -591,7 +628,11 @@ static int vector_newindex(lua_State *L) {
         axis = key[0] == 'x' ? 0 : key[0] == 'y' ? 1 : key[0] == 'z' ? 2 : -1;
     }
     if (axis < 0 || axis > 2) return luaL_error(L, "vector index must be x/y/z or 1..3");
-    if (ud->kind == LUA_UD_VEC_F) { float *v = vec_f_pointer(ud); if (v) v[axis] = (float)luaL_checknumber(L, 3); }
+    if (ud->kind == LUA_UD_VEC_F) {
+        float *v = vec_f_pointer(ud);
+        if (ud->field == VEC_OBJECT_CAMERA_TO_OBJECT && !v) return luaL_error(L, "stale Object cameraToObject reference");
+        if (v) v[axis] = (float)luaL_checknumber(L, 3);
+    }
     else { int16_t *v = vec_s_pointer(ud); if (v) v[axis] = (int16_t)luaL_checkinteger(L, 3); }
     return 0;
 }
@@ -686,9 +727,14 @@ static int controller_newindex(lua_State *L) { return luaL_error(L, "Controller 
 
 static struct Object *checked_object(lua_State *L, int index) {
     LuaUserdata *ud = luaL_checkudata(L, index, "sm64.mod.Object");
-    if (!ud->object || (ud->token && (!find_object(ud->object) || find_object(ud->object)->token != ud->token)))
-        luaL_error(L, "stale Object reference");
+    if (!object_reference_valid(ud)) luaL_error(L, "stale Object reference");
     return ud->object;
+}
+
+static LuaUserdata *checked_object_proxy(lua_State *L, int index, LuaUserdataKind kind, const char *metatable) {
+    LuaUserdata *ud = luaL_checkudata(L, index, metatable);
+    if (ud->kind != kind || !object_reference_valid(ud)) luaL_error(L, "stale Object graph reference");
+    return ud;
 }
 
 static bool object_number_get(struct Object *o, const char *key, lua_State *L) {
@@ -729,8 +775,10 @@ static bool object_number_set(struct Object *o, const char *key, lua_State *L, i
 
 static int object_index(lua_State *L) {
     struct Object *o = checked_object(L, 1);
+    LuaUserdata *ud = lua_touserdata(L, 1);
     const char *key = luaL_checkstring(L, 2);
-    if (!strcmp(key, "parentObj") && o->parentObj) push_object(L, o->parentObj);
+    if (!strcmp(key, "header")) push_object_proxy(L, LUA_UD_OBJECT_HEADER, o, ud->token);
+    else if (!strcmp(key, "parentObj") && o->parentObj) push_object(L, o->parentObj);
     else if (!strcmp(key, "prevObj") && o->prevObj) push_object(L, o->prevObj);
     else if (!strcmp(key, "behavior")) lua_pushinteger(L, (lua_Integer)(uintptr_t)object_behavior_script(o));
     else if (!strcmp(key, "oFaceAnglePitch")) lua_pushinteger(L, o->oFaceAnglePitch);
@@ -745,6 +793,41 @@ static int object_newindex(lua_State *L) {
     if (!strcmp(key, "oFaceAnglePitch")) o->oFaceAnglePitch = (s16)luaL_checkinteger(L, 3);
     else if (!strcmp(key, "oFaceAngleRoll")) o->oFaceAngleRoll = (s16)luaL_checkinteger(L, 3);
     else if (!object_number_set(o, key, L, 3)) return luaL_error(L, "Object field '%s' is read-only or unsupported", key);
+    return 0;
+}
+
+static int object_header_index(lua_State *L) {
+    LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_OBJECT_HEADER, "sm64.mod.ObjectHeader");
+    const char *key = luaL_checkstring(L, 2);
+    if (!strcmp(key, "gfx")) push_object_proxy(L, LUA_UD_OBJECT_GFX, ud->object, ud->token);
+    else return luaL_error(L, "ObjectHeader field '%s' is unsupported by this adapter", key);
+    return 1;
+}
+
+static int object_gfx_index(lua_State *L) {
+    LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_OBJECT_GFX, "sm64.mod.ObjectGfx");
+    const char *key = luaL_checkstring(L, 2);
+    if (!strcmp(key, "node")) push_object_proxy(L, LUA_UD_GRAPH_NODE, ud->object, ud->token);
+    else if (!strcmp(key, "cameraToObject")) push_object_camera_vector(L, ud->object, ud->token);
+    else return luaL_error(L, "ObjectGfx field '%s' is unsupported by this adapter", key);
+    return 1;
+}
+
+static int graph_node_index(lua_State *L) {
+    LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_GRAPH_NODE, "sm64.mod.GraphNode");
+    const char *key = luaL_checkstring(L, 2);
+    if (!strcmp(key, "flags")) lua_pushinteger(L, (uint16_t)ud->object->header.gfx.node.flags);
+    else return luaL_error(L, "GraphNode field '%s' is unsupported by this adapter", key);
+    return 1;
+}
+
+static int graph_node_newindex(lua_State *L) {
+    LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_GRAPH_NODE, "sm64.mod.GraphNode");
+    const char *key = luaL_checkstring(L, 2);
+    if (strcmp(key, "flags")) return luaL_error(L, "GraphNode field '%s' is read-only or unsupported", key);
+    lua_Integer flags = luaL_checkinteger(L, 3);
+    if (flags < 0 || flags > UINT16_MAX) return luaL_argerror(L, 3, "graph flags must fit the engine's 16-bit field");
+    ud->object->header.gfx.node.flags = (s16)(uint16_t)flags;
     return 0;
 }
 
@@ -1191,6 +1274,97 @@ static int l_djui_hud_set_resolution(lua_State *L) {
     if (!mod_hud_set_resolution(resolution))
         return luaL_error(L, "djui_hud_set_resolution: expected RESOLUTION_DJUI (0) or RESOLUTION_N64 (1)");
     return 0;
+}
+
+static double mod_runtime_monotonic_seconds(void) {
+    struct timespec now;
+#if defined(CLOCK_MONOTONIC)
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+        return (double)now.tv_sec + (double)now.tv_nsec / 1000000000.0;
+#endif
+    return 0.0;
+}
+
+static void remove_mod_popups(Mod *owner) {
+    for (size_t i = 0; i < MOD_MAX_POPUPS; ++i) {
+        if (sPopups[i].owner == owner) memset(&sPopups[i], 0, sizeof(sPopups[i]));
+    }
+}
+
+static int l_djui_popup_create(lua_State *L) {
+    if (!sCurrentMod) return luaL_error(L, "djui_popup_create must be called from a loaded mod callback");
+    size_t length = 0;
+    const char *message = luaL_checklstring(L, 1, &length);
+    lua_Integer lines = luaL_checkinteger(L, 2);
+    if (length >= MOD_MAX_POPUP_TEXT)
+        return luaL_argerror(L, 1, "popup text must be shorter than 256 bytes");
+    if (lines < 1 || lines > 8)
+        return luaL_argerror(L, 2, "popup lines must be between 1 and 8 for this bounded HUD adapter");
+
+    double now = mod_runtime_monotonic_seconds();
+    ModPopup *slot = NULL;
+    for (size_t i = 0; i < MOD_MAX_POPUPS; ++i) {
+        if (sPopups[i].active && now - sPopups[i].created_at >= 6.0)
+            memset(&sPopups[i], 0, sizeof(sPopups[i]));
+        if (!slot && !sPopups[i].active) slot = &sPopups[i];
+    }
+    if (!slot) {
+        slot = &sPopups[0];
+        for (size_t i = 1; i < MOD_MAX_POPUPS; ++i)
+            if (sPopups[i].created_at < slot->created_at) slot = &sPopups[i];
+    }
+    slot->owner = sCurrentMod;
+    memcpy(slot->text, message, length);
+    slot->text[length] = '\0';
+    slot->lines = (int)lines;
+    slot->created_at = now;
+    slot->active = true;
+
+    if (!sCurrentMod->popup_markup_warned && strstr(message, "\\#")) {
+        sCurrentMod->popup_markup_warned = true;
+        mod_log("warning", sCurrentMod->name,
+                "djui_popup_create: CoopDX rich-color markup is not interpreted by the native font adapter");
+    }
+    play_sound(SOUND_MENU_PINCH_MARIO_FACE, gGlobalSoundSource);
+    return 0;
+}
+
+static void render_mod_popups(void) {
+    double now = mod_runtime_monotonic_seconds();
+    unsigned visible = 0;
+    for (size_t i = 0; i < MOD_MAX_POPUPS; ++i) {
+        ModPopup *popup = &sPopups[i];
+        if (!popup->active) continue;
+        if (!popup->owner || !popup->owner->enabled || now - popup->created_at >= 6.0) {
+            memset(popup, 0, sizeof(*popup));
+            continue;
+        }
+
+        /* CoopDX uses a 400px-wide, top-right popup with 32px per requested
+         * line and a 6-second lifetime. Keep the same placement/expiry while
+         * rendering via the existing native HUD queue and Metal display list. */
+        mod_hud_set_resolution(0);
+        mod_hud_set_font(0);
+        const float width = 400.0f;
+        const float height = (float)popup->lines * 32.0f + 32.0f;
+        const float x = (float)mod_hud_get_screen_width() - width - 16.0f;
+        const float y = 16.0f + (float)visible * (height + 8.0f);
+        double remaining = 6.0 - (now - popup->created_at);
+        float fade = remaining < 1.0 ? (float)remaining : 1.0f;
+        if (fade < 0.0f) fade = 0.0f;
+
+        mod_hud_set_color(0, 0, 0, (u8)(220.0f * fade));
+        bool rect_ok = mod_hud_render_rect(x, y, width, height);
+        mod_hud_set_color(220, 220, 220, (u8)(255.0f * fade));
+        bool text_ok = mod_hud_print_text(popup->text, x + 16.0f, y + 16.0f, 1.0f, 1.0f);
+        mod_hud_reset_color();
+        if ((!rect_ok || !text_ok) && !popup->render_warning_reported) {
+            mod_log("warning", popup->owner->name,
+                    "djui_popup_create: native HUD command budget or font adapter rejected popup rendering");
+            popup->render_warning_reported = true;
+        }
+        ++visible;
+    }
 }
 
 static int l_djui_hud_set_font(lua_State *L) {
@@ -1942,6 +2116,9 @@ static void register_api(void) {
     register_metatable("sm64.mod.Vec3f", vector_index, vector_newindex);
     register_metatable("sm64.mod.Vec3s", vector_index, vector_newindex);
     register_metatable("sm64.mod.Object", object_index, object_newindex);
+    register_metatable("sm64.mod.ObjectHeader", object_header_index, NULL);
+    register_metatable("sm64.mod.ObjectGfx", object_gfx_index, NULL);
+    register_metatable("sm64.mod.GraphNode", graph_node_index, graph_node_newindex);
     register_metatable("sm64.mod.Surface", surface_index, surface_newindex);
     register_api_function("hook_event", l_hook_event);
     register_api_function("allocate_mario_action", l_allocate_mario_action);
@@ -1963,6 +2140,7 @@ static void register_api(void) {
     register_api_function("perform_air_step", l_perform_air_step);
     register_api_function("perform_water_step", l_perform_water_step);
     register_api_function("play_sound", l_play_sound);
+    register_api_function("djui_popup_create", l_djui_popup_create);
     register_api_function("djui_hud_set_resolution", l_djui_hud_set_resolution);
     register_api_function("djui_hud_set_font", l_djui_hud_set_font);
     register_api_function("djui_hud_get_screen_width", l_djui_hud_get_screen_width);
@@ -2013,6 +2191,22 @@ static void register_api(void) {
     expose_int("HOOK_ON_INTERACT", HOOK_ON_INTERACT);
     expose_int("HOOK_ON_LEVEL_INIT", HOOK_ON_LEVEL_INIT);
     expose_int("HOOK_ON_EXIT", HOOK_ON_EXIT);
+
+    expose_int("A_BUTTON", A_BUTTON); expose_int("B_BUTTON", B_BUTTON);
+    expose_int("Z_TRIG", Z_TRIG); expose_int("START_BUTTON", START_BUTTON);
+    expose_int("U_JPAD", U_JPAD); expose_int("D_JPAD", D_JPAD);
+    expose_int("L_JPAD", L_JPAD); expose_int("R_JPAD", R_JPAD);
+    expose_int("L_TRIG", L_TRIG); expose_int("R_TRIG", R_TRIG);
+    expose_int("U_CBUTTONS", U_CBUTTONS); expose_int("D_CBUTTONS", D_CBUTTONS);
+    expose_int("L_CBUTTONS", L_CBUTTONS); expose_int("R_CBUTTONS", R_CBUTTONS);
+    expose_int("VALID_BUTTONS", VALID_BUTTONS); expose_int("C_BUTTONS", C_BUTTONS);
+    expose_int("GRAPH_RENDER_ACTIVE", GRAPH_RENDER_ACTIVE);
+    expose_int("GRAPH_RENDER_CHILDREN_FIRST", GRAPH_RENDER_CHILDREN_FIRST);
+    expose_int("GRAPH_RENDER_BILLBOARD", GRAPH_RENDER_BILLBOARD);
+    expose_int("GRAPH_RENDER_Z_BUFFER", GRAPH_RENDER_Z_BUFFER);
+    expose_int("GRAPH_RENDER_INVISIBLE", GRAPH_RENDER_INVISIBLE);
+    expose_int("GRAPH_RENDER_HAS_ANIMATION", GRAPH_RENDER_HAS_ANIMATION);
+    expose_int("GRAPH_RENDER_CYLBOARD", GRAPH_RENDER_CYLBOARD);
 
     push_vector(sLua, LUA_UD_VEC_F, VEC_GLOBAL_SOUND_SOURCE);
     lua_setglobal(sLua, "gGlobalSoundSource");
@@ -2177,6 +2371,7 @@ static void release_ref(int *ref) {
 
 static void unload_mod(Mod *mod) {
     if (!mod) return;
+    remove_mod_popups(mod);
 
     /* Stop scripted objects before freeing the callbacks they reference. */
     ModObject **object_link = &sObjects;
@@ -2565,6 +2760,7 @@ bool mod_runtime_mario_gravity(struct MarioState *m) {
 void mod_runtime_hud_render(void) {
     mod_hud_reset_frame();
     call_event(HOOK_ON_HUD_RENDER, 0, false, 0);
+    render_mod_popups();
 }
 void mod_runtime_level_init(int type, int level, int area, int node, int arg) {
     if (!sLua) return;

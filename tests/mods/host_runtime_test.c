@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "sm64.h"
+#include "audio_defines.h"
 #include "game/area.h"
 #include "game/save_file.h"
 #include "game/level_update.h"
@@ -38,6 +39,10 @@ s16 gCurrLevelNum;
 s16 gCurrAreaIndex;
 static s32 sLastSoundBits;
 static f32 sLastSoundPosition[3];
+static s32 sLastCompatSoundBits;
+static f32 sLastCompatSoundPosition[3];
+static s32 sLastGraphSoundBits;
+static f32 sLastGraphSoundPosition[3];
 int gModHudTestRectCount;
 int gModHudTestTextCount;
 int gModHudTestResolution;
@@ -273,6 +278,13 @@ void print_text(s32 x, s32 y, const char *text) { (void)x; (void)y; (void)text; 
 void play_sound(s32 sound_bits, f32 *position) {
     sLastSoundBits = sound_bits;
     memcpy(sLastSoundPosition, position, sizeof(sLastSoundPosition));
+    if (sound_bits == 0x1357) {
+        sLastCompatSoundBits = sound_bits;
+        memcpy(sLastCompatSoundPosition, position, sizeof(sLastCompatSoundPosition));
+    } else if (sound_bits == 0x2468) {
+        sLastGraphSoundBits = sound_bits;
+        memcpy(sLastGraphSoundPosition, position, sizeof(sLastGraphSoundPosition));
+    }
 }
 
 static void reset_game_state(void) {
@@ -295,15 +307,19 @@ static void reset_game_state(void) {
     append_test_object(OBJ_LIST_GENACTOR, &sGoombas[1], bhvGoomba, ACTIVE_FLAG_DEACTIVATED, 999);
     append_test_object(OBJ_LIST_GENACTOR, &sGoombas[2], bhvGoomba, ACTIVE_FLAG_ACTIVE, 202);
     memset(&sController, 0, sizeof(sController));
+    sController.buttonDown = D_JPAD;
     memset(gGlobalSoundSource, 0, sizeof(gGlobalSoundSource));
     memset(gDefaultSoundArgs, 0, sizeof(gDefaultSoundArgs));
     sLastSoundBits = 0;
     memset(sLastSoundPosition, 0, sizeof(sLastSoundPosition));
+    sLastCompatSoundBits = sLastGraphSoundBits = 0;
+    memset(sLastCompatSoundPosition, 0, sizeof(sLastCompatSoundPosition));
+    memset(sLastGraphSoundPosition, 0, sizeof(sLastGraphSoundPosition));
     gMarioState = &gMarioStates[0];
     gMarioState->marioObj = &sMarioObject;
     gMarioState->controller = &sController;
     gMarioState->action = ACT_IDLE;
-    sController.buttonPressed = INPUT_A_PRESSED;
+    sController.buttonPressed = A_BUTTON | D_JPAD;
 }
 
 static int bytecode_writer(lua_State *L, const void *data, size_t size, void *userdata) {
@@ -433,10 +449,17 @@ int main(int argc, char **argv) {
     mod_runtime_update();
     mod_runtime_hud_render();
     assert(mod_runtime_mod_enabled(8));
-    assert(gModHudTestRectCount == 1 && gModHudTestTextCount == 1);
+    assert(gModHudTestRectCount == 2 && gModHudTestTextCount == 2);
     assert(gModHudTestResolution == 0);
     assert(gModHudTestColor[0] == 255 && gModHudTestColor[1] == 255 &&
            gModHudTestColor[2] == 255 && gModHudTestColor[3] == 255);
+    assert(sLastSoundBits == SOUND_MENU_PINCH_MARIO_FACE); /* Upstream popup notification sound. */
+    assert(mod_runtime_set_enabled(8, false));
+    mod_runtime_hud_render();
+    assert(gModHudTestRectCount == 0 && gModHudTestTextCount == 0); /* Unload clears owner popups. */
+    assert(mod_runtime_set_enabled(8, true));
+    mod_runtime_hud_render();
+    assert(gModHudTestRectCount == 2 && gModHudTestTextCount == 2);
     assert(sSpawnedNativeObjectCount == 3);
     assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);
     assert(sSpawnedNativeModels[2] == MODEL_NONE);
@@ -452,8 +475,16 @@ int main(int argc, char **argv) {
     assert(sSpawnedNativeObjects[2].oPosX == 100.0f && sSpawnedNativeObjects[2].oPosY == 200.0f &&
            sSpawnedNativeObjects[2].oPosZ == 300.0f);
     assert(mod_runtime_mod_enabled(3)); /* Setup failure is isolated to its object. */
-    assert(sLastSoundBits == 0x1357);
-    assert(sLastSoundPosition[0] == 12.0f && sLastSoundPosition[1] == 34.0f && sLastSoundPosition[2] == 56.0f);
+    assert(sLastCompatSoundBits == 0x1357);
+    assert(sLastCompatSoundPosition[0] == 12.0f && sLastCompatSoundPosition[1] == 34.0f &&
+           sLastCompatSoundPosition[2] == 56.0f);
+    assert(sLastGraphSoundBits == 0x2468);
+    assert(sLastGraphSoundPosition[0] == 12.0f && sLastGraphSoundPosition[1] == 34.0f &&
+           sLastGraphSoundPosition[2] == 56.0f);
+    assert((sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE) == 0);
+    assert(sMarioObject.header.gfx.cameraToObject[0] == 12.0f &&
+           sMarioObject.header.gfx.cameraToObject[1] == 34.0f &&
+           sMarioObject.header.gfx.cameraToObject[2] == 56.0f);
     assert(mod_runtime_mod_enabled(7));
     assert(gMarioState->numCoins == 178); /* Native-width bytecode runs; the alternate-width twin is skipped. */
     assert(!mod_runtime_mod_enabled(4));

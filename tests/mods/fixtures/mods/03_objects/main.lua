@@ -32,10 +32,26 @@ obj_mark_for_deletion(nextGoomba)
 assert(obj_get_next_with_same_behavior_id(firstGoomba) == nil)
 hook_event(HOOK_UPDATE, function()
     gMarioState.numStars = spawned.oPosY
+
+    local marioGfx = gMarioState.marioObj.header.gfx
+    assert(marioGfx.node.flags == 0)
+    marioGfx.node.flags = marioGfx.node.flags | GRAPH_RENDER_ACTIVE
+    assert((marioGfx.node.flags & GRAPH_RENDER_ACTIVE) ~= 0)
+    marioGfx.node.flags = marioGfx.node.flags & ~GRAPH_RENDER_ACTIVE
+    assert((marioGfx.node.flags & GRAPH_RENDER_ACTIVE) == 0)
+
+    marioGfx.cameraToObject.x = 12
+    marioGfx.cameraToObject.y = 34
+    marioGfx.cameraToObject.z = 56
+    play_sound(0x2468, marioGfx.cameraToObject)
 end)
 
 assert(E_MODEL_GOOMBA == 58)
 assert(E_MODEL_MAX == 381)
+assert(A_BUTTON == 0x8000 and D_JPAD == 0x0400)
+assert(GRAPH_RENDER_ACTIVE == 1)
+assert((gMarioState.controller.buttonPressed & (A_BUTTON | D_JPAD)) == (A_BUTTON | D_JPAD))
+assert((gMarioState.controller.buttonDown & D_JPAD) ~= 0)
 local didSpawnNative = false
 hook_event(HOOK_UPDATE, function()
     if didSpawnNative then return end

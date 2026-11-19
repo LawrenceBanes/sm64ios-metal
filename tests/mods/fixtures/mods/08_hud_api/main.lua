@@ -1,3 +1,4 @@
+local popupCreated = false
 hook_event(HOOK_ON_HUD_RENDER, function()
     djui_hud_set_resolution(RESOLUTION_N64)
     djui_hud_set_font(FONT_NORMAL)
@@ -14,4 +15,9 @@ hook_event(HOOK_ON_HUD_RENDER, function()
 
     djui_hud_set_resolution(RESOLUTION_DJUI)
     assert(djui_hud_get_screen_height() == 720)
+
+    if not popupCreated then
+        popupCreated = true
+        djui_popup_create("Possession ready\nPress A to capture", 2)
+    end
 end)
