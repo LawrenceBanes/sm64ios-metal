@@ -66,6 +66,7 @@ The possession archive has not been tested: the download listing is visible, but
 - Implement upstream `HOOK_BEFORE_PHYS_STEP` output semantics for ground, air, water, and hanging physics. The hook receives Mario state, `STEP_TYPE_*`, and the step argument; the first valid integer return skips native stepping and becomes its result. The matching step/result constants are exposed to Lua. Host coverage verifies each step kind, the air step argument, and first-output short circuit.
 - Bind `perform_ground_step`, `perform_air_step`, and `perform_water_step` to the existing engine functions with upstream Lua argument and result shapes. The host fixture calls all three through Lua and checks the returned native step results and airborne step argument.
 - Bind upstream `play_sound(soundBits, Vec3f)` to the existing native sound engine, and expose mutable engine-owned `gGlobalSoundSource` and `gDefaultSoundArgs` vectors. The host fixture verifies the sound ID and all three position coordinates received by the native function; the unmodified Achievements ZIP no longer reports `play_sound` as unsupported.
+- Define `gGlobalSoundSource` in the native audio engine, matching the upstream zero-initialized global sound position.
 - Extend the existing iOS workflow for `metal-validation/*` pushes so it runs a full iPhoneOS arm64 compile-only job; its IPA packaging/upload step explicitly excludes those branches.
 - Extend the asset-free Xcode failure summary to include only validated linker symbol identifiers, while keeping raw Xcode output runner-local.
 
@@ -78,7 +79,7 @@ The original sandbox, ZIP validation, Lua API boundaries, existing native gamepl
 - `ASAN_OPTIONS=detect_leaks=0 CC=clang MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' bash tests/mods/run_host_tests.sh`: pass with AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer had to be disabled because the sandbox reports that ptrace-based leak detection is unavailable; leak detection is therefore not verified.
 - `MOD_EXTERNAL_ROOT=/tmp/mission69-omm-probe bash tests/mods/run_host_tests.sh`: existing host tests pass; the OMM source probe is discovered, skips its 32-bit chunk, and fails on the missing `audio_sample_load` binding as described above.
 - GitHub Actions `Metal Apple SDK validation` run 44446368613 passed both Linux checks and its `ios-metal-compile` job on the `xcode-27` runner. This validates the Metal backend/MSL toolchain but does not compile the full SM64 iOS app for arm64.
-- `Native iOS Metal IPA` run 44447280394 passed its Linux gate and SDL2/Metal validation, then failed at the full-app arm64 link with undefined symbols. Its diagnostics intentionally withheld symbol names; the updated sanitizer in this checkpoint will report only symbol identifiers on the next run. No IPA was packaged.
+- `Native iOS Metal IPA` run 44448837769 passed its Linux gate and SDL2/Metal validation, then failed at the full-app arm64 link on `_gGlobalSoundSource`. That missing engine definition is fixed in the current worktree; the next compile-only run is pending. No IPA was packaged.
 - Physical iPhone behavior has not been tested.
 
 ## M1 gaps and next work
