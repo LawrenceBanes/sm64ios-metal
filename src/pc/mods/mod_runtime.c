@@ -116,6 +116,8 @@ struct Mod {
     size_t menu_item_capacity;
     ModCommand *commands;
     bool contains_dynos_assets;
+    bool pointer_warned;
+    bool texture_lookup_warned;
     Mod *next;
 };
 
@@ -1184,6 +1186,125 @@ static int l_spawn_sync_object_unsupported(lua_State *L) {
     return luaL_error(L, "spawn_sync_object requires CoopDX multiplayer object synchronization, which this single-player engine does not implement");
 }
 
+static int l_djui_hud_set_resolution(lua_State *L) {
+    int resolution = (int)luaL_checkinteger(L, 1);
+    if (!mod_hud_set_resolution(resolution))
+        return luaL_error(L, "djui_hud_set_resolution: expected RESOLUTION_DJUI (0) or RESOLUTION_N64 (1)");
+    return 0;
+}
+
+static int l_djui_hud_set_font(lua_State *L) {
+    int font = (int)luaL_checkinteger(L, 1);
+    if (!mod_hud_set_font(font))
+        return luaL_error(L, "djui_hud_set_font: this engine adapter supports FONT_NORMAL (0) using the native SM64 IA font; other DJUI fonts need additional font resources");
+    return 0;
+}
+
+static int l_djui_hud_get_screen_width(lua_State *L) {
+    lua_pushinteger(L, mod_hud_get_screen_width());
+    return 1;
+}
+
+static int l_djui_hud_get_screen_height(lua_State *L) {
+    lua_pushinteger(L, mod_hud_get_screen_height());
+    return 1;
+}
+
+static int l_djui_hud_set_color(lua_State *L) {
+    u8 color[4];
+    for (int i = 0; i < 4; ++i) {
+        lua_Integer component = luaL_checkinteger(L, i + 1);
+        if (component < 0 || component > 255)
+            return luaL_error(L, "djui_hud_set_color: RGBA components must be in the range 0..255");
+        color[i] = (u8)component;
+    }
+    mod_hud_set_color(color[0], color[1], color[2], color[3]);
+    return 0;
+}
+
+static int l_djui_hud_reset_color(lua_State *L) {
+    (void)L;
+    mod_hud_reset_color();
+    return 0;
+}
+
+static int l_djui_hud_measure_text(lua_State *L) {
+    size_t length = 0;
+    const char *text = luaL_checklstring(L, 1, &length);
+    if (length > 255) return luaL_error(L, "djui_hud_measure_text: text exceeds the 255-byte HUD limit");
+    float width = 0.0f, height = 0.0f;
+    if (!mod_hud_measure_text(text, &width, &height))
+        return luaL_error(L, "djui_hud_measure_text: text could not be measured by the native font adapter");
+    lua_pushnumber(L, width);
+    lua_pushnumber(L, height);
+    return 2;
+}
+
+static int l_djui_hud_render_rect(lua_State *L) {
+    float x = (float)luaL_checknumber(L, 1);
+    float y = (float)luaL_checknumber(L, 2);
+    float width = (float)luaL_checknumber(L, 3);
+    float height = (float)luaL_checknumber(L, 4);
+    if (!mod_hud_render_rect(x, y, width, height))
+        return luaL_error(L, "djui_hud_render_rect: invalid rectangle or per-frame HUD command limit reached (256)");
+    return 0;
+}
+
+static int l_djui_hud_print_text(lua_State *L) {
+    size_t length = 0;
+    const char *text = luaL_checklstring(L, 1, &length);
+    float x = (float)luaL_checknumber(L, 2);
+    float y = (float)luaL_checknumber(L, 3);
+    float scale_x = lua_isnoneornil(L, 4) ? 1.0f : (float)luaL_checknumber(L, 4);
+    float scale_y = lua_isnoneornil(L, 5) ? scale_x : (float)luaL_checknumber(L, 5);
+    if (length > 255) return luaL_error(L, "djui_hud_print_text: text exceeds the 255-byte HUD limit");
+    if (!mod_hud_print_text(text, x, y, scale_x, scale_y))
+        return luaL_error(L, "djui_hud_print_text: invalid font/scale or per-frame HUD command limit reached (256)");
+    return 0;
+}
+
+static int l_djui_hud_pointer_unavailable(lua_State *L) {
+    if (sCurrentMod && !sCurrentMod->pointer_warned) {
+        mod_logf("warn", sCurrentMod->name,
+                 "DJUI mouse input has no native pointer source; mouse getters return nil and touchscreen/controller input remains separate");
+        sCurrentMod->pointer_warned = true;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int l_djui_hud_pause_menu_created(lua_State *L) {
+    extern s16 gMenuMode;
+    lua_pushboolean(L, gMenuMode != -1);
+    return 1;
+}
+
+static int l_is_game_paused(lua_State *L) {
+    extern s16 gMenuMode;
+    lua_pushboolean(L, gMenuMode != -1);
+    return 1;
+}
+
+static int l_get_texture_info_unavailable(lua_State *L) {
+    size_t length = 0;
+    const char *name = luaL_checklstring(L, 1, &length);
+    if (!length || length > 240 || memchr(name, '\0', length))
+        return luaL_error(L, "get_texture_info: expected a non-empty texture path of at most 240 bytes");
+    if (sCurrentMod && !sCurrentMod->texture_lookup_warned) {
+        mod_logf("warn", sCurrentMod->name,
+                 "texture '%.*s' is unavailable: named CoopDX texture lookup and ZIP image decoding are not implemented",
+                 (int)length, name);
+        sCurrentMod->texture_lookup_warned = true;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int l_djui_hud_render_texture_unsupported(lua_State *L) {
+    if (lua_isnil(L, 1)) return 0;
+    return luaL_error(L, "djui_hud_render_texture: TextureInfo rendering requires the inactive texture decoder/Metal asset path");
+}
+
 static int l_set_mario_action(lua_State *L) {
     struct MarioState *m = current_mario();
     if (!m) return luaL_error(L, "Mario state is unavailable");
@@ -1842,6 +1963,22 @@ static void register_api(void) {
     register_api_function("perform_air_step", l_perform_air_step);
     register_api_function("perform_water_step", l_perform_water_step);
     register_api_function("play_sound", l_play_sound);
+    register_api_function("djui_hud_set_resolution", l_djui_hud_set_resolution);
+    register_api_function("djui_hud_set_font", l_djui_hud_set_font);
+    register_api_function("djui_hud_get_screen_width", l_djui_hud_get_screen_width);
+    register_api_function("djui_hud_get_screen_height", l_djui_hud_get_screen_height);
+    register_api_function("djui_hud_set_color", l_djui_hud_set_color);
+    register_api_function("djui_hud_reset_color", l_djui_hud_reset_color);
+    register_api_function("djui_hud_measure_text", l_djui_hud_measure_text);
+    register_api_function("djui_hud_print_text", l_djui_hud_print_text);
+    register_api_function("djui_hud_render_rect", l_djui_hud_render_rect);
+    register_api_function("djui_hud_render_texture", l_djui_hud_render_texture_unsupported);
+    register_api_function("djui_hud_get_mouse_x", l_djui_hud_pointer_unavailable);
+    register_api_function("djui_hud_get_mouse_y", l_djui_hud_pointer_unavailable);
+    register_api_function("djui_hud_get_mouse_buttons_pressed", l_djui_hud_pointer_unavailable);
+    register_api_function("djui_hud_is_pause_menu_created", l_djui_hud_pause_menu_created);
+    register_api_function("get_texture_info", l_get_texture_info_unavailable);
+    register_api_function("is_game_paused", l_is_game_paused);
     register_api_function("mario_set_forward_vel", l_mario_set_forward_vel);
     register_api_function("set_mario_animation", l_set_mario_animation);
     register_api_function("require", l_mod_require);
@@ -1862,6 +1999,16 @@ static void register_api(void) {
     expose_int("HOOK_BEFORE_PHYS_STEP", HOOK_BEFORE_PHYS_STEP);
     expose_int("HOOK_BEFORE_SET_MARIO_ACTION", 30);
     expose_int("HOOK_ON_HUD_RENDER", HOOK_ON_HUD_RENDER);
+    expose_int("RESOLUTION_DJUI", 0);
+    expose_int("RESOLUTION_N64", 1);
+    expose_int("FONT_LEGACY", -1);
+    expose_int("FONT_NORMAL", 0);
+    expose_int("FONT_MENU", 1);
+    expose_int("FONT_HUD", 2);
+    expose_int("FONT_ALIASED", 3);
+    expose_int("FONT_CUSTOM_HUD", 4);
+    expose_int("FONT_RECOLOR_HUD", 5);
+    expose_int("FONT_SPECIAL", 6);
     expose_int("HOOK_ALLOW_INTERACT", HOOK_ALLOW_INTERACT);
     expose_int("HOOK_ON_INTERACT", HOOK_ON_INTERACT);
     expose_int("HOOK_ON_LEVEL_INIT", HOOK_ON_LEVEL_INIT);
@@ -2415,7 +2562,10 @@ bool mod_runtime_mario_gravity(struct MarioState *m) {
     return false;
 }
 
-void mod_runtime_hud_render(void) { call_event(HOOK_ON_HUD_RENDER, 0, false, 0); }
+void mod_runtime_hud_render(void) {
+    mod_hud_reset_frame();
+    call_event(HOOK_ON_HUD_RENDER, 0, false, 0);
+}
 void mod_runtime_level_init(int type, int level, int area, int node, int arg) {
     if (!sLua) return;
     for (ModHook *hook = sHooks; hook; hook = hook->next_global) {

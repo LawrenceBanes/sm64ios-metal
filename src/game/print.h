@@ -1,6 +1,8 @@
 #ifndef PRINT_H
 #define PRINT_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <PR/ultratypes.h>
 
 #define TEXRECT_MIN_X 10
@@ -29,5 +31,19 @@ void print_text_fmt_int(s32 x, s32 y, const char *str, s32 n);
 void print_text(s32 x, s32 y, const char *str);
 void print_text_centered(s32 x, s32 y, const char *str);
 void render_text_labels(void);
+
+/* CoopDX HUD adapter. These calls collect a bounded set of primitives during
+ * HOOK_ON_HUD_RENDER; render_text_labels flushes them through the native RDP /
+ * Metal display-list path later in the same frame. */
+void mod_hud_reset_frame(void);
+bool mod_hud_set_resolution(int resolution);
+bool mod_hud_set_font(int font);
+void mod_hud_set_color(u8 r, u8 g, u8 b, u8 a);
+void mod_hud_reset_color(void);
+int mod_hud_get_screen_width(void);
+int mod_hud_get_screen_height(void);
+bool mod_hud_measure_text(const char *text, float *width, float *height);
+bool mod_hud_render_rect(float x, float y, float width, float height);
+bool mod_hud_print_text(const char *text, float x, float y, float scale_x, float scale_y);
 
 #endif // PRINT_H

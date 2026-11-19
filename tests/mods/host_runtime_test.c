@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +38,46 @@ s16 gCurrLevelNum;
 s16 gCurrAreaIndex;
 static s32 sLastSoundBits;
 static f32 sLastSoundPosition[3];
+int gModHudTestRectCount;
+int gModHudTestTextCount;
+int gModHudTestResolution;
+int gModHudTestColor[4] = { 255, 255, 255, 255 };
+s16 gMenuMode = -1;
 
+void mod_hud_reset_frame(void) {
+    gModHudTestRectCount = 0;
+    gModHudTestTextCount = 0;
+    gModHudTestResolution = 0;
+    gModHudTestColor[0] = gModHudTestColor[1] = gModHudTestColor[2] = gModHudTestColor[3] = 255;
+}
+bool mod_hud_set_resolution(int resolution) {
+    if (resolution < 0 || resolution > 1) return false;
+    gModHudTestResolution = resolution;
+    return true;
+}
+bool mod_hud_set_font(int font) { return font == 0; }
+void mod_hud_set_color(u8 r, u8 g, u8 b, u8 a) {
+    gModHudTestColor[0] = r; gModHudTestColor[1] = g; gModHudTestColor[2] = b; gModHudTestColor[3] = a;
+}
+void mod_hud_reset_color(void) { mod_hud_set_color(255, 255, 255, 255); }
+int mod_hud_get_screen_width(void) { return gModHudTestResolution == 0 ? 960 : 320; }
+int mod_hud_get_screen_height(void) { return gModHudTestResolution == 0 ? 720 : 240; }
+bool mod_hud_measure_text(const char *text, float *width, float *height) {
+    if (!text || !width || !height) return false;
+    *width = (float)strlen(text) * 8.0f;
+    *height = 16.0f;
+    return true;
+}
+bool mod_hud_render_rect(float x, float y, float width, float height) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return false;
+    ++gModHudTestRectCount;
+    return true;
+}
+bool mod_hud_print_text(const char *text, float x, float y, float scale_x, float scale_y) {
+    if (!text || !isfinite(x) || !isfinite(y) || scale_x <= 0 || scale_y <= 0) return false;
+    ++gModHudTestTextCount;
+    return true;
+}
 u32 save_file_get_flags(void) { return 0; }
 u32 save_file_get_star_flags(s32 file_index, s32 course_index) {
     (void)file_index; (void)course_index; return 0;
@@ -381,15 +421,22 @@ int main(int argc, char **argv) {
     create_architecture_variant_fixture(argv[1]);
     reset_game_state();
     assert(mod_runtime_init());
-    assert(mod_runtime_mod_count() == 8);
+    assert(mod_runtime_mod_count() == 9);
     assert(mod_runtime_dynos_pack_count() == 1);
     assert(strcmp(mod_runtime_dynos_pack_name(0), "FixturePack") == 0);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "1 model bins · 2 texture assets") != NULL);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "inactive") != NULL);
     assert(strcmp(mod_runtime_mod_name(0), "00_core") == 0);
     assert(mod_runtime_mod_enabled(0));
+    assert(mod_runtime_mod_enabled(8));
 
     mod_runtime_update();
+    mod_runtime_hud_render();
+    assert(mod_runtime_mod_enabled(8));
+    assert(gModHudTestRectCount == 1 && gModHudTestTextCount == 1);
+    assert(gModHudTestResolution == 0);
+    assert(gModHudTestColor[0] == 255 && gModHudTestColor[1] == 255 &&
+           gModHudTestColor[2] == 255 && gModHudTestColor[3] == 255);
     assert(sSpawnedNativeObjectCount == 3);
     assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);
     assert(sSpawnedNativeModels[2] == MODEL_NONE);
