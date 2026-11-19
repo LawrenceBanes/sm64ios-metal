@@ -7,7 +7,8 @@
 - Branch: `mission-72-fast3d-compat`
 - Mission 72 starting baseline: `93a8f67be79dee48f2b67013c7fdc8bcf70853db`
 - Previously committed local work: `2bb532c4cb4d9c6ff2dc17b8aaed51b506c5c90b`, `b9ee36f17757e68253fbbcdc35008566134b0fb4`
-- Recovery implementation is committed locally; this report and progress handoff are the final documentation commit.
+- Recovery implementation commit: `d4c4040d00692dd319e593e0236111c5d3955131`
+- Documentation checkpoints: `546186d69ffcc8b13f1b35710d94afee834fde5b`, `39cd62f75d55dcda3d890b7186444d322d68ae7a`
 
 ## Implemented
 
@@ -41,7 +42,7 @@ A raw trace of `scenes/shared/spot04_scene/spot04_scene` found 3 rooms, 40 decod
 - **BLOCKED:** No Apple validation workflow was run. The local checkout has no `xcodebuild`, and the established workflow does not provide a usable local substitute for Apple's SDK/Metal compiler.
 - No IPA, private upload, or physical-device test was produced.
 
-The initial local HEAD and full reachable Git history were preserved before implementation in `/tmp/sm64ios-mission72-b9ee36f.bundle` (verified with `git bundle verify`). A separate complete-history bundle of the final local branch is being created after this checkpoint; the original pre-repair bundle remains untouched.
+The initial local HEAD and full reachable Git history were preserved before implementation in `/tmp/sm64ios-mission72-b9ee36f.bundle` (verified with `git bundle verify`). The final local branch will be preserved separately at `/tmp/sm64ios-mission72-recovery-final.bundle`; the initial bundle remains untouched.
 
 ## Remaining compatibility limits
 
