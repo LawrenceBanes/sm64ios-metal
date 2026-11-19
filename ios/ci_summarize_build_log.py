@@ -8,16 +8,18 @@ import re
 
 SOURCE_ERROR = re.compile(r"(?:^|\s)([^\s:]+\.(?:c|cc|cpp|h|m|mm)):(\d+)(?::\d+)?:\s*(?:fatal )?error:")
 LINKER_SYMBOL = re.compile(r'^\s+["\']([A-Za-z0-9_.$@?]+)["\'],\s+referenced from:')
-COMPILE_UNIT = re.compile(r"(?:CompileC|CompileC\+\+|CompileObjectiveC|CompileObjectiveC\+\+)[^\n]*?(?:^|/)([^/\s]+\.(?:c|cc|cpp|m|mm))(?:\s|$)")
+COMPILE_ACTION = re.compile(r"\b(?:CompileC|CompileC\+\+|CompileObjectiveC|CompileObjectiveC\+\+)\b")
+SOURCE_BASENAME = re.compile(r"(?:^|[/\\\s])([^/\\\s]+\.(?:c|cc|cpp|m|mm))(?=[:\s]|$)")
 
 
 def summarize(text: str) -> list[str]:
     summary = ["Full iPhoneOS game build: FAILED", "Raw Xcode output remains runner-local and is not published."]
     compile_unit = None
     for line in text.splitlines():
-        unit_match = COMPILE_UNIT.search(line)
-        if unit_match:
-            compile_unit = Path(unit_match.group(1)).name
+        if COMPILE_ACTION.search(line):
+            unit_matches = list(SOURCE_BASENAME.finditer(line))
+            if unit_matches:
+                compile_unit = unit_matches[-1].group(1)
         match = SOURCE_ERROR.search(line)
         linker_symbol = LINKER_SYMBOL.match(line)
         if match:
