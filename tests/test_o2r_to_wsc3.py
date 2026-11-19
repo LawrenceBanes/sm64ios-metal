@@ -7,11 +7,14 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from zipfile import ZipFile
 
 from test_o2r_draw_trace import bounds, display_list, packet, ref, resource, scene, text, tile
 from tools import o2r_draw_trace as trace
-from tools.o2r_to_wsc3 import convert_archive, crop_ci4, transform_position
+from tools.o2r_to_wsc3 import (convert_archive, crop_ci4, fold_static_primitive_lod_alpha,
+                               lower_material, transform_position)
+from tools.o2r_to_wsc3 import alpha_bytes_are_opaque
 
 ROOT = "workshop/scene"
 ROOMS = ("workshop/west", "workshop/east")
@@ -32,7 +35,7 @@ def floor_points(a, b, y=0):
     return [(a, y, -240), (a, y, 240), (b, y, 240), (b, y, -240)]
 
 
-def collision(polygons):
+def collision(polygons, vertex_flags=(0, 0)):
     points, indices = [], []
     for quad in polygons:
         base = len(points)
@@ -41,7 +44,10 @@ def collision(polygons):
     low = [min(coordinate) for coordinate in zip(*points)]
     high = [max(coordinate) for coordinate in zip(*points)]
     vertices = b"".join(struct.pack(">3h", *point) for point in points)
-    faces = b"".join(struct.pack(">4H4h", 0, *tri, 0, 32767, 0, 0) for tri in indices)
+    faces = b"".join(struct.pack(">4H4h", 0,
+                                   (vertex_flags[0] << 13) | tri[0],
+                                   (vertex_flags[1] << 13) | tri[1], tri[2],
+                                   0, 32767, 0, 0) for tri in indices)
     metadata = struct.pack(">6I", 1, 0, 0, 0, 0, 0)
     return resource("OCOL", struct.pack(">6hI", *low, *high, len(points)) + vertices
                     + struct.pack(">I", len(indices)) + faces + metadata)
@@ -59,7 +65,7 @@ def header(shared):
 
 
 def fixture(path, *, shared=False, fog=False, incomplete_fog=False, lighting=False,
-            format_error=False, crop=None, transform=False):
+            format_error=False, crop=None, transform=False, collision_flags=(0, 0)):
     # The outer image border is red. A byte-exact crop of the inner rows
     # has blue pixels and a green bottom row, making stride mistakes visible.
     pixels = b"".join(b"\x07\xc1" if 2 <= x < 6 and y == 4 else b"\x00\x3f"
@@ -133,10 +139,10 @@ def fixture(path, *, shared=False, fog=False, incomplete_fog=False, lighting=Fal
             commands = [(10, bytes((0, 0, 1, 0)) + text(opaque) + text(xlu))]
             if not shared:
                 commands.append((3, text(room + "/collision")))
-                archive.writestr(room + "/collision", collision([quad]))
+                archive.writestr(room + "/collision", collision([quad], collision_flags))
             archive.writestr(room, scene(*commands))
         if shared:
-            archive.writestr("workshop/collision", collision(quads))
+            archive.writestr("workshop/collision", collision(quads, collision_flags))
         if lighting:
             archive.writestr("workshop/light-directional", resource(
                 "OBLB", bytes((128, 128, 128, 0, 128, 128, 128, 0, 0, 0, 129, 0))))
@@ -202,6 +208,49 @@ class ImportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "safe local floor"):
                 self.convert(path, {"collision_rooms": [0, 0, 1, 1]}, scale=Fraction(1, 10))
 
+    def test_collision_corner_flags_require_explicit_reported_approximation(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "flagged-collision.o2r"
+            fixture(path, shared=True, collision_flags=(1, 0))
+            ownership = {"collision_rooms": [0, 0, 1, 1]}
+            with self.assertRaisesRegex(ValueError, "unsupported source collision corner flags \\[1, 0\\]"):
+                self.convert(path, ownership)
+
+            layout = {**ownership, "ignore_collision_vertex_flags": [[1, 0]]}
+            package, _, report = self.convert(path, layout)
+            self.assertIsNotNone(package, report)
+            approximation = next(row for row in report["collision_approximations"]
+                                 if row.get("source_corner_flags") == [1, 0])
+            self.assertEqual(approximation["polygon_count"], 4)
+            self.assertIn("semantics are not translated", approximation["reason"])
+
+            fixture(path, shared=True, collision_flags=(0, 1))
+            with self.assertRaisesRegex(ValueError, "unsupported source collision corner flags \\[0, 1\\]"):
+                self.convert(path, layout)
+
+    def test_only_explicitly_excluded_unsafe_source_entrances_are_omitted(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "entrances.o2r"
+            fixture(path)
+            with patch("tools.o2r_to_wsc3.safe_spawn", side_effect=[[0, 16, 0], None]):
+                package, _, report = self.convert(path, {"exclude_entrances": [1]})
+            self.assertIsNotNone(package, report)
+            self.assertEqual([row["id"] for row in report["entrances"]], [0])
+            self.assertEqual(report["entrance_approximations"][0]["source_entrance"], 1)
+            self.assertIn("no safe local floor", report["entrance_approximations"][0]["reason"])
+
+            with patch("tools.o2r_to_wsc3.safe_spawn", side_effect=[[0, 16, 0], None]):
+                with self.assertRaisesRegex(ValueError, "default source entrance 1 is excluded"):
+                    self.convert(path, {"exclude_entrances": [1], "entrance": 1})
+
+            with patch("tools.o2r_to_wsc3.safe_spawn", side_effect=[[0, 16, 0], [0, 16, 0]]):
+                with self.assertRaisesRegex(ValueError, "has a safe local floor and cannot be excluded"):
+                    self.convert(path, {"exclude_entrances": [1]})
+
+            with patch("tools.o2r_to_wsc3.safe_spawn", side_effect=[None, None]):
+                with self.assertRaisesRegex(ValueError, "at least one safe entrance is required"):
+                    self.convert(path, {"exclude_entrances": [0, 1]})
+
     def test_fog_lowers_to_wsc4_with_runtime_coefficients(self):
         with TemporaryDirectory() as temp:
             work = Path(temp)
@@ -213,6 +262,124 @@ class ImportTest(unittest.TestCase):
             self.assertEqual(report["compatibility"]["draws"]["rejected"], 0)
             self.assertEqual(report["rooms"][0]["render_triangles"], 3)
             self.assertIn(b"\x80\x00\x20\x00\xaa\xbb\xcc\xff", package)
+
+    def test_hyrule_texture_edge_with_constant_opaque_alpha_is_exactly_opaque(self):
+        draw = {
+            "pass": "opaque",
+            "geometry": {"mode": 0, "known_mask": 0xFFFFFF},
+            "render_state": {
+                "reference_blender": {"fog": False, "blend_color": False, "invisible": False,
+                                       "coverage_alpha": False, "alpha": True},
+                "other_mode_low": 0xC8113078, "other_mode_high": 0,
+                "depth_test": True, "depth_write": True, "z_mode": 0,
+                "alpha_compare": 0, "blender_raw": 0,
+            },
+            "combiner": {"effective": {"rgb": "shade.rgb", "alpha": 1,
+                                        "inputs": ["shade.rgb"], "texture_inputs": []},
+                          "colors": {"primitive": {"rgba": [255, 255, 255, 255]},
+                                     "environment": {"rgba": [128, 128, 128, 128]}}},
+            "fog": {"enabled": False, "vertex_factors": [], "color": None},
+            "textures": [], "approximations": [],
+        }
+        material, _, alpha_shade = lower_material(draw, None, {}, {})
+        self.assertFalse(material["cutout"])
+        self.assertEqual(material["primitive"][3], 255)
+        self.assertFalse(alpha_shade)
+
+        draw["combiner"]["effective"]["alpha"] = 0
+        with self.assertRaisesRegex(ValueError, "not constant opaque"):
+            lower_material(draw, None, {}, {})
+
+    def test_dual_texture_primitive_alpha_requires_neutral_extra_alpha_inputs(self):
+        draw = {
+            "pass": "translucent", "geometry": {"mode": 0, "known_mask": 0xFFFFFF},
+            "render_state": {
+                "reference_blender": {"fog": False, "blend_color": False, "invisible": False,
+                                       "coverage_alpha": False, "alpha": True},
+                "other_mode_low": 0xC81049D8, "other_mode_high": 0x80000,
+                "depth_test": True, "depth_write": False, "z_mode": 0,
+                "alpha_compare": 0, "blender_raw": 0,
+            },
+            "combiner": {"effective": {"rgb": ("combine", "tex0.rgb", "tex1.rgb",
+                                                   "environment.a", "tex1.rgb"),
+                                        "alpha": "primitive.a",
+                                        "inputs": ["primitive.a", "tex0.rgb", "tex1.rgb"],
+                                        "texture_inputs": [0, 1]},
+                          "colors": {"primitive": {"rgba": [255, 255, 255, 128]},
+                                     "environment": {"rgba": [128, 128, 128, 96]}}},
+            "fog": {"enabled": False, "vertex_factors": [], "color": None},
+            "textures": [{"id": 0}, {"id": 1}], "approximations": [],
+        }
+        decoded = {"a": (4, 1, bytes([255, 0, 0, 255] * 4)),
+                   "b": (4, 1, bytes([0, 255, 0, 255] * 4))}
+        def bind(texture, resources, entries, pngs, filter_mode):
+            return {"name": "a" if texture["id"] == 0 else "b"}
+        with patch("tools.o2r_to_wsc3.texture_binding", side_effect=bind):
+            material, _, _ = lower_material(draw, None, {}, decoded, vertex_alpha_opaque=True)
+            self.assertEqual(material["primitive"][3], 128)
+            self.assertEqual(material["environment"][3], 96)
+            self.assertTrue(alpha_bytes_are_opaque(decoded["a"][2]))
+            with self.assertRaisesRegex(ValueError, "vertex alpha"):
+                lower_material(draw, None, {}, decoded, vertex_alpha_opaque=False)
+            decoded["b"] = (4, 1, bytes([0, 255, 0, 254] * 4))
+            with self.assertRaisesRegex(ValueError, "texture alpha"):
+                lower_material(draw, None, {}, decoded, vertex_alpha_opaque=True)
+
+    def test_hyrule_decal_material_lowers_only_with_verified_static_inputs(self):
+        lod_alpha = ("combine", "tex0.a", 0, "primitive_lod_fraction",
+                     ("multiply", "primitive.a", "tex0.a"))
+        self.assertEqual(fold_static_primitive_lod_alpha(lod_alpha, 0),
+                         ("multiply", "primitive.a", "tex0.a"))
+        with self.assertRaisesRegex(ValueError, "nonzero"):
+            fold_static_primitive_lod_alpha(lod_alpha, 1)
+
+        draw = {
+            "pass": "translucent", "geometry": {"mode": 0, "known_mask": 0xFFFFFF},
+            "render_state": {
+                "reference_blender": {"fog": True, "blend_color": False, "invisible": False,
+                                      "coverage_alpha": False, "alpha": True},
+                "other_mode_low": 0xC8104F50, "other_mode_high": 0x80000,
+                "depth_test": True, "depth_write": False, "z_mode": 3,
+                "alpha_compare": 0, "force_blend": True, "blender_raw": 0xC810,
+            },
+            "combiner": {"effective": {"rgb": ("multiply", "primitive.rgb",
+                                                    ("multiply", "shade.rgb", "tex0.rgb")),
+                                        "alpha": lod_alpha,
+                                        "inputs": ["primitive.a", "primitive.rgb", "primitive_lod_fraction",
+                                                   "shade.rgb", "tex0.a", "tex0.rgb"],
+                                        "texture_inputs": [0]},
+                          "colors": {"primitive": {"rgba": [250, 220, 140, 200], "lod_fraction": 0},
+                                     "environment": {"rgba": [128, 128, 128, 128]}}},
+            "fog": {"enabled": True, "vertex_factors": [{"multiplier": 0, "offset_coefficient": 0}],
+                    "color": {"rgba": [30, 10, 10, 0]}},
+            "textures": [{"id": 0}], "approximations": [],
+        }
+        opaque = bytes([255, 255, 255, 255] * 4)
+
+        def bind(*_args):
+            return {"name": "texture", "width": 4, "height": 1, "address": ["repeat", "repeat"],
+                    "scale": [256, 256], "origin": [0, 0], "scroll": [0, 0], "filter": "point"}
+
+        with patch("tools.o2r_to_wsc3.texture_binding", side_effect=bind):
+            material, shade_rgb, shade_alpha = lower_material(
+                draw, None, {}, {"texture": (4, 1, opaque)}, vertex_alpha_opaque=True)
+        self.assertTrue(material["decal"])
+        self.assertTrue(material["blend"])
+        self.assertFalse(material["depth_write"])
+        self.assertEqual(material["primitive"][3], 200)
+        self.assertTrue(shade_rgb)
+        self.assertFalse(shade_alpha)
+
+        with patch("tools.o2r_to_wsc3.texture_binding", side_effect=bind):
+            with self.assertRaisesRegex(ValueError, "vertex alpha"):
+                lower_material(draw, None, {}, {"texture": (4, 1, opaque)}, vertex_alpha_opaque=False)
+
+        nonzero = {**draw, "combiner": {**draw["combiner"], "colors": {
+            **draw["combiner"]["colors"], "primitive": {"rgba": [250, 220, 140, 200],
+                                                           "lod_fraction": 1}}}}
+        with patch("tools.o2r_to_wsc3.texture_binding", side_effect=bind):
+            with self.assertRaisesRegex(ValueError, "LOD interpolation is nonzero"):
+                lower_material(nonzero, None, {}, {"texture": (4, 1, opaque)}, vertex_alpha_opaque=True)
 
     def test_static_fast3d_lighting_is_evaluated_into_wsc3_shade(self):
         with TemporaryDirectory() as temp:

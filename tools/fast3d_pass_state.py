@@ -11,6 +11,11 @@ ROOM_DRAW = OOT_PIN + "src/code/z_room.c#L76-L113"
 SCENE_CONFIG = OOT_PIN + "src/code/z_scene_table.c#L1176-L1232"
 SCROLL_SOURCE = OOT_PIN + "src/code/z_rcp.c#L1450-L1466"
 SCENE_ORDER = OOT_PIN + "src/code/z_play.c#L1330-L1343"
+HYRULE_SCENE = "scenes/shared/spot00_scene/spot00_scene"
+HYRULE_CONFIG = OOT_PIN + "src/code/z_scene_table.c#L990-L1030"
+HYRULE_LIGHTING = OOT_PIN + "src/code/z_play.c#L243-L249"
+FOG_RANGE = OOT_PIN + "src/code/z_rcp.c#L862-L895"
+FOG_POSITION = OOT_PIN + "include/ultra64/gbi.h#L2750-L2763"
 KOKIRI_SCENE = "scenes/shared/spot04_scene/spot04_scene"
 NTSC_10 = bytes.fromhex("01ec7011b7")
 
@@ -113,3 +118,104 @@ class KokiriInputs:
         if pass_name == "opaque" and room_type == 3:
             commands += (GeneratedList(OPAQUE_DITHER, ((0xE3001801, 0xC0), (0xDF000000, 0))),)
         return PassPrelude(bindings, commands)
+
+
+def fog_factor_for_setting(setting):
+    """Reproduce pinned OoT Gfx_SetFog for one explicitly selected setting."""
+    near, far = setting["fog_near"], setting["fog_far"]
+    if far == near:
+        far += 1
+    if near >= 1000:
+        multiplier, offset = 0, 0
+    elif near > 996:
+        multiplier, offset = 0x7FFF, -0x7F00
+    elif near < 0:
+        multiplier, offset = 0, 255
+    else:
+        span = far - near
+        if span <= 0:
+            raise ValueError("selected lighting setting has an invalid fog range")
+
+        def trunc_div(numerator, denominator):
+            return (abs(numerator) // denominator) * (-1 if numerator < 0 else 1)
+
+        multiplier = trunc_div(128000, span)
+        offset = trunc_div((500 - near) * 256, span)
+        if not -32768 <= multiplier <= 32767 or not -32768 <= offset <= 32767:
+            raise ValueError("selected fog range overflows the source signed fog coefficients")
+    return {"multiplier": multiplier, "offset_coefficient": offset,
+            "origin": "reconstructed", "source": FOG_RANGE,
+            "inputs": {"fog_near": setting["fog_near"], "fog_far": setting["fog_far"]}}
+
+
+@dataclass(frozen=True)
+class HyruleFieldInputs:
+    """A bounded, explicit NTSC 1.0 Hyrule daytime draw snapshot.
+
+    This does not guess which environment row is active in a save. The caller
+    must choose a source lighting row. Night transitions are not reconstructed.
+    """
+    frame: int
+    lighting_setting: int
+    daytime: bool
+
+    scene = HYRULE_SCENE
+    marker = NTSC_10
+    name = "oot-ntsc10-hyrule-field-explicit-daylight-snapshot"
+
+    def __post_init__(self):
+        if (type(self.frame) is not int or not 0 <= self.frame <= 0xFFFFFFFF or
+                type(self.lighting_setting) is not int or not 0 <= self.lighting_setting < 17 or
+                type(self.daytime) is not bool):
+            raise ValueError("Hyrule Field context requires frame 0..UINT32_MAX, lighting row 0..16, and a boolean daytime branch")
+        if not self.daytime:
+            raise ValueError("Hyrule nighttime segment 0x0A depends on runtime drawParams and a conditional room list; only the daytime branch is reconstructed")
+
+    def lighting(self, scene_commands):
+        entries = [command.get("lighting_settings", []) for command in scene_commands if command["id"] == 15]
+        if len(entries) != 1 or self.lighting_setting >= len(entries[0]):
+            raise ValueError("Hyrule Field context requires the selected lighting row from exactly one decoded scene lighting table")
+        setting = entries[0][self.lighting_setting]
+        def signed_direction(values):
+            return [value - 256 if value >= 128 else value for value in values]
+        lights = {
+            "0": {"color": setting["light1_color"], "direction": signed_direction(setting["light1_direction"])},
+            "1": {"color": setting["light2_color"], "direction": signed_direction(setting["light2_direction"])},
+            "2": {"color": setting["ambient"], "direction": [0, 0, 0]},
+        }
+        provenance = {"origin": "reconstructed", "source": HYRULE_LIGHTING,
+                      "lighting_setting_index": self.lighting_setting}
+        fog = fog_factor_for_setting(setting)
+        fog_color = {"rgba": [*setting["fog_color"], 0], **provenance}
+        return {"setting": setting, "lights": lights, "provenance": provenance,
+                "fog_factor": fog, "fog_color": fog_color}
+
+    def seed(self, state, scene_commands):
+        selected = self.lighting(scene_commands)
+        state.num_directional_lights = {"count": 2, **selected["provenance"]}
+        state.lights = selected["lights"]
+        state.fog_factor = selected["fog_factor"]
+        state.colors["fog"] = selected["fog_color"]
+
+    def prelude(self, pass_name, room_type):
+        if pass_name not in ("opaque", "translucent"):
+            raise ValueError("unknown room pass")
+        bindings = {}
+        if pass_name == "translucent":
+            for segment, rate in ((0x08, 3), (0x09, 10)):
+                t = self.frame * rate % 128
+                bindings[segment] = tile_scroll(((0, 127 - self.frame % 128, t, 32, 32),
+                                                  (1, self.frame % 128, t, 32, 32)), HYRULE_CONFIG)
+            # In the source daytime branch, 0x0A points to a one-command
+            # EndDisplayList. The night branch has conditional alpha and an
+            # additional room list, so it is intentionally outside this profile.
+            bindings[0x0A] = GeneratedList(HYRULE_CONFIG, ((0xDF000000, 0),))
+        commands = (env_color(128, 128, 128, 128, HYRULE_CONFIG), ROOM_SETUP_25)
+        return PassPrelude(bindings, commands)
+
+    def metadata(self):
+        return {"name": self.name,
+                "inputs": {"frame": self.frame, "lighting_setting": self.lighting_setting,
+                           "daytime": self.daytime},
+                "sources": [HYRULE_CONFIG, HYRULE_LIGHTING, FOG_RANGE, FOG_POSITION, ROOM_DRAW],
+                "scope": "explicit scene lighting-row snapshot and daytime segment branch; type-2 visibility and camera-dependent translucent sorting are not evaluated"}

@@ -1545,6 +1545,9 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     bool zmode_decal = (rdp.other_mode_l & ZMODE_DEC) == ZMODE_DEC;
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (scene_material) zmode_decal = (scene_material->flags & WORLD_SCENE_DECAL) != 0;
+#endif
     if (zmode_decal != rendering_state.decal_mode) {
         gfx_flush();
         gfx_rapi->set_zmode_decal(zmode_decal);

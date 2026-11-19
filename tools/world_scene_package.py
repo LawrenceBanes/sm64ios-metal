@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a WSC1–WSC4 package from original, authored scene JSON."""
+"""Write a WSC1–WSC5 package from original, authored scene JSON."""
 import argparse
 import json
 from pathlib import Path
@@ -15,6 +15,8 @@ else:
 MAX_BYTES = 4 * 1024 * 1024
 TEXTURE_NAME = re.compile(r"scenes/[a-z0-9_-]+\.rgba16\Z")
 U32_MAX = (1 << 32) - 1
+MAX_TEXTURE_TEXELS_LEGACY = 2048
+MAX_TEXTURE_TEXELS_WSC5 = 4096
 
 
 def integer(value, minimum, maximum, label):
@@ -44,20 +46,21 @@ def unique_records(records, label, minimum=0):
     return set(ids)
 
 
-def texture_descriptor(record):
+def texture_descriptor(record, version=1):
     if record is None:
         return 0, 0, b""
     width = integer(record["width"], 4, 2048, "texture width")
     height = integer(record["height"], 1, 512, "texture height")
     name = record["name"]
-    if len(name) >= 96 or not TEXTURE_NAME.fullmatch(name) or width % 4 or width * height > 2048:
+    max_texels = MAX_TEXTURE_TEXELS_WSC5 if version >= 5 else MAX_TEXTURE_TEXELS_LEGACY
+    if len(name) >= 96 or not TEXTURE_NAME.fullmatch(name) or width % 4 or width * height > max_texels:
         raise ValueError("invalid scene texture name or dimensions")
     return width, height, name.encode("ascii")
 
 
-def decode_indexed_rgba(record):
+def decode_indexed_rgba(record, version=1):
     """Expand packed CI4/CI8 using an explicit RGBA5551 or IA88 palette."""
-    width, height, _ = texture_descriptor(record)
+    width, height, _ = texture_descriptor(record, version)
     bits = integer(record["index_bits"], 4, 8, "index bits")
     if bits not in (4, 8):
         raise ValueError("only four- and eight-bit indices are supported")
@@ -93,16 +96,17 @@ def decode_indexed_rgba(record):
 
 def indexed_textures(scene):
     assets = {}
+    version = scene.get("version", 1)
     for record in array(scene.get("indexed_textures", []), 0, 1024, "indexed textures"):
-        width, height, name = texture_descriptor(record)
+        width, height, name = texture_descriptor(record, version)
         if name in assets:
             raise ValueError("duplicate indexed texture name")
-        assets[name] = (width, height, decode_indexed_rgba(record))
+        assets[name] = (width, height, decode_indexed_rgba(record, version))
     for room in scene["rooms"]:
         for batch in room.get("batches", [room]):
-            bindings = batch["material"].get("textures", []) if scene.get("version") in (3, 4) else [batch.get("texture")]
+            bindings = batch["material"].get("textures", []) if scene.get("version") in (3, 4, 5) else [batch.get("texture")]
             for binding in bindings:
-                width, height, name = texture_descriptor(binding)
+                width, height, name = texture_descriptor(binding, version)
                 if name in assets and assets[name][:2] != (width, height):
                     raise ValueError("material dimensions differ from its indexed texture")
     return assets
@@ -114,14 +118,24 @@ def encode_material(append, output, batch, draw_pass, triangles, version):
     material = batch["material"]
     fields = {"depth_test", "depth_write", "cutout", "cull_back", "primitive", "environment",
               "alpha_period", "alpha_peak", "textures"}
-    if version == 4:
+    if version >= 4:
         fields.add("fog")
     elif "fog" in material:
         raise ValueError("per-material camera-depth fog requires WSC4")
+    if version >= 5:
+        fields.add("decal")
+        fields.add("blend")
+    elif "decal" in material:
+        raise ValueError("per-material decal depth bias requires WSC5")
+    elif "blend" in material:
+        raise ValueError("per-material blend selection requires WSC5")
     if set(material) - fields:
         raise ValueError("unsupported WSC3 material field")
     translucent = draw_pass == "translucent"
-    flags = int(translucent) << 4
+    blend = material.get("blend", translucent) if version >= 5 else translucent
+    if type(blend) is not bool:
+        raise ValueError("blend must be Boolean")
+    flags = int(blend) << 4
     for i, (key, default) in enumerate((("depth_test", True), ("depth_write", not translucent),
                                         ("cutout", False), ("cull_back", False))):
         value = material.get(key, default)
@@ -132,7 +146,7 @@ def encode_material(append, output, batch, draw_pass, triangles, version):
         raise ValueError("WSC3 cutout requires the opaque pass")
     fog = material.get("fog")
     if fog is not None:
-        if version != 4:
+        if version < 4:
             raise ValueError("per-material camera-depth fog requires WSC4")
         if not isinstance(fog, dict) or set(fog) != {"multiplier", "offset", "color"}:
             raise ValueError("fog requires multiplier, offset, and RGBA color")
@@ -140,9 +154,18 @@ def encode_material(append, output, batch, draw_pass, triangles, version):
         fog_offset = integer(fog["offset"], -32768, 32767, "fog offset")
         fog_color = vector(fog["color"], 0, 255, 4, "fog RGBA")
         flags |= 32
-    elif version == 4:
+    elif version >= 4:
         multiplier = fog_offset = 0
         fog_color = [0, 0, 0, 0]
+    if version >= 5:
+        decal = material.get("decal", False)
+        if type(decal) is not bool:
+            raise ValueError("decal must be Boolean")
+        if (translucent and not blend) or (blend and not translucent and not decal):
+            raise ValueError("WSC5 permits opaque-list blending only for decal materials")
+        if decal and not blend:
+            raise ValueError("WSC5 decal materials must enable blending")
+        flags |= int(decal) << 6
     primitive = vector(material.get("primitive", [255] * 4), 0, 255, 4, "primitive RGBA")
     environment = vector(material.get("environment", [255, 255, 255, 0]), 0, 255, 4, "environment RGBA")
     period = integer(material.get("alpha_period", 0), 0, 65535, "environment alpha period")
@@ -155,7 +178,7 @@ def encode_material(append, output, batch, draw_pass, triangles, version):
     if any(binding is None for binding in textures):
         raise ValueError("WSC3 texture bindings must be contiguous")
     for binding in [*textures, *([None] * (2 - len(textures)))]:
-        width, height, name = texture_descriptor(binding)
+        width, height, name = texture_descriptor(binding, version)
         binding = binding or {}
         if set(binding) - {"name", "width", "height", "address", "filter", "scale", "origin", "scroll"}:
             raise ValueError("unsupported WSC3 texture field")
@@ -169,7 +192,7 @@ def encode_material(append, output, batch, draw_pass, triangles, version):
         scroll = vector(binding.get("scroll", [0, 0]), -32768, 32767, 2, "UV scroll")
         append("<3H6hH", width, height, sampler, *scale, *origin, *scroll, len(name))
         output.extend(name)
-    if version == 4 and fog is not None:
+    if version >= 4 and fog is not None:
         append("<2h4B", multiplier, fog_offset, *fog_color)
 
 
@@ -181,8 +204,8 @@ def encode_scene(scene):
     entrance_ids = unique_records(entrances, "entrance ID")
     exits = array(scene.get("exits", []), 0, 4096, "exits")
     unique_records(exits, "exit ID")
-    version = integer(scene.get("version", 1), 1, 4, "scene version")
-    magic = (b"WSC1", b"WSC2", b"WSC3", b"WSC4")[version - 1]
+    version = integer(scene.get("version", 1), 1, 5, "scene version")
+    magic = (b"WSC1", b"WSC2", b"WSC3", b"WSC4", b"WSC5")[version - 1]
     output = bytearray(struct.pack("<4sI3H", magic, scene_id, len(rooms), len(entrances), len(exits)))
     bounds = {}
 
@@ -223,7 +246,7 @@ def encode_scene(scene):
             if "batches" in room or "states" in room:
                 raise ValueError("material batches and draw-state slots require scene version 2")
             render = read_render(room)
-            width, height, texture = texture_descriptor(room.get("texture"))
+            width, height, texture = texture_descriptor(room.get("texture"), version)
             append("<I6h7H", room["id"], *low, *high, len(neighbors), len(render) // 3,
                    len(collision), len(triangles), width, height, len(texture))
             output.extend(texture)
@@ -233,10 +256,11 @@ def encode_scene(scene):
         else:
             if "render_vertices" in room or "texture" in room:
                 raise ValueError("scene version 2 stores rendering in batches")
-            batches = array(room["batches"], 1, 64, "batches")
+            max_batches = 256 if version >= 5 else 64
+            batches = array(room["batches"], 1, max_batches, "batches")
             states = array(room.get("states", []), 0, 64, "draw-state slots")
-            if version in (3, 4) and states:
-                raise ValueError("WSC3/WSC4 store draw state per material")
+            if version in (3, 4, 5) and states:
+                raise ValueError("WSC3/WSC4/WSC5 store draw state per material")
             append("<I6h5H", room["id"], *low, *high, len(neighbors), len(batches),
                    len(collision), len(triangles), len(states))
             for neighbor in neighbors:
@@ -254,11 +278,11 @@ def encode_scene(scene):
                 draw_pass = batch.get("pass", "opaque")
                 if draw_pass not in ("opaque", "translucent"):
                     raise ValueError("invalid scene render pass")
-                if version in (3, 4):
+                if version in (3, 4, 5):
                     encode_material(append, output, batch, draw_pass, len(render) // 3, version)
                 else:
                     state = integer(batch.get("state", 0), 0, len(states), "draw-state slot")
-                    width, height, texture = texture_descriptor(batch.get("texture"))
+                    width, height, texture = texture_descriptor(batch.get("texture"), version)
                     append("<6H", draw_pass == "translucent", state, len(render) // 3, width, height, len(texture))
                     output.extend(texture)
                 render_vertices(render)

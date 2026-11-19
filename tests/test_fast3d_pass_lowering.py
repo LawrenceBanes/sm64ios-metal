@@ -120,6 +120,44 @@ class PassTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "NTSC 1.0"):
                 trace.trace_archive(path, setup.KOKIRI_SCENE, profile=setup.KokiriInputs(0, 0, False, 0))
 
+    def test_hyrule_explicit_day_profile_reconstructs_scroll_and_fog_light_inputs(self):
+        profile = setup.HyruleFieldInputs(17, 8, True)
+        xlu = profile.prelude("translucent", 0)
+        self.assertEqual(set(xlu.bindings), {8, 9, 10})
+        self.assertEqual(trace.rect(*xlu.bindings[8].packets[1]), [110, 51, 234, 175])
+        self.assertEqual(trace.rect(*xlu.bindings[8].packets[3]), [17, 51, 141, 175])
+        self.assertEqual(trace.rect(*xlu.bindings[9].packets[1]), [110, 42, 234, 166])
+        self.assertEqual(xlu.bindings[10].packets, ((0xDF000000, 0),))
+        self.assertEqual(profile.prelude("opaque", 0).bindings, {})
+
+        setting = {"ambient": [92, 92, 92], "light1_direction": [73, 73, 73],
+                   "light1_color": [160, 134, 118], "light2_direction": [183, 183, 183],
+                   "light2_color": [30, 10, 10], "fog_color": [30, 10, 10],
+                   "fog_near": 2010, "fog_far": 12800}
+        scene_commands = [{"id": 15, "lighting_settings": [setting] * 9}]
+        state = trace.PassState({})
+        profile.seed(state, scene_commands)
+        self.assertEqual(state.num_directional_lights["count"], 2)
+        self.assertEqual(state.lights["1"]["direction"], [-73, -73, -73])
+        self.assertEqual(state.lights["2"]["color"], [92, 92, 92])
+        self.assertEqual(state.fog_factor["multiplier"], 0)
+        self.assertEqual(state.fog_factor["offset_coefficient"], 0)
+        self.assertEqual(state.colors["fog"]["rgba"], [30, 10, 10, 0])
+
+    def test_hyrule_fog_range_matches_source_special_cases_and_integer_formula(self):
+        cases = ((-1, 12800, (0, 255)), (996, 1000, (32000, -31744)),
+                 (997, 1000, (32767, -32512)), (1000, 12800, (0, 0)))
+        for near, far, expected in cases:
+            actual = setup.fog_factor_for_setting({"fog_near": near, "fog_far": far})
+            self.assertEqual((actual["multiplier"], actual["offset_coefficient"]), expected)
+
+    def test_hyrule_context_rejects_night_snapshot_and_bad_selection(self):
+        with self.assertRaisesRegex(ValueError, "nighttime segment"):
+            setup.HyruleFieldInputs(0, 8, False)
+        for args in ((-1, 0, True), (0, 17, True), (0, 0, 1)):
+            with self.assertRaises(ValueError):
+                setup.HyruleFieldInputs(*args)
+
 
 class MaterialTests(unittest.TestCase):
     def test_effective_combiner_dependency(self):

@@ -292,6 +292,10 @@ class DrawTracer:
         self.generated_calls = Counter()
         self.generated_uses = Counter()
         self.draws, self.issues = [], []
+        self.room_meshes = []
+        self.active_mesh_source = None
+        self.scene_commands = []
+        self.cull_commands = []
         self.decoded_lists, self.completed_lists, self.failed_lists = set(), set(), set()
         self.matrix_resources = set()
         self.roots_seen = self.commands = 0
@@ -317,8 +321,12 @@ class DrawTracer:
         if path not in self.generated:
             parsed = o2r.parse_display_list(spec.body(), ">", path, max_instructions=MAX_LIST_COMMANDS)
             base = parsed["instruction_start"]
-            self.generated[path] = (spec, {ins["offset"] - base: {**ins, "offset": ins["offset"] - base}
-                                           for ins in parsed["instructions"]})
+            listing = {ins["offset"] - base: {**ins, "offset": ins["offset"] - base}
+                       for ins in parsed["instructions"]}
+            end_offset = parsed["end_offset"] - base
+            listing[end_offset] = {"offset": end_offset, "opcode": 0xDF, "name": "ENDDL",
+                                   "w0": 0xDF000000, "w1": 0}
+            self.generated[path] = (spec, listing)
         return Reference(path)
 
     def trace_pass(self, room, pass_name, roots, room_type=None):
@@ -326,6 +334,8 @@ class DrawTracer:
             return
         state = PassState({**self.segments, **self.room_segments.get(room, {})})
         if self.profile:
+            if hasattr(self.profile, "seed"):
+                self.profile.seed(state, self.scene_commands)
             prelude = self.profile.prelude(pass_name, room_type)
             for segment, spec in prelude.bindings.items():
                 if segment in state.segments:
@@ -339,8 +349,15 @@ class DrawTracer:
             self.walk(room, pass_name, state, Reference(self.pass_preludes[pass_name]), ())
             if len(self.draws) != start_draws:
                 raise TraceError("unsupported", f"{pass_name} prelude must contain only state commands")
-        for path in roots:
+        for root in roots:
+            if isinstance(root, dict):
+                path = root["path"]
+                source_mesh = root["source_mesh"]
+            else:
+                path, source_mesh = root, None
             self.roots_seen += 1
+            previous_mesh_source = self.active_mesh_source
+            self.active_mesh_source = source_mesh
             try:
                 self.walk(room, pass_name, state, Reference(path), ())
             except TraceError as error:
@@ -350,6 +367,8 @@ class DrawTracer:
                 # Resume at a later independently scheduled root with tainted state.
                 state.tainted.add("incomplete command flow")
                 self.failed_lists.add(path)
+            finally:
+                self.active_mesh_source = previous_mesh_source
 
     def walk(self, room, pass_name, state, ref, stack):
         if len(stack) >= MAX_CALL_DEPTH:
@@ -419,8 +438,11 @@ class DrawTracer:
         if opcode in (0x00, 0x33, 0xE6, 0xE7, 0xE8, 0xE9):
             return
         if opcode == 0x03:
-            # The pinned Fast3D handler falls through unconditionally.
-            state.approximations.add("CULLDL falls through as in the reference; visibility not evaluated")
+            # CULLDL affects visibility only. Geometry extraction keeps the
+            # complete list; report the skipped camera-dependent test once at
+            # trace scope instead of tainting every draw as malformed.
+            self.cull_commands.append({"display_list": path, "offset": ins["offset"],
+                                       "source_mesh": self.active_mesh_source})
         elif opcode in (0x01, 0x32):
             count = bits(w0, 12, 8)
             end = bits(w0, 1, 7)
@@ -801,6 +823,7 @@ class DrawTracer:
         self.draws.append({
             "scene": self.scene, "room": room, "pass": pass_name, "order": len(self.draws),
             "display_list": path, "offset": ins["offset"], "command": ins["name"],
+            "source_mesh": self.active_mesh_source,
             "primitive_count": len(words), "geometry": {
                 "mode": state.geometry, "known_mask": state.geometry_known,
                 "vertex_ranges": [{"resource": source, "first": min(values), "last": max(values),
@@ -838,6 +861,7 @@ class DrawTracer:
         rooms = []
         try:
             scene_commands = self.resources.read(self.scene, ("Scene",))
+            self.scene_commands = scene_commands
             room_list = [room["path"] for cmd in scene_commands if cmd["id"] == 4 for room in cmd["rooms"]]
             if len(room_list) > MAX_ROOMS:
                 raise TraceError("limit", "scene room count exceeds the trace limit")
@@ -855,24 +879,45 @@ class DrawTracer:
                     if command["id"] != 10:
                         continue
                     mesh = command["mesh"]
-                    if mesh["type"] != 0:
-                        self.issue(room, None, room, command["offset"], "room_mesh",
-                                   TraceError("unsupported", "only normal room meshes have a verified submission order"))
+                    if mesh["type"] not in (0, 2):
+                        self.issue(room, None, room, command.get("byte_offset"), "room_mesh",
+                                   TraceError("unsupported", f"room mesh type {mesh['type']} is not supported by the draw tracer"))
                         continue
                     rooms.append(room)
+                    visibility = ("direct polygon lists; no sphere visibility test"
+                                  if mesh["type"] == 0 else
+                                  "all culling-mesh polygon lists in source order; sphere visibility not evaluated")
+                    mesh_record = {"room": room, "scene_command_offset": command.get("byte_offset"),
+                                   "type": mesh["type"], "polygon_count": len(mesh["polygons"]),
+                                   "visibility_policy": visibility}
+                    self.room_meshes.append(mesh_record)
                     for pass_name in ("opaque", "translucent"):
-                        roots = [entry[f"{pass_name}_display_list"] for entry in mesh["polygons"]
-                                 if entry[f"{pass_name}_display_list"]]
+                        roots = []
+                        for polygon_index, entry in enumerate(mesh["polygons"]):
+                            path = entry[f"{pass_name}_display_list"]
+                            if not path:
+                                continue
+                            source_mesh = {"type": mesh["type"], "polygon_index": polygon_index,
+                                           "visibility_policy": visibility}
+                            if mesh["type"] == 2:
+                                # The importer defines these as a source-space culling
+                                # sphere. Preserve the data for diagnostics only: it is
+                                # not a transform on the room's vertex positions.
+                                source_mesh["sphere_center"] = entry["position"]
+                                source_mesh["sphere_radius"] = entry["unknown"]
+                            roots.append({"path": path, "source_mesh": source_mesh})
                         self.trace_pass(room, pass_name, roots, room_type)
         except TraceError as error:
             if not error.reported:
                 self.issue(None, None, self.scene, None, "scene_trace", error)
             budget_error = str(error) if error.kind == "limit" else None
         return {
-            "format": "fast3d-draw-state-trace", "version": 2, "scene": self.scene, "rooms": rooms,
-            "profile": {"name": "oot-ntsc10-kokiri-normal-room", "inputs": asdict(self.profile),
+            "format": "fast3d-draw-state-trace", "version": 3, "scene": self.scene, "rooms": rooms,
+            "room_meshes": self.room_meshes,
+            "profile": (self.profile.metadata() if hasattr(self.profile, "metadata") else
+                        {"name": "oot-ntsc10-kokiri-normal-room", "inputs": asdict(self.profile),
                         "sources": [fast3d_pass_state.SCENE_ORDER, fast3d_pass_state.ROOM_DRAW],
-                        "scope": "independent room and pass snapshots; camera, lights, fog parameters and previous room memory are not evaluated"}
+                        "scope": "independent room and pass snapshots; camera, lights, fog parameters and previous room memory are not evaluated"})
             if self.profile else None,
             "generated_lists": {path: {"source": spec.source, "helper": spec.helper,
                                       "packets": [list(pair) for pair in spec.packets],
@@ -881,6 +926,9 @@ class DrawTracer:
             "generated_calls": [{"room": room, "pass": pass_name, "caller": path, "offset": offset,
                                  "target": target, "executions": count}
                                 for (room, pass_name, path, offset, target), count in sorted(self.generated_uses.items())],
+            "visibility_approximations": ([{"reason": "CULLDL visibility tests are not evaluated; full source geometry is retained",
+                                             "commands": self.cull_commands}]
+                                           if self.cull_commands or any(mesh["type"] == 2 for mesh in self.room_meshes) else []),
             "ordering": "room-table order, then opaque and translucent source order within each room",
             "coverage": {"commands": self.commands, "mesh_roots_attempted": self.roots_seen,
                          "decoded_display_lists": sorted(self.decoded_lists),
@@ -890,6 +938,7 @@ class DrawTracer:
                          "interpreted_state_resolved": sum(not draw["missing"] for draw in self.draws),
                          "generated_segment_calls_resolved": sum(self.generated_uses.values()),
                          "static_matrix_resources": sorted(self.matrix_resources),
+                         "cull_commands": len(self.cull_commands),
                          "issues": dict(sorted(Counter(issue["status"] for issue in self.issues).items())),
                          "wsc2_gaps": dict(sorted(Counter(gap for d in self.draws for gap in d["wsc2_gaps"]).items())),
                          "budget_error": budget_error},
@@ -908,8 +957,10 @@ def trace_archive(archive_path, scene, segments=None, profile=None):
                     marker = version.read(len(fast3d_pass_state.NTSC_10) + 1)
             except KeyError:
                 marker = b""
-            if marker != fast3d_pass_state.NTSC_10 or scene != fast3d_pass_state.KOKIRI_SCENE:
-                raise ValueError("the Kokiri reconstruction requires its exact scene and OoT NTSC 1.0 marker")
+            expected_marker = getattr(profile, "marker", fast3d_pass_state.NTSC_10)
+            expected_scene = getattr(profile, "scene", fast3d_pass_state.KOKIRI_SCENE)
+            if marker != expected_marker or scene != expected_scene:
+                raise ValueError(f"the {getattr(profile, 'name', 'scene')} profile requires its exact scene and OoT NTSC 1.0 marker")
         return DrawTracer(ArchiveResources(archive), scene, segments, profile).run()
 
 
@@ -921,6 +972,8 @@ def main(argv=None):
                         help="explicit alias for a segment, in hexadecimal")
     parser.add_argument("--kokiri-context", nargs=4, type=int, metavar=("FRAME", "LAYER", "EVENT07", "DRAW_PARAM0"),
                         help="use the pinned Kokiri pass model with explicit runtime scenario inputs (EVENT07 0 or 1)")
+    parser.add_argument("--hyrule-context", nargs=3, type=int, metavar=("FRAME", "LIGHTING_ROW", "DAYTIME"),
+                        help="use pinned Hyrule Field state with explicit frame, source lighting row 0..16, and DAYTIME=1")
     parser.add_argument("--lower-wsc2", action="store_true", help="classify each draw against WSC2")
     parser.add_argument("--wsc2-filter", choices=("point", "bilerp"),
                         help="known inherited WSC2 filtering for the comparison")
@@ -938,11 +991,18 @@ def main(argv=None):
                 raise ValueError(f"invalid or duplicate segment binding: {binding}")
             segments[key] = Reference(o2r.safe_archive_path(path))
         profile = None
+        if args.kokiri_context is not None and args.hyrule_context is not None:
+            raise ValueError("select only one scene context")
         if args.kokiri_context is not None:
             frame, layer, event07, draw_param0 = args.kokiri_context
             if event07 not in (0, 1):
                 raise ValueError("EVENT07 must be 0 or 1")
             profile = fast3d_pass_state.KokiriInputs(frame, layer, bool(event07), draw_param0)
+        if args.hyrule_context is not None:
+            frame, lighting_setting, daytime = args.hyrule_context
+            if daytime not in (0, 1):
+                raise ValueError("DAYTIME must be 0 or 1")
+            profile = fast3d_pass_state.HyruleFieldInputs(frame, lighting_setting, bool(daytime))
         report = trace_archive(args.archive, o2r.safe_archive_path(args.scene), segments, profile)
         if args.lower_wsc2 or args.wsc2_filter:
             wsc_material_lowering.lower_report(report, {None: None, "point": 0, "bilerp": 2}[args.wsc2_filter])

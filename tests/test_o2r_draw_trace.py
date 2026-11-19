@@ -144,6 +144,7 @@ class TraceTests(unittest.TestCase):
         entries = fixture()
         segments = {8: trace.Reference(SCROLL)}
         report = self.run_trace(entries, segments)
+        self.assertEqual((report["format"], report["version"]), ("fast3d-draw-state-trace", 3))
         first, after_scroll, translucent = report["draws"]
         self.assertEqual(report["coverage"]["draws"], {"complete": 3})
         self.assertEqual(report["issues"], [])
@@ -197,6 +198,47 @@ class TraceTests(unittest.TestCase):
         reverse = self.run_trace(dict(reversed(list(entries.items()))), segments)
         self.assertEqual(json.dumps(report, sort_keys=True), json.dumps(reverse, sort_keys=True))
 
+    def test_type2_room_mesh_traces_all_polygon_lists_without_sphere_translation(self):
+        entries = fixture()
+        entries[OPA] = display_list(*base(0x30), packet(0x05, 0x000204))
+        entries[XLU] = display_list(*base(0x4411), packet(0x05, 0x000204))
+
+        def culling_polygon(center, radius, opaque, translucent):
+            return (bytes((2,)) + struct.pack(">3hh", *center, radius)
+                    + text(opaque) + text(translucent))
+
+        mesh = (bytes((0, 2, 3))
+                + culling_polygon((12000, 340, -9000), 250, OPA, "")
+                + culling_polygon((-12000, -340, 9000), 400, "", XLU)
+                + culling_polygon((5000, 700, 6000), 100, OPA, ""))
+        entries[ROOM] = scene((10, mesh))
+        report = self.run_trace(entries)
+
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(len(report["room_meshes"]), 1)
+        mesh_report = report["room_meshes"][0]
+        self.assertEqual(mesh_report["type"], 2)
+        self.assertEqual(mesh_report["polygon_count"], 3)
+        self.assertIn("sphere visibility not evaluated", mesh_report["visibility_policy"])
+        self.assertEqual([draw["source_mesh"]["polygon_index"] for draw in report["draws"]], [0, 2, 1])
+        self.assertEqual([draw["source_mesh"].get("sphere_center") for draw in report["draws"]],
+                         [[12000, 340, -9000], [5000, 700, 6000], [-12000, -340, 9000]])
+        for draw in report["draws"]:
+            matrix = draw["geometry"]["vertex_ranges"][0]["modelview_at_vertex_load"]
+            self.assertEqual(matrix, [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+                                      [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+
+    def test_unsupported_background_mesh_reports_scene_command_offset(self):
+        entries = fixture()
+        background = (bytes((0, 1, 0)) + text("") + text("") + struct.pack(">I", 0)
+                      + bytes((0,)) + text(OPA) + text(XLU))
+        entries[ROOM] = scene((10, background))
+        report = self.run_trace(entries)
+        self.assertEqual(len(report["issues"]), 1)
+        self.assertEqual(report["issues"][0]["status"], "unsupported")
+        self.assertEqual(report["issues"][0]["offset"], 4)
+        self.assertIn("room mesh type 1", report["issues"][0]["reason"])
+
     def test_render_and_repack_data_are_absent(self):
         report = self.run_trace(fixture(), {8: trace.Reference(SCROLL)})
         for draw in report["draws"]:
@@ -246,7 +288,8 @@ class TraceTests(unittest.TestCase):
         self.assertIsNone(draw["render_state"]["depth_test"])
         self.assertIsNone(draw["render_state"]["depth_write"])
         self.assertIsNone(draw["combiner"]["cycle_type"])
-        self.assertIn("CULLDL falls through as in the reference; visibility not evaluated", draw["approximations"])
+        self.assertEqual(result["visibility_approximations"][0]["reason"],
+                         "CULLDL visibility tests are not evaluated; full source geometry is retained")
 
     def test_budgets_and_invalid_texture_payload(self):
         with patch.object(trace, "MAX_COMMANDS", 2):

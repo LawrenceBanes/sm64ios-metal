@@ -18,7 +18,8 @@ struct SceneReader {
     bool failed;
 };
 
-#define WORLD_SCENE_MAX_BATCHES 64
+#define WORLD_SCENE_MAX_BATCHES_LEGACY 64
+#define WORLD_SCENE_MAX_BATCHES_WSC5 256
 
 struct FileBatch {
     Vtx *vertices;
@@ -133,19 +134,21 @@ static void release_scene(void *context, struct WorldScenePackage *package) {
     free(scene);
 }
 
-static bool read_texture(struct SceneReader *reader, char texture[96], u16 width, u16 height, bool legacy) {
+static bool read_texture(struct SceneReader *reader, char texture[96], u16 width, u16 height,
+                         bool legacy, bool wsc5Format) {
     u16 length = read_u16(reader);
     if (length == 0) return width == 0 && height == 0 && !reader->failed;
 #ifndef EXTERNAL_DATA
     (void)texture;
     (void)legacy;
+    (void)wsc5Format;
     return false;
 #else
     static const char prefix[] = "scenes/";
     static const char suffix[] = ".rgba16";
     if (length >= 96 || length < sizeof(prefix) + sizeof(suffix) - 1
         || width < 4 || (width & 3) != 0 || !height
-        || (u32)width * height > 2048) return false;
+        || (u32)width * height > (wsc5Format ? 4096u : 2048u)) return false;
     const u8 *name = read_bytes(reader, length);
     if (!name || memcmp(name, prefix, sizeof(prefix) - 1)
         || memcmp(name + length - (sizeof(suffix) - 1), suffix, sizeof(suffix) - 1)) return false;
@@ -166,12 +169,19 @@ static bool read_texture(struct SceneReader *reader, char texture[96], u16 width
 #endif
 }
 
-static bool read_material(struct SceneReader *reader, struct FileBatch *batch, bool fogFormat) {
+static bool read_material(struct SceneReader *reader, struct FileBatch *batch,
+                         bool fogFormat, bool decalFormat) {
     struct WorldSceneMaterial *material = batch->material = calloc(1, sizeof(*material));
     if (!material) return false;
     u16 flags = read_u16(reader);
     const u8 *colors = read_bytes(reader, 8);
-    if (!colors || (flags & ~(fogFormat ? 63u : 31u)) || !!(flags & WORLD_SCENE_BLEND) != !!batch->pass
+    u16 supportedFlags = decalFormat ? 127u : fogFormat ? 63u : 31u;
+    bool blend = (flags & WORLD_SCENE_BLEND) != 0;
+    bool decal = (flags & WORLD_SCENE_DECAL) != 0;
+    bool blendPassValid = decalFormat
+        ? (batch->pass ? blend : (!blend || decal)) && (!decal || blend)
+        : blend == !!batch->pass;
+    if (!colors || (flags & ~supportedFlags) || !blendPassValid
         || ((flags & WORLD_SCENE_BLEND) && (flags & WORLD_SCENE_CUTOUT))) return false;
     material->flags = flags;
     memcpy(material->primitive, colors, 4);
@@ -192,7 +202,7 @@ static bool read_material(struct SceneReader *reader, struct FileBatch *batch, b
         for (int i = 0; i < 2; ++i) texture->scale[i] = read_s16(reader);
         for (int i = 0; i < 2; ++i) texture->origin[i] = read_s16(reader);
         for (int i = 0; i < 2; ++i) texture->scroll[i] = read_s16(reader);
-        if (!read_texture(reader, texture->name, texture->width, texture->height, false)) return false;
+        if (!read_texture(reader, texture->name, texture->width, texture->height, false, decalFormat)) return false;
     }
     if (material->flags & WORLD_SCENE_FOG) {
         if (!fogFormat) return false;
@@ -295,7 +305,8 @@ static bool read_render_vertices(struct SceneReader *reader, const struct WorldS
 }
 
 static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *desc,
-                                 struct FileRoom *room, bool legacy, bool materialFormat, bool fogFormat) {
+                      struct FileRoom *room, bool legacy, bool materialFormat,
+                      bool fogFormat, bool decalFormat) {
     desc->id = read_u32(reader);
     desc->min = read_point(reader);
     desc->max = read_point(reader);
@@ -307,7 +318,8 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
     room->batchCount = legacy ? 1 : count;
     if (reader->failed || desc->neighborCount > WORLD_SCENE_MAX_ROOM_NEIGHBORS
         || !count || (legacy && count > WORLD_SCENE_FILE_MAX_TRIANGLES)
-        || room->batchCount > WORLD_SCENE_MAX_BATCHES || stateCount > WORLD_SCENE_MAX_BATCHES || (materialFormat && stateCount)
+        || room->batchCount > (decalFormat ? WORLD_SCENE_MAX_BATCHES_WSC5 : WORLD_SCENE_MAX_BATCHES_LEGACY)
+        || stateCount > WORLD_SCENE_MAX_BATCHES_LEGACY || (materialFormat && stateCount)
         || !room->vertexCount || room->vertexCount > WORLD_REGION_MAX_VERTICES
         || !room->triangleCount || room->triangleCount > WORLD_REGION_MAX_TRIANGLES) return false;
 
@@ -318,7 +330,7 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
         batch->triangleCount = count;
         batch->width = read_u16(reader);
         batch->height = read_u16(reader);
-        if (!read_texture(reader, batch->texture, batch->width, batch->height, true)) return false;
+        if (!read_texture(reader, batch->texture, batch->width, batch->height, true, false)) return false;
     }
     desc->neighbors = room->neighbors;
     desc->userData = room;
@@ -343,14 +355,15 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
         if (materialFormat) {
             batch->pass = read_u16(reader);
             batch->triangleCount = read_u16(reader);
-            if (batch->pass > 1 || !read_material(reader, batch, fogFormat)) return false;
+            if (batch->pass > 1 || !read_material(reader, batch, fogFormat, decalFormat)) return false;
         } else if (!legacy) {
             batch->pass = read_u16(reader);
             batch->state = read_u16(reader);
             batch->triangleCount = read_u16(reader);
             batch->width = read_u16(reader);
             batch->height = read_u16(reader);
-            if (batch->pass > 1 || batch->state > stateCount || !read_texture(reader, batch->texture, batch->width, batch->height, false))
+            if (batch->pass > 1 || batch->state > stateCount
+                || !read_texture(reader, batch->texture, batch->width, batch->height, false, false))
                 return false;
         }
         total += batch->triangleCount;
@@ -413,15 +426,17 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     u16 exits = read_u16(&reader);
     struct FileScene *scene = NULL;
     bool legacy = magic && !memcmp(magic, "WSC1", 4);
-    bool materialFormat = magic && (!memcmp(magic, "WSC3", 4) || !memcmp(magic, "WSC4", 4));
-    bool fogFormat = magic && !memcmp(magic, "WSC4", 4);
+    bool materialFormat = magic && (!memcmp(magic, "WSC3", 4) || !memcmp(magic, "WSC4", 4)
+                                    || !memcmp(magic, "WSC5", 4));
+    bool fogFormat = magic && (!memcmp(magic, "WSC4", 4) || !memcmp(magic, "WSC5", 4));
+    bool decalFormat = magic && !memcmp(magic, "WSC5", 4);
     if (materialFormat && !gfx_supports_scene_materials()) {
-        fprintf(stderr, "Scene package %u requires WSC3/WSC4 render support\n", id);
+        fprintf(stderr, "Scene package %u requires WSC3/WSC4/WSC5 render support\n", id);
         goto fail;
     }
 #ifdef IOS_SCENE_DIAGNOSTIC
     if (id == SCENE_EXTERNAL_PACKAGE && !materialFormat) {
-        fprintf(stderr, "External scene slot requires a WSC3 or WSC4 package\n");
+        fprintf(stderr, "External scene slot requires a WSC3, WSC4, or WSC5 package\n");
         goto fail;
     }
 #endif
@@ -440,7 +455,8 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     if (!scene->rooms || !scene->descs || !scene->entrances || (exits && !scene->exits)) goto fail;
 
     for (u32 i = 0; i < rooms; ++i) {
-        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy, materialFormat, fogFormat)) goto fail;
+        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy,
+                       materialFormat, fogFormat, decalFormat)) goto fail;
     }
     for (u32 i = 0; i < entrances; ++i) {
         struct WorldSceneEntranceDesc *entrance = &scene->entrances[i];

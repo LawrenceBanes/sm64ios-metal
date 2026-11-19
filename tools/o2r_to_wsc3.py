@@ -13,8 +13,9 @@ from tempfile import TemporaryDirectory
 from zipfile import BadZipFile, ZipFile
 
 if __package__:
-    from . import hyrule_importer as o2r, o2r_draw_trace as trace, world_scene_package as wsc
+    from . import fast3d_pass_state, hyrule_importer as o2r, o2r_draw_trace as trace, world_scene_package as wsc
 else:
+    import fast3d_pass_state
     import hyrule_importer as o2r
     import o2r_draw_trace as trace
     import world_scene_package as wsc
@@ -24,6 +25,9 @@ MAX_LAYOUT_BYTES = 1024 * 1024
 TEXTURE_FORMATS = {(0, 2): 2, (0, 3): 1, (2, 0): 3, (2, 1): 4,
                    (3, 0): 7, (3, 1): 8, (3, 2): 9, (4, 0): 5, (4, 1): 6}
 WHITE = [255] * 4
+HYRULE_XLU_APPROXIMATION = "Hyrule 0xc8104b50 translucent coverage mode lowered to native straight-alpha blending"
+VALIDATED_APPROXIMATIONS = {"Fast3D CI decode uses RGBA5551 despite disabled RDP TLUT",
+                            HYRULE_XLU_APPROXIMATION}
 
 
 def commands_of(commands, opcode):
@@ -43,7 +47,29 @@ def multiply_factors(expression):
     return [] if expression == 1 else [expression]
 
 
-def combiner_channel(expression, channel, inputs, colors, opaque_alpha=False):
+def contains_expression(expression, value):
+    if expression == value:
+        return True
+    return (isinstance(expression, (tuple, list))
+            and any(contains_expression(item, value) for item in expression[1:]))
+
+
+def fold_static_primitive_lod_alpha(expression, primitive_lod_fraction):
+    """Fold only the OoT combine form proven constant by its draw-list state."""
+    if (isinstance(expression, (tuple, list)) and len(expression) == 5
+            and expression[0] == "combine" and expression[1] == "tex0.a"
+            and expression[2] == 0 and expression[3] == "primitive_lod_fraction"
+            and expression[4] == ("multiply", "primitive.a", "tex0.a")):
+        if primitive_lod_fraction == 0:
+            return expression[4]
+        raise ValueError("Fast3D alpha LOD interpolation is nonzero and cannot be lowered statically")
+    if contains_expression(expression, "primitive_lod_fraction"):
+        raise ValueError("unsupported Fast3D primitive-LOD alpha equation")
+    return expression
+
+
+def combiner_channel(expression, channel, inputs, colors, opaque_alpha=False,
+                     allow_texture_independent=False):
     if opaque_alpha:
         return False, 255, 255, None
     primitive = environment = 255
@@ -70,9 +96,13 @@ def combiner_channel(expression, channel, inputs, colors, opaque_alpha=False):
             reverse = a == f"tex0.{channel}"
         else:
             raise ValueError(f"unsupported {channel} combiner factor {term!r}")
-    if inputs and reverse is None:
+    if inputs and reverse is None and not allow_texture_independent:
         raise ValueError(f"{channel} channel ignores a texture sampled by the other channel")
     return shade, primitive, environment, reverse
+
+
+def alpha_bytes_are_opaque(pixels):
+    return bool(pixels) and len(pixels) % 4 == 0 and all(alpha == 255 for alpha in pixels[3::4])
 
 
 def palette_bytes(resources, entries, palette):
@@ -139,12 +169,19 @@ def texture_binding(texture, resources, entries, pngs, filter_mode):
     binding = {"name": "scenes/placeholder.rgba16", "width": width, "height": height,
                "filter": "three_point" if filter_mode == 2 else "point", "address": [],
                "scale": [], "origin": []}
-    wsc.texture_descriptor(binding)
+    # The importer produces WSC5 when the traced material set needs its decal
+    # extension. Validate the source against the broadest target first; the
+    # final version-specific package encoder still rejects oversized textures
+    # for WSC1-WSC4.
+    wsc.texture_descriptor(binding, 5)
     if "palette" in texture:
         palette = texture["palette"]
+        palette_format = palette.get("interpretation") or palette.get("reference_interpretation")
+        if palette_format not in ("rgba5551", "ia88"):
+            raise ValueError(f"{path}: indexed texture has no explicit supported palette interpretation")
         pixels = wsc.decode_indexed_rgba({**binding, "index_bits": source["bits_per_pixel"],
-                                         "indices": payload.hex(), "palette_format": palette["interpretation"],
-                                         "palette": palette_bytes(resources, entries, palette).hex()})
+                                         "indices": payload.hex(), "palette_format": palette_format,
+                                         "palette": palette_bytes(resources, entries, palette).hex()}, 5)
     else:
         pixels = o2r.decode_texture_rgba(source, payload)
     for axis, dimension in zip(("s", "t"), (width, height)):
@@ -185,7 +222,7 @@ def crop_ci4(payload, source_width, source_height, left, top, width, height):
     return bytes(result)
 
 
-def lower_material(draw, resources, entries, pngs):
+def lower_material(draw, resources, entries, pngs, *, vertex_alpha_opaque=False):
     state, combiner = draw["render_state"], draw["combiner"]
     mode, known = draw["geometry"]["mode"], draw["geometry"]["known_mask"]
     if known & 0x0F0601 != 0x0F0601 or mode & 0x0C0200:
@@ -193,21 +230,81 @@ def lower_material(draw, resources, entries, pngs):
     blender, effective = state["reference_blender"], combiner["effective"]
     if blender is None or effective is None or state["depth_test"] is None or state["depth_write"] is None:
         raise ValueError("incomplete blender, combiner or depth state")
+    fog_factors = draw["fog"].get("vertex_factors", [])
+    fog_color = draw["fog"].get("color")
+    fog_available = (draw["fog"].get("enabled") and len(fog_factors) == 1
+                     and isinstance(fog_factors[0], dict) and fog_color
+                     and len(fog_color.get("rgba", [])) == 4)
+    fog_effective = bool(fog_available and (fog_factors[0]["multiplier"] or
+                                            fog_factors[0]["offset_coefficient"]))
+    if blender["fog"] and not fog_available:
+        raise ValueError("RDP fog blender is active without one complete homogeneous Fast3D fog state")
     translucent = draw["pass"] == "translucent"
+    blended = translucent
     low, high = state["other_mode_low"], state["other_mode_high"]
-    if (blender["fog"] or blender["blend_color"] or blender["invisible"] or blender["coverage_alpha"]
+    cutout = False
+    decal = False
+    if low >> 30 == 3:
+        hyrule_modes = {
+            0xC8112078: ("opaque", False),
+            0xC8113078: ("opaque", True),
+            0xC81049D8: ("translucent", False),
+            0xC8104B50: ("translucent", False),
+            0xC8104DD8: ("opaque", False),
+            0xC8104F50: ("translucent", False),
+        }
+        render_mode = hyrule_modes.get(low)
+        if render_mode is None or render_mode[0] != draw["pass"]:
+            raise ValueError(f"Fast3D render mode 0x{low:08x} is outside the validated Hyrule opaque/cutout/XLU subset")
+        cutout = render_mode[1]
+        decal = low in (0xC8104DD8, 0xC8104F50)
+        if decal:
+            blended = True
+        if decal and (not state["depth_test"] or state["depth_write"]
+                      or state["z_mode"] != 3 or state["alpha_compare"] != 0):
+            raise ValueError("Hyrule decal render mode has inconsistent depth or alpha state")
+        if decal and not state["force_blend"]:
+            raise ValueError("Hyrule decal render mode does not enable force blend")
+        # A TEX_EDGE render mode only discards when the combiner alpha is
+        # below the edge threshold. If the source alpha equation is the
+        # literal constant 1, the test can never discard a pixel, so the
+        # equivalent WSC material is ordinary opaque. Do not infer this from
+        # missing alpha inputs alone: explicit constants other than 1 must be
+        # rejected rather than changed into visible geometry.
+        has_alpha_source = any(value.endswith(".a") for value in effective["inputs"])
+        if cutout and not has_alpha_source:
+            if effective["alpha"] == 1:
+                cutout = False
+            else:
+                raise ValueError("Hyrule texture-edge mode has no alpha source and is not constant opaque")
+        if low == 0xC8104B50:
+            draw["approximations"].append(HYRULE_XLU_APPROXIMATION)
+    else:
+        if (blender["blend_color"] or blender["invisible"] or blender["coverage_alpha"]
+                or low & 4 or state["z_mode"] != 2 * translucent or state["alpha_compare"] != 0
+                or blender["alpha"] != translucent):
+            raise ValueError(f"unsupported alpha, coverage or depth mode 0x{low:08x}")
+    if (blender["blend_color"] or blender["invisible"] or blender["coverage_alpha"]
             or low & 4 or state["z_mode"] != 2 * translucent
-            or state["alpha_compare"] != 0 or blender["alpha"] != translucent):
+            or state["alpha_compare"] != 0 or (blender["alpha"] != translucent and not cutout)) and low >> 30 != 3:
         raise ValueError(f"unsupported alpha, coverage or depth mode 0x{low:08x}")
     # Only proven straight-alpha equations for both cycles. Opaque accepts no
     # blend or the standard pixel/coverage blender with force-blend clear.
     valid_blenders = (0x0050,) if translucent else (0, 0x0055, 0x0044)
-    if state["blender_raw"] not in valid_blenders or bool(low & 0x4000) != translucent:
+    if low >> 30 != 3 and (state["blender_raw"] not in valid_blenders or bool(low & 0x4000) != translucent):
         raise ValueError(f"unsupported blend equation 0x{low:08x}")
     inputs, colors = effective["texture_inputs"], combiner["colors"]
+    alpha_expression = effective["alpha"]
+    if low == 0xC8104F50:
+        alpha_expression = fold_static_primitive_lod_alpha(
+            alpha_expression, colors["primitive"].get("lod_fraction"))
+    independent_primitive_alpha = (blended and len(inputs) == 2
+                                   and alpha_expression == "primitive.a")
     rgb = combiner_channel(effective["rgb"], "rgb", inputs, colors)
-    alpha = combiner_channel(effective["alpha"], "a", inputs, colors, opaque_alpha=not translucent)
-    if translucent and rgb[3] != alpha[3]:
+    alpha = combiner_channel(alpha_expression, "a", inputs, colors,
+                             opaque_alpha=not blended and not cutout,
+                             allow_texture_independent=independent_primitive_alpha)
+    if blended and alpha[3] is not None and rgb[3] != alpha[3]:
         raise ValueError("color and alpha use different texture equations")
     filter_mode = high >> 12 & 3
     bindings = []
@@ -217,20 +314,32 @@ def lower_material(draw, resources, entries, pngs):
         bindings = [texture_binding(t, resources, entries, pngs, filter_mode) for t in draw["textures"]]
     if len(bindings) == 2 and rgb[3]:
         bindings.reverse()
+    if blended and not alpha[0] and not vertex_alpha_opaque:
+        raise ValueError("source alpha omits shade alpha but referenced vertex alpha is not proven opaque")
+    if blended and bindings and alpha[3] is None:
+        if any(not alpha_bytes_are_opaque(pngs[binding["name"]][2]) for binding in bindings):
+            raise ValueError("source alpha omits texture alpha but decoded texture alpha is not proven opaque")
+    if independent_primitive_alpha:
+        # The current Metal WSC material shader multiplies the sampled alpha,
+        # vertex alpha, and primitive alpha. OoT's source equation here uses
+        # primitive alpha alone, so it is equivalent only when the additional
+        # alpha factors are identically one for every referenced sample/vertex.
+        if not vertex_alpha_opaque:
+            raise ValueError("primitive-only dual-texture alpha needs opaque source vertex alpha")
+        if len(bindings) != 2 or any(not alpha_bytes_are_opaque(pngs[binding["name"]][2])
+                                     for binding in bindings):
+            raise ValueError("primitive-only dual-texture alpha needs fully opaque decoded texture alpha")
     env_alpha = colors["environment"]["rgba"][3] if len(bindings) == 2 else 255
     material = {"textures": bindings, "depth_test": state["depth_test"], "depth_write": state["depth_write"],
-                "cull_back": bool(mode & 0x400),
+                "cutout": cutout, "cull_back": bool(mode & 0x400),
                 "primitive": (rgb[1] if isinstance(rgb[1], list) else [rgb[1]] * 3) + [alpha[1]],
                 "environment": (rgb[2] if isinstance(rgb[2], list) else [rgb[2]] * 3) + [env_alpha]}
-    if draw["fog"]["enabled"]:
-        factors = draw["fog"]["vertex_factors"]
-        if len(factors) != 1 or not isinstance(factors[0], dict):
-            raise ValueError("fogged draw needs one complete MOVEWORD fog coefficient state")
-        fog_color = draw["fog"]["color"]
-        if not fog_color or len(fog_color.get("rgba", [])) != 4:
-            raise ValueError("fogged draw needs a complete SETFOGCOLOR state")
-        material["fog"] = {"multiplier": factors[0]["multiplier"],
-                            "offset": factors[0]["offset_coefficient"],
+    if decal:
+        material["decal"] = True
+        material["blend"] = True
+    if fog_effective:
+        material["fog"] = {"multiplier": fog_factors[0]["multiplier"],
+                            "offset": fog_factors[0]["offset_coefficient"],
                             "color": fog_color["rgba"]}
     return material, rgb[0], alpha[0]
 
@@ -242,9 +351,13 @@ class Conversion:
         self.boundary = 32768 if expanded else 8192
         self.pngs, self.batches, self.failures = {}, defaultdict(list), []
         self.converted_sources = set()
+        self.vertex_alpha_cache = {}
+        self.accepted_approximation_counts = Counter()
         self.report = {"schema_version": 1, "status": "rejected", "source_scene": root,
                        "source_room_paths": [], "candidate_draws": 0, "rooms": [], "entrances": [],
-                       "trace_issues": [], "draw_issues": self.failures, "scene_issues": []}
+                       "trace_issues": [], "draw_issues": self.failures, "scene_issues": [],
+                       "rendering_approximations": [], "collision_approximations": [],
+                       "entrance_approximations": []}
 
     def point(self, source):
         point = [round(n * self.scale) + offset for n, offset in zip(source, self.offset)]
@@ -264,9 +377,24 @@ class Conversion:
 
     def draw(self, draw, refs, palettes):
         try:
-            if draw["missing"] or draw["approximations"]:
-                raise ValueError("; ".join(draw["missing"] + draw["approximations"]))
-            material, shade_rgb, shade_alpha = lower_material(draw, self.resources, palettes, self.pngs)
+            rejected_approximations = sorted(set(draw["approximations"]) - VALIDATED_APPROXIMATIONS)
+            if draw["missing"] or rejected_approximations:
+                raise ValueError("; ".join(draw["missing"] + rejected_approximations))
+            effective = draw["combiner"]["effective"]
+            needs_opaque_vertex_alpha = (draw["pass"] == "translucent"
+                                         or draw["render_state"].get("force_blend") is True)
+            vertex_alpha_opaque = (self.source_vertex_alpha_opaque(refs)
+                                   if needs_opaque_vertex_alpha
+                                   and not contains_expression(effective["alpha"], "shade.a")
+                                   else False)
+            material, shade_rgb, shade_alpha = lower_material(
+                draw, self.resources, palettes, self.pngs,
+                vertex_alpha_opaque=vertex_alpha_opaque)
+            rejected_approximations = sorted(set(draw["approximations"]) - VALIDATED_APPROXIMATIONS)
+            if rejected_approximations:
+                raise ValueError("; ".join(rejected_approximations))
+            for approximation in set(draw["approximations"]) & VALIDATED_APPROXIMATIONS:
+                self.accepted_approximation_counts[approximation] += 1
             vertices = []
             for path, index, scale, geometry, matrix, fog_factor, num_lights, light_state in refs:
                 if geometry & (trace.G_TEXTURE_GEN | trace.G_TEXTURE_GEN_LINEAR):
@@ -302,19 +430,41 @@ class Conversion:
             self.failures.append({"room": draw["room"], "pass": draw["pass"], "display_list": draw["display_list"],
                                   "offset": draw["offset"], "command": draw["command"], "reason": str(error)})
 
+    def source_vertex_alpha_opaque(self, refs):
+        for reference in refs:
+            path, index = reference[0], reference[1]
+            if path not in self.vertex_alpha_cache:
+                _, _, endian, body = self.resources.typed_body(path, ("Vertex", "Array"))
+                vertices = o2r.parse_vertex_array(body, endian, path)["vertices"]
+                self.vertex_alpha_cache[path] = [vertex["cn_bytes"][3] for vertex in vertices]
+            alphas = self.vertex_alpha_cache[path]
+            if not 0 <= index < len(alphas) or alphas[index] != 255:
+                return False
+        return True
+
     def collision(self, path):
         _, _, endian, body = self.resources.typed_body(path, ("CollisionHeader",))
         collision = o2r.parse_collision(body, endian, path)
+        ignored_flag_pairs = collision_flag_policy(self.layout)
         if collision["water_boxes"]:
-            raise ValueError(f"{path}: WSC3 cannot register source water boxes")
+            if self.layout.get("ignore_water_boxes") is not True:
+                raise ValueError(f"{path}: WSC runtime has no water-box gameplay representation; set ignore_water_boxes=true to explicitly omit swimming/water-level behavior")
+            self.report["rendering_approximations"].append({"resource": path,
+                "reason": "source water boxes explicitly omitted by layout flag; swimming and water-level gameplay are absent",
+                "count": len(collision["water_boxes"])})
         if len(collision["vertices"]) > 16384 or len(collision["polygons"]) > 16 * 8192:
             raise ValueError(f"{path}: collision exceeds WSC region limits")
         vertices = [self.point(vertex) for vertex in collision["vertices"]]
         triangles = []
+        mapped_surfaces = Counter()
+        ignored_vertex_flags = Counter()
         for index, poly in enumerate(collision["polygons"]):
             indices = poly["vertex_indices"]
-            if any(poly["vertex_flags"]):
-                raise ValueError(f"{path}: polygon {index} has unsupported collision participation flags")
+            flags = tuple(poly["vertex_flags"])
+            if any(flags):
+                if flags not in ignored_flag_pairs:
+                    raise ValueError(f"{path}: polygon {index} has unsupported source collision corner flags {list(flags)}")
+                ignored_vertex_flags[flags] += 1
             normal = cross(*(vertices[i] for i in indices))
             if not any(normal) or sum(a * b for a, b in zip(normal, poly["normal"])) <= 0:
                 raise ValueError(f"{path}: polygon {index} is degenerate or disagrees with its source winding")
@@ -324,13 +474,43 @@ class Conversion:
             mapping = self.layout.get("surface_map", {})
             if str(surface) in mapping:
                 terrain = wsc.integer(mapping[str(surface)], 0, 32767, "mapped SM64 surface")
+                mapped_surfaces[surface] += 1
             elif collision["surface_types"][surface] == [0, 0]:
                 terrain = 0
             else:
                 raise ValueError(f"{path}: polygon {index} needs a surface_map entry for source surface {surface}")
             triangles.append({"indices": indices, "type": terrain})
+        for source_surface, polygon_count in sorted(mapped_surfaces.items()):
+            self.report["collision_approximations"].append({
+                "resource": path, "source_surface_index": source_surface,
+                "source_parameters": collision["surface_types"][source_surface],
+                "sm64_surface": wsc.integer(self.layout["surface_map"][str(source_surface)],
+                                             0, 32767, "mapped SM64 surface"),
+                "polygon_count": polygon_count,
+                "reason": "explicit layout mapping; OoT surface behavior and parameters are not translated",
+            })
+        for flags, polygon_count in sorted(ignored_vertex_flags.items()):
+            self.report["collision_approximations"].append({
+                "resource": path, "source_corner_flags": list(flags),
+                "polygon_count": polygon_count,
+                "reason": "source collision corner flags were explicitly omitted by layout; semantics are not translated",
+            })
         self.converted_sources.add(path)
         return vertices, triangles
+
+    def scene_profile(self):
+        context = self.layout.get("hyrule_context")
+        if context is None:
+            return None
+        if self.root != fast3d_pass_state.HYRULE_SCENE:
+            raise ValueError("hyrule_context is restricted to the exact NTSC 1.0 Hyrule Field scene resource")
+        if not isinstance(context, dict) or set(context) != {"frame", "lighting_setting", "daytime"}:
+            raise ValueError("hyrule_context requires exactly frame, lighting_setting, and daytime")
+        marker = self.resources.archive.read("version")[:len(fast3d_pass_state.NTSC_10)]
+        if marker != fast3d_pass_state.NTSC_10:
+            raise ValueError("hyrule_context requires the OoT NTSC 1.0 archive marker")
+        return fast3d_pass_state.HyruleFieldInputs(context["frame"], context["lighting_setting"],
+                                                    context["daytime"])
 
     def convert(self, segments):
         source = self.resources.read(self.root, ("Scene",))
@@ -347,10 +527,22 @@ class Conversion:
             raise ValueError("room_segments keys must be resource paths in the selected scene's room table")
         room_segments = {path: parse_segments(bindings) for path, bindings in room_input.items()}
         self.report["pass_preludes"] = preludes
-        trace_report = trace.DrawTracer(self.resources, self.root, segments, draw_sink=self.draw,
+        profile = self.scene_profile()
+        trace_report = trace.DrawTracer(self.resources, self.root, segments, profile=profile, draw_sink=self.draw,
                                         pass_preludes=preludes, room_segments=room_segments).run()
         self.report.update(candidate_draws=len(trace_report["draws"]), trace_issues=trace_report["issues"],
-                           trace_coverage=trace_report["coverage"], texture_count=len(self.pngs))
+                           trace_coverage=trace_report["coverage"], texture_count=len(self.pngs),
+                           room_meshes=trace_report["room_meshes"])
+        self.report["rendering_approximations"] = [
+            {"room": item["room"], "scene_command_offset": item["scene_command_offset"],
+             "reason": "type-2 room culling spheres are retained as metadata but not evaluated; all referenced polygon lists are converted in source order",
+             "impact": "may submit off-screen geometry and increase draw work; geometry is not transformed by sphere centers"}
+            for item in trace_report["room_meshes"] if item["type"] == 2]
+        self.report["rendering_approximations"].extend(trace_report.get("visibility_approximations", []))
+        self.report["rendering_approximations"].extend(
+            {"reason": reason, "draw_count": count}
+            for reason, count in sorted(self.accepted_approximation_counts.items()))
+        self.report["trace_profile"] = trace_report.get("profile")
         self.converted_sources.update(trace_report["coverage"]["static_matrix_resources"])
         rooms = [{"id": i + 1, "batches": self.batches[path], "neighbors": []} for i, path in enumerate(room_paths)]
         summaries = [{"id": room["id"], "neighbors": room["neighbors"], "batches": len(room["batches"]),
@@ -404,7 +596,9 @@ class Conversion:
         if any(self.report[key] for key in ("trace_issues", "draw_issues", "scene_issues")):
             return None
         self.converted_sources.update({self.root, *room_paths})
-        version = 4 if any(batch["material"].get("fog") for room in rooms for batch in room["batches"]) else 3
+        all_materials = [batch["material"] for room in rooms for batch in room["batches"]]
+        version = (5 if any(material.get("decal") for material in all_materials)
+                   else 4 if any(material.get("fog") for material in all_materials) else 3)
         return {"version": version, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
 
     def compatibility_summary(self, package=None):
@@ -433,7 +627,9 @@ class Conversion:
                          "formats": ["RGBA16", "RGBA32", "CI4", "CI8", "I4", "I8", "IA4", "IA8", "IA16"],
                          "loadtile": ["4-bit packed crop", "8-bit byte crop", "16-bit byte crop"]},
             "collision": {"vertices": collision_vertices, "triangles": collision_triangles,
-                          "coverage": "validated room collision; source water boxes and unsupported participation flags reject"},
+                          "coverage": "validated source polygon indices and winding; water boxes, explicit surface mappings, and omitted source corner flags are reported separately",
+                          "explicit_approximations": self.report.get("collision_approximations", [])},
+            "entrance_approximations": self.report.get("entrance_approximations", []),
             "rooms": {"entrances": len(self.report.get("entrances", [])), "neighbor_links": room_links,
                       "connected_rooms": sum(bool(room.get("neighbors")) for room in self.report.get("rooms", []))},
             "memory_estimate": {"package_bytes": len(package["bytes"]) if package else None,
@@ -445,6 +641,7 @@ class Conversion:
         "unsupported_features": sorted(set(self.report.get("unmapped_metadata", [])) |
                                             {failure["reason"] for failure in self.failures} |
                                             {issue["reason"] for issue in self.report.get("trace_issues", [])}),
+            "rendering_approximations": self.report.get("rendering_approximations", []),
             "trace_issue_reasons": dict(sorted(trace_reasons.items())),
             "supported_subsets": {
                 "display_lists": ["bounded F3DEX2 triangle batches", "hashed display-list calls",
@@ -461,6 +658,13 @@ class Conversion:
         rows = command_of(source, 6, self.root).get("entrances", [])
         if not rows:
             raise ValueError("source scene has no entrance table")
+        excluded_values = self.layout.get("exclude_entrances", [])
+        if not isinstance(excluded_values, list) or len(excluded_values) > len(rows):
+            raise ValueError("exclude_entrances must be a list of source entrance indices")
+        excluded = {wsc.integer(index, 0, len(rows) - 1, "excluded source entrance")
+                    for index in excluded_values}
+        if len(excluded) != len(excluded_values):
+            raise ValueError("exclude_entrances contains duplicate source entrance indices")
         entrances = []
         for index, row in enumerate(rows):
             room_id = wsc.integer(row["room"], 0, len(rooms) - 1, "entrance room")
@@ -469,10 +673,28 @@ class Conversion:
             room = rooms[room_id]
             position = safe_spawn(room, point)
             if position is None:
+                if index in excluded:
+                    self.report["entrance_approximations"].append({
+                        "source_entrance": index, "source_spawn": row["spawn"],
+                        "source_room": row["room"], "position": point,
+                        "reason": "source entrance explicitly excluded by layout because no safe local floor exists",
+                    })
+                    continue
                 raise ValueError(f"entrance {index} has no safe local floor near {point}; check the source spawn and collision")
+            if index in excluded:
+                raise ValueError(f"source entrance {index} has a safe local floor and cannot be excluded")
             entrances.append({"id": index, "room": room["id"], "position": position, "yaw": actor["rotation"][1]})
-        selected = wsc.integer(self.layout.get("entrance", 0), 0, len(entrances) - 1, "default entrance")
-        entrances[0]["id"], entrances[selected]["id"] = selected, 0
+        if not entrances:
+            raise ValueError("all source entrances were excluded; at least one safe entrance is required")
+        selected = wsc.integer(self.layout.get("entrance", 0), 0, len(rows) - 1, "default entrance")
+        selected_index = next((i for i, row in enumerate(entrances) if row["id"] == selected), None)
+        if selected_index is None:
+            raise ValueError(f"default source entrance {selected} is excluded or has no safe local floor")
+        old_selected_id = entrances[selected_index]["id"]
+        zero_index = next((i for i, row in enumerate(entrances) if row["id"] == 0), None)
+        if zero_index is not None:
+            entrances[zero_index]["id"] = old_selected_id
+        entrances[selected_index]["id"] = 0
         return entrances
 
 
@@ -531,6 +753,21 @@ def assign_collision(room, vertices, triangles):
     indices = {source: index for index, source in enumerate(used)}
     room["collision_vertices"] = [vertices[i] for i in used]
     room["collision_triangles"] = [{**tri, "indices": [indices[i] for i in tri["indices"]]} for tri in triangles]
+
+
+def collision_flag_policy(layout):
+    values = layout.get("ignore_collision_vertex_flags", [])
+    if not isinstance(values, list) or len(values) > 64:
+        raise ValueError("ignore_collision_vertex_flags must be a list of at most 64 flag pairs")
+    result = set()
+    for pair in values:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError("each ignored collision flag entry must contain two vertex flag values")
+        flags = tuple(wsc.integer(value, 0, 7, "source collision vertex flag") for value in pair)
+        if flags == (0, 0) or flags in result:
+            raise ValueError("ignored collision flag pairs must be distinct and nonzero")
+        result.add(flags)
+    return result
 
 
 def apply_bounds(rooms, authored):
@@ -610,7 +847,8 @@ def convert_archive(archive_path, source, layout, scale, offset, expanded, segme
         raise ValueError("archive file exceeds the O2R size limit")
     if scale <= 0 or scale > 1024:
         raise ValueError("--scale must be positive and no greater than 1024")
-    allowed = {"bounds", "collision_rooms", "links", "surface_map", "entrance", "pass_preludes", "room_segments"}
+    allowed = {"bounds", "collision_rooms", "links", "surface_map", "entrance", "pass_preludes", "room_segments",
+               "hyrule_context", "ignore_water_boxes", "ignore_collision_vertex_flags", "exclude_entrances"}
     if not isinstance(layout, dict) or set(layout) - allowed:
         raise ValueError("invalid layout fields")
     with ZipFile(archive_path) as archive:
@@ -623,7 +861,8 @@ def convert_archive(archive_path, source, layout, scale, offset, expanded, segme
             if scene is not None:
                 stage = "WSC3 package bounds"
                 package = wsc.encode_scene(scene)
-                conversion.report.update(status="converted", package_bytes=len(package))
+                conversion.report.update(status="converted", package_bytes=len(package),
+                                         package_format=f"WSC{scene['version']}")
         except CONVERSION_ERRORS as error:
             if not audit:
                 raise

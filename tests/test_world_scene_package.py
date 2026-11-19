@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import struct
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.hyrule_importer import write_rgba_png
-from tools.world_scene_package import decode_indexed_rgba, encode_scene
+from tools.world_scene_package import decode_indexed_rgba, encode_scene, texture_descriptor
 from tools.scene_diagnostic import authored_wsc3_scene, generate
 from ios.validate_ipa import check_scene_diagnostic
 from test_o2r_to_wsc3 import export_fixture
@@ -69,6 +70,14 @@ def material_scene():
 
 
 class ScenePackageTest(unittest.TestCase):
+    def test_texture_limit_uses_four_thousand_ninety_six_texels(self):
+        supported = {"name": "scenes/hyrule.rgba16", "width": 128, "height": 32}
+        self.assertEqual(texture_descriptor(supported, 5)[:2], (128, 32))
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            texture_descriptor(supported, 4)
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            texture_descriptor({**supported, "height": 33}, 5)
+
     def test_palette_formats_and_bounds(self):
         base = {"name": "scenes/unit.rgba16", "width": 4, "height": 1,
                 "index_bits": 4, "indices": "0101", "palette_format": "ia88", "palette": "6480ff00"}
@@ -96,6 +105,25 @@ class ScenePackageTest(unittest.TestCase):
             scene["rooms"][0]["batches"][1]["material"].update(changes)
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 encode_scene(scene)
+
+    def test_wsc5_supports_202_batches_without_raising_older_limits(self):
+        scene = copy.deepcopy(authored_wsc3_scene(28))
+        scene["version"] = 5
+        room = scene["rooms"][0]
+        batch = copy.deepcopy(room["batches"][0])
+        batch["render_vertices"] = batch["render_vertices"][:3]
+        room["batches"] = [copy.deepcopy(batch) for _ in range(202)]
+        self.assertEqual(encode_scene(scene)[:4], b"WSC5")
+
+        legacy = copy.deepcopy(scene)
+        legacy["version"] = 4
+        with self.assertRaisesRegex(ValueError, "batches must contain 1 to 64"):
+            encode_scene(legacy)
+
+        oversized = copy.deepcopy(scene)
+        oversized["rooms"][0]["batches"] = [copy.deepcopy(batch) for _ in range(257)]
+        with self.assertRaisesRegex(ValueError, "batches must contain 1 to 256"):
+            encode_scene(oversized)
 
     def test_rejects_invalid_authored_input(self):
         scene, _ = make_pair()
@@ -144,6 +172,27 @@ class ScenePackageTest(unittest.TestCase):
             legacy_fog_scene["version"] = 3
             with self.assertRaisesRegex(ValueError, "requires WSC4"):
                 encode_scene(legacy_fog_scene)
+            decal_scene = copy.deepcopy(authored_wsc3_scene(26))
+            decal_scene["version"] = 5
+            decal_scene["indexed_textures"] = []
+            decal_room = decal_scene["rooms"][0]
+            decal_room["batches"] = [decal_room["batches"][0]]
+            decal_room["batches"][0]["material"]["decal"] = True
+            decal_room["batches"][0]["material"]["blend"] = True
+            decal_room["batches"][0]["material"]["depth_write"] = False
+            (work / "scenes/26.wsc").write_bytes(encode_scene(decal_scene))
+            decal_bytes = (work / "scenes/26.wsc").read_bytes()
+            self.assertEqual(decal_bytes[:4], b"WSC5")
+            self.assertTrue(struct.unpack_from("<H", decal_bytes, 14 + 26 + 4)[0] & 0x50 == 0x50)
+            legacy_decal_scene = copy.deepcopy(decal_scene)
+            legacy_decal_scene["version"] = 4
+            with self.assertRaisesRegex(ValueError, "requires WSC5"):
+                encode_scene(legacy_decal_scene)
+            legacy_decal_scene["rooms"][0]["batches"][0]["material"].pop("decal")
+            legacy_decal_scene["rooms"][0]["batches"][0]["material"].pop("blend")
+            bad = bytearray(encode_scene({**legacy_decal_scene, "id": 27}))
+            bad[14 + 26 + 4] |= 0x40
+            (work / "scenes/27.wsc").write_bytes(bad)
             bad = bytearray(encode_scene({**content, "id": 22}))
             # First room's first batch follows package/room headers, one
             # neighbor and one draw-state slot. Forge an out-of-range slot.
@@ -156,6 +205,23 @@ class ScenePackageTest(unittest.TestCase):
             # Unknown material flags must fail without replacing the active room.
             bad[14 + 26 + 4] |= 0x80
             (work / "scenes/24.wsc").write_bytes(bad)
+            wide = copy.deepcopy(authored_wsc3_scene(28))
+            wide["version"] = 5
+            wide_batch = copy.deepcopy(wide["rooms"][0]["batches"][0])
+            wide_batch["render_vertices"] = wide_batch["render_vertices"][:3]
+            wide["rooms"][0]["batches"] = [copy.deepcopy(wide_batch) for _ in range(202)]
+            (work / "scenes/28.wsc").write_bytes(encode_scene(wide))
+            high_texture = {"name": "scenes/high.rgba16", "width": 128, "height": 32}
+            high_res_scene = copy.deepcopy(authored_wsc3_scene(29))
+            high_res_scene["version"] = 5
+            high_res_scene["indexed_textures"] = []
+            high_res_scene["rooms"][0]["batches"] = [high_res_scene["rooms"][0]["batches"][0]]
+            high_res_scene["rooms"][0]["batches"][0]["material"]["textures"] = [high_texture]
+            (work / "scenes/29.wsc").write_bytes(encode_scene(high_res_scene))
+            write_rgba_png(work / "gfx/scenes/high.rgba16.png", 128, 32, bytes([255, 255, 255, 255] * (128 * 32)))
+            legacy_high_res = bytearray(encode_scene({**high_res_scene, "id": 30}))
+            legacy_high_res[:4] = b"WSC4"
+            (work / "scenes/30.wsc").write_bytes(legacy_high_res)
             fixture = work / "generated"
             generate(fixture)
             packed = work / "base.zip"
