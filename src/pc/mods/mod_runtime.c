@@ -26,6 +26,7 @@
 #include "object_fields.h"
 #include "engine/behavior_script.h"
 #include "behavior_data.h"
+#include "mod_behavior_weak.inc"
 #include "game/area.h"
 #include "game/level_update.h"
 #include "game/mario.h"
@@ -73,7 +74,7 @@ typedef struct ModCustomActionId ModCustomActionId;
 
 struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
 struct ModAction { Mod *owner; char *file; uint32_t id; int every_frame_ref; int gravity_ref; bool enabled; ModAction *next_global; ModAction *next_owned; };
-struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; ModBehavior *next_global; ModBehavior *next_owned; };
+struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; uintptr_t script[5]; ModBehavior *next_global; ModBehavior *next_owned; };
 struct ModObject { struct Object *object; uint32_t token; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
 struct ModModule { char *name; int value_ref; bool loading; ModModule *next; };
 struct ModRequest { int type; int index; int item_index; int64_t value; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
@@ -116,6 +117,7 @@ struct Mod {
 };
 
 typedef struct { size_t bytes; } LuaAllocator;
+typedef struct { lua_Integer id; const char *name; const BehaviorScript *script; } NativeBehavior;
 typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT, LUA_UD_SURFACE } LuaUserdataKind;
 typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; struct Surface surface; } LuaUserdata;
 
@@ -146,6 +148,10 @@ static pthread_mutex_t sModListMutex = PTHREAD_MUTEX_INITIALIZER;
 static ModRequest *sRequestHead;
 static ModRequest *sRequestTail;
 static Mod *mod_runtime_find_index(int index);
+
+static const NativeBehavior sNativeBehaviors[] = {
+#include "mod_behavior_entries.inc"
+};
 
 enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP, MOD_REQUEST_MENU_VALUE };
 enum { MOD_MENU_BUTTON = 0, MOD_MENU_CHECKBOX = 1, MOD_MENU_SLIDER = 2 };
@@ -496,6 +502,12 @@ static ModObject *find_object(struct Object *object) {
     return NULL;
 }
 
+static const BehaviorScript *object_behavior_script(struct Object *object) {
+    ModObject *entry = find_object(object);
+    if (entry && entry->behavior) return (const BehaviorScript *)entry->behavior->script;
+    return object ? object->behavior : NULL;
+}
+
 static void push_object(lua_State *L, struct Object *object) {
     LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
     ModObject *entry = find_object(object);
@@ -708,6 +720,7 @@ static int object_index(lua_State *L) {
     const char *key = luaL_checkstring(L, 2);
     if (!strcmp(key, "parentObj") && o->parentObj) push_object(L, o->parentObj);
     else if (!strcmp(key, "prevObj") && o->prevObj) push_object(L, o->prevObj);
+    else if (!strcmp(key, "behavior")) lua_pushinteger(L, (lua_Integer)(uintptr_t)object_behavior_script(o));
     else if (!strcmp(key, "oFaceAnglePitch")) lua_pushinteger(L, o->oFaceAnglePitch);
     else if (!strcmp(key, "oFaceAngleRoll")) lua_pushinteger(L, o->oFaceAngleRoll);
     else if (!object_number_get(o, key, L)) return luaL_error(L, "Object field '%s' is unsupported by this adapter", key);
@@ -793,9 +806,14 @@ static int l_hook_mario_action(lua_State *L) {
     return 0;
 }
 
+static void script_behavior_native(void);
+
 static int l_hook_behavior(lua_State *L) {
     if (!lua_isnil(L, 1)) return luaL_error(L, "hook_behavior override of native behavior IDs is unsupported by this engine adapter");
-    int list = (int)luaL_checkinteger(L, 2);
+    lua_Integer list_value = luaL_checkinteger(L, 2);
+    if (list_value < 0 || list_value >= NUM_OBJ_LISTS)
+        return luaL_error(L, "object list %lld is unsupported for script behaviors", (long long)list_value);
+    int list = (int)list_value;
     (void)lua_toboolean(L, 3); /* replaceBehavior is meaningful only when replacing native behavior */
     luaL_checktype(L, 4, LUA_TFUNCTION);
     luaL_checktype(L, 5, LUA_TFUNCTION);
@@ -808,6 +826,11 @@ static int l_hook_behavior(lua_State *L) {
     if (!behavior->file) { free(behavior); return luaL_error(L, "out of memory registering behavior source"); }
     behavior->owner = sCurrentMod; behavior->id = MOD_DYNAMIC_ID_BASE | sNextBehaviorId++;
     behavior->object_list = list; behavior->enabled = true;
+    behavior->script[0] = ((uintptr_t)list & 0xFFu) << 16;
+    behavior->script[1] = (uintptr_t)0x08u << 24;
+    behavior->script[2] = (uintptr_t)0x0Cu << 24;
+    behavior->script[3] = (uintptr_t)script_behavior_native;
+    behavior->script[4] = (uintptr_t)0x09u << 24;
     lua_pushvalue(L, 4); behavior->init_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_pushvalue(L, 5); behavior->loop_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     behavior->next_global = sBehaviors; sBehaviors = behavior;
@@ -819,6 +842,159 @@ static int l_hook_behavior(lua_State *L) {
 static ModBehavior *find_behavior(uint32_t id) {
     for (ModBehavior *b = sBehaviors; b; b = b->next_global) if (b->id == id && b->enabled) return b;
     return NULL;
+}
+
+static ModBehavior *find_behavior_by_script(const BehaviorScript *script) {
+    for (ModBehavior *b = sBehaviors; b; b = b->next_global)
+        if (b->enabled && (const BehaviorScript *)b->script == script) return b;
+    return NULL;
+}
+
+static const BehaviorScript *native_behavior_from_id(lua_Integer id) {
+    if (id < 0 || (uint64_t)id >= sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0])) return NULL;
+    const NativeBehavior *behavior = &sNativeBehaviors[id];
+    if (behavior->id != id) return NULL;
+    return behavior->script;
+}
+
+static lua_Integer native_behavior_id_from_script(const BehaviorScript *script) {
+    if (!script) return (lua_Integer)(sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0]));
+    for (size_t i = 0; i < sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0]); ++i) {
+        if (sNativeBehaviors[i].script == script) return sNativeBehaviors[i].id;
+    }
+    return (lua_Integer)(sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0]));
+}
+
+static const BehaviorScript *behavior_from_id(lua_State *L, int index, ModBehavior **custom_out) {
+    lua_Integer id = luaL_checkinteger(L, index);
+    ModBehavior *custom = id >= 0 && (uint64_t)id <= UINT32_MAX ? find_behavior((uint32_t)id) : NULL;
+    if (custom_out) *custom_out = custom;
+    if (custom) return (const BehaviorScript *)custom->script;
+    return native_behavior_from_id(id);
+}
+
+static int behavior_id_error(lua_State *L, lua_Integer id, const char *api) {
+    if (id >= 0 && (uint64_t)id < sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0]))
+        return luaL_error(L, "%s: CoopDX behavior ID %lld (%s) is not implemented by this engine",
+                          api, (long long)id, sNativeBehaviors[id].name);
+    if (id >= 0 && (uint64_t)id <= UINT32_MAX)
+        return luaL_error(L, "%s: unknown or inactive custom behavior ID %lld", api, (long long)id);
+    return luaL_error(L, "%s: unknown behavior ID %lld", api, (long long)id);
+}
+
+static int object_list_from_behavior_id(lua_State *L, ModBehavior *custom, const BehaviorScript *script) {
+    int list = custom ? custom->object_list : (int)get_object_list_from_behavior(script);
+    if (!gObjectLists || list < 0 || list >= NUM_OBJ_LISTS)
+        return luaL_error(L, "behavior ID does not map to a live engine object list");
+    return list;
+}
+
+static struct Object *find_object_in_list(int list, struct ObjectNode *node,
+                                          ModBehavior *custom, const BehaviorScript *script) {
+    if (!gObjectLists || list < 0 || list >= NUM_OBJ_LISTS) return NULL;
+    struct ObjectNode *head = &gObjectLists[list];
+    unsigned scanned = 0;
+    while (node != head && node && scanned++ < OBJECT_POOL_CAPACITY) {
+        struct Object *object = (struct Object *)node;
+        ModObject *entry = custom ? find_object(object) : NULL;
+        bool matches = custom ? (entry && entry->behavior == custom)
+                              : (script ? object->behavior == script : true);
+        if (matches && object->activeFlags != ACTIVE_FLAG_DEACTIVATED) return object;
+        node = node->next;
+    }
+    return NULL;
+}
+
+static int l_get_id_from_behavior(lua_State *L) {
+    if (lua_isnil(L, 1)) {
+        lua_pushinteger(L, (lua_Integer)(sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0])));
+        return 1;
+    }
+    lua_Integer value = luaL_checkinteger(L, 1);
+    ModBehavior *custom = NULL;
+    if (value > 0 && (uint64_t)value <= (uint64_t)UINTPTR_MAX) {
+        custom = find_behavior_by_script((const BehaviorScript *)(uintptr_t)value);
+        if (custom) { lua_pushinteger(L, (lua_Integer)custom->id); return 1; }
+    }
+    /* CoopDX returns id_bhv_max_count when the script is not in its table. */
+    lua_pushinteger(L, native_behavior_id_from_script((const BehaviorScript *)(uintptr_t)value));
+    return 1;
+}
+
+static int l_get_behavior_from_id(lua_State *L) {
+    ModBehavior *custom = NULL;
+    const BehaviorScript *script = behavior_from_id(L, 1, &custom);
+    if (!script) return behavior_id_error(L, luaL_checkinteger(L, 1), "get_behavior_from_id");
+    lua_pushinteger(L, (lua_Integer)(uintptr_t)script);
+    return 1;
+}
+
+static int l_obj_get_first_with_behavior_id(lua_State *L) {
+    ModBehavior *custom = NULL;
+    const BehaviorScript *script = behavior_from_id(L, 1, &custom);
+    if (!script) return behavior_id_error(L, luaL_checkinteger(L, 1), "obj_get_first_with_behavior_id");
+    int list = object_list_from_behavior_id(L, custom, script);
+    struct ObjectNode *head = &gObjectLists[list];
+    struct Object *object = find_object_in_list(list, head->next, custom, script);
+    if (object) push_object(L, object); else lua_pushnil(L);
+    return 1;
+}
+
+static int l_obj_get_next_with_same_behavior_id(lua_State *L) {
+    struct Object *object = checked_object(L, 1);
+    ModObject *entry = find_object(object);
+    ModBehavior *custom = entry ? entry->behavior : NULL;
+    const BehaviorScript *script = custom ? (const BehaviorScript *)custom->script : object->behavior;
+    if (!script) { lua_pushnil(L); return 1; }
+    int list = object_list_from_behavior_id(L, custom, script);
+    struct Object *next = find_object_in_list(list, object->header.next, custom, script);
+    if (next) push_object(L, next); else lua_pushnil(L);
+    return 1;
+}
+
+static int l_obj_get_first(lua_State *L) {
+    lua_Integer list_value = luaL_checkinteger(L, 1);
+    if (!gObjectLists || list_value < 0 || list_value >= NUM_OBJ_LISTS)
+        return luaL_error(L, "obj_get_first received invalid object list %lld", (long long)list_value);
+    int list = (int)list_value;
+    struct Object *object = find_object_in_list(list, gObjectLists[list].next, NULL, NULL);
+    if (object) push_object(L, object); else lua_pushnil(L);
+    return 1;
+}
+
+static int l_obj_get_next(lua_State *L) {
+    struct Object *object = checked_object(L, 1);
+    int list = -1;
+    if (gObjectLists) {
+        for (int i = 0; i < NUM_OBJ_LISTS; ++i) {
+            struct ObjectNode *head = &gObjectLists[i];
+            struct ObjectNode *node = head->next;
+            unsigned scanned = 0;
+            while (node != head && node && scanned++ < OBJECT_POOL_CAPACITY) {
+                if ((struct Object *)node == object) { list = i; break; }
+                node = node->next;
+            }
+            if (list >= 0) break;
+        }
+    }
+    if (list < 0) { lua_pushnil(L); return 1; }
+    struct ObjectNode *head = &gObjectLists[list];
+    struct ObjectNode *node = object->header.next;
+    unsigned scanned = 0;
+    struct Object *next = NULL;
+    while (node != head && node && scanned++ < OBJECT_POOL_CAPACITY) {
+        struct Object *candidate = (struct Object *)node;
+        if (candidate->activeFlags != ACTIVE_FLAG_DEACTIVATED) { next = candidate; break; }
+        node = node->next;
+    }
+    if (next) push_object(L, next); else lua_pushnil(L);
+    return 1;
+}
+
+static int l_obj_mark_for_deletion(lua_State *L) {
+    struct Object *object = checked_object(L, 1);
+    obj_mark_for_deletion(object);
+    return 0;
 }
 
 static ModObject *track_object(struct Object *object, ModBehavior *behavior) {
@@ -837,7 +1013,7 @@ static struct Object *lua_spawn(lua_State *L, struct Object *parent, int model, 
     }
     ModBehavior *behavior = find_behavior(behavior_id);
     if (!behavior) return NULL;
-    const BehaviorScript *script = (const BehaviorScript *)mod_runtime_behavior_for_list(behavior->object_list);
+    const BehaviorScript *script = (const BehaviorScript *)behavior->script;
     struct Object *object = absolute
         ? spawn_object_abs_with_rot(parent, 0, (s16)model, script, (s16)x, (s16)y, (s16)z,
                                     (s16)pitch, (s16)yaw, (s16)roll)
@@ -1517,6 +1693,13 @@ static void register_api(void) {
     register_api_function("hook_behavior", l_hook_behavior);
     register_api_function("spawn_object", l_spawn_object);
     register_api_function("spawn_object_abs_with_rot", l_spawn_object_abs_with_rot);
+    register_api_function("get_id_from_behavior", l_get_id_from_behavior);
+    register_api_function("get_behavior_from_id", l_get_behavior_from_id);
+    register_api_function("obj_get_first", l_obj_get_first);
+    register_api_function("obj_get_next", l_obj_get_next);
+    register_api_function("obj_get_first_with_behavior_id", l_obj_get_first_with_behavior_id);
+    register_api_function("obj_get_next_with_same_behavior_id", l_obj_get_next_with_same_behavior_id);
+    register_api_function("obj_mark_for_deletion", l_obj_mark_for_deletion);
     register_api_function("set_mario_action", l_set_mario_action);
     register_api_function("perform_ground_step", l_perform_ground_step);
     register_api_function("perform_air_step", l_perform_air_step);
@@ -1593,6 +1776,7 @@ static void register_api(void) {
     expose_int("ACT_GROUND_POUND", ACT_GROUND_POUND); expose_int("ACT_SLIDE_KICK", ACT_SLIDE_KICK);
 
 #include "mod_constants.inc"
+#include "mod_behavior_constants.inc"
 
     /* Level and course identifiers are enums generated from the engine's
      * authoritative level/course lists, so they are not visible to the

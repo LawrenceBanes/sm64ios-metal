@@ -26,6 +26,8 @@ char fs_writepath[SYS_MAX_PATH] = "";
 struct MarioState gMarioStates[1];
 struct MarioState *gMarioState = &gMarioStates[0];
 struct Object *gCurrentObject;
+struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
+struct ObjectNode *gObjectLists = gObjectListArray;
 f32 gGlobalSoundSource[3];
 f32 gDefaultSoundArgs[3];
 s16 gCurrSaveFileNum = 1;
@@ -43,8 +45,32 @@ char *sys_strdup(const char *source) { return source ? strdup(source) : NULL; }
 
 static struct Object sMarioObject;
 static struct Object sSpawnedObject;
+static struct Object sGoombas[3];
+const BehaviorScript bhvGoomba[] = { ((uintptr_t)OBJ_LIST_GENACTOR << 16) };
+const BehaviorScript bhvTree[] = { ((uintptr_t)OBJ_LIST_POLELIKE << 16) };
 static struct Controller sController;
 static unsigned sPrintedText;
+
+u32 get_object_list_from_behavior(const BehaviorScript *behavior) {
+    return (u32)((behavior[0] >> 16) & 0xFFu);
+}
+
+void obj_mark_for_deletion(struct Object *object) {
+    object->activeFlags = ACTIVE_FLAG_DEACTIVATED;
+}
+
+static void append_test_object(int list, struct Object *object, const BehaviorScript *behavior,
+                               s16 active_flags, s32 action) {
+    struct ObjectNode *head = &gObjectLists[list];
+    memset(object, 0, sizeof(*object));
+    object->behavior = behavior;
+    object->activeFlags = active_flags;
+    object->oAction = action;
+    object->header.prev = head->prev;
+    object->header.next = head;
+    head->prev->next = &object->header;
+    head->prev = &object->header;
+}
 
 static bool real_mod_storage_contains(const char *root, const char *needle) {
     static const char hex[] = "0123456789abcdef";
@@ -197,6 +223,15 @@ static void reset_game_state(void) {
     memset(gMarioStates, 0, sizeof(gMarioStates));
     memset(&sMarioObject, 0, sizeof(sMarioObject));
     memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
+    memset(sGoombas, 0, sizeof(sGoombas));
+    memset(gObjectListArray, 0, sizeof(gObjectListArray));
+    for (int i = 0; i < NUM_OBJ_LISTS; ++i) {
+        gObjectListArray[i].next = &gObjectListArray[i];
+        gObjectListArray[i].prev = &gObjectListArray[i];
+    }
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[0], bhvGoomba, ACTIVE_FLAG_ACTIVE, 101);
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[1], bhvGoomba, ACTIVE_FLAG_DEACTIVATED, 999);
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[2], bhvGoomba, ACTIVE_FLAG_ACTIVE, 202);
     memset(&sController, 0, sizeof(sController));
     memset(gGlobalSoundSource, 0, sizeof(gGlobalSoundSource));
     memset(gDefaultSoundArgs, 0, sizeof(gDefaultSoundArgs));
