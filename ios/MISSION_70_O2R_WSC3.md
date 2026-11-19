@@ -17,6 +17,8 @@ Use the existing app build with `IOS_O2R_SCENE_RUNTIME=1 IOS_SCENE_DIAGNOSTIC=1 
 
 The WSC3 material and package schema is documented in [Mission 67H.4](MISSION_67H4_WSC3.md). The iOS package slot is dedicated to Castle Grounds area 4. Entry 0 is selected. The native area loader validates texture files, registers all rooms, checks the spawn against SM64 floor, wall and ceiling queries, and only then gives it to the stock warp spawn path. A failed load returns to Castle Grounds. Up to 16 rooms are resident together within the region collision budget. Room changes track the player's position while keeping neighboring and distant collision present throughout the visit. Leaving the area removes room geometry, collision, and renderer texture references. Placing contiguous room geometry and floors at the same world-space seam remains the content author's responsibility.
 
+For the current dry-run audit, bounded subtexture loads, private game builds, and device test procedure, see [Mission 71](MISSION_71_OPEN_WORLDS.md).
+
 ## Optional layout
 
 `--layout layout.json` supplies scene authoring decisions that cannot safely be inferred from the archive.

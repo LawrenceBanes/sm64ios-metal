@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 from package_unsigned_ipa import package_app
-from validate_ipa import SHITBOX_IDENTITY, validate
+from validate_ipa import LOCAL_SCENE_STRINGS, SHITBOX_IDENTITY, STOCK_AUDIO, validate
 
 
 class IpaValidationTests(unittest.TestCase):
@@ -86,6 +86,45 @@ class IpaValidationTests(unittest.TestCase):
             resource.mkdir(parents=True)
             (resource / "Info.plist").write_bytes(plistlib.dumps({"storyboard": storyboard}))
         return app
+
+    def test_local_scene_build_checks_loader_audio_and_excludes_external_worlds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = self.make_app(root)
+            executable = app / "sm64ios"
+            original_binary = executable.read_bytes()
+            res = app / "res"
+            res.mkdir()
+            ipa = root / "local-scene.ipa"
+
+            def pack_resources(*, omit_audio=False, external=None):
+                with zipfile.ZipFile(res / "base.zip", "w") as pack:
+                    for tag, ident in ((b"WSC2", 4098), (b"WSC3", 4099)):
+                        pack.writestr(f"scene-diagnostic/scenes/{ident}.wsc", struct.pack("<4sI", tag, ident) + bytes(8))
+                    pack.writestr("scene-diagnostic/scenes/4294967294.wsc", b"WSC2")
+                    for texture in ("67f-ci4", "67f-ci8", "wsc3-grid", "wsc3-wave"):
+                        png = b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sIIBBBBB", 13, b"IHDR", 16, 16, 8, 6, 0, 0, 0)
+                        pack.writestr(f"scene-diagnostic/gfx/scenes/{texture}.rgba16.png", png)
+                    for resource in STOCK_AUDIO[omit_audio:]:
+                        pack.writestr(resource, b"stock audio fixture")
+                    if external:
+                        pack.writestr(external, b"unexpected external resource")
+                package_app(app, ipa)
+
+            pack_resources()
+            with self.assertRaisesRegex(ValueError, "missing the Documents WSC3 loader"):
+                validate(str(ipa), False, require_local_scene_loader=True)
+            executable.write_bytes(original_binary + b"\0".join(LOCAL_SCENE_STRINGS))
+            pack_resources()
+            validate(str(ipa), False, require_local_scene_loader=True)
+            pack_resources(omit_audio=True)
+            with self.assertRaisesRegex(ValueError, "missing or empty stock audio"):
+                validate(str(ipa), False, require_local_scene_loader=True)
+            for external in ("scenes/4100.wsc", "workspace/resource.o2r", "gfx/scenes/imported.rgba16.png"):
+                with self.subTest(external=external):
+                    pack_resources(external=external)
+                    with self.assertRaisesRegex(ValueError, "external world asset"):
+                        validate(str(ipa), False, require_local_scene_loader=True)
 
     def test_valid_arm64_ipa_structure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

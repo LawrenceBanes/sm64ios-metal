@@ -408,7 +408,7 @@ static void check_wsc3_diagnostic(void) {
     check_wsc3 = false;
 }
 
-static void check_imported_scene(void) {
+static void check_imported_scene(const char *texture_path) {
     static struct GraphNodeRoot root;
     static s16 terrain;
     const float projection[4][4] = {
@@ -449,6 +449,16 @@ static void check_imported_scene(void) {
         unload_area();
         assert(!world_region_count() && !area_external_scene_spawn(NULL));
     }
+    assert(rename(texture_path, "hidden-texture.png") == 0);
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(!area_external_scene_spawn(NULL) && !world_region_count());
+    unload_area();
+    assert(rename("hidden-texture.png", texture_path) == 0);
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(area_external_scene_spawn(NULL) && world_region_count() == 2);
+    unload_area();
+    assert(!world_region_count());
+
     const char *path = fs_get_write_path("scenes/4100.wsc");
     FILE *file = fopen(path, "r+b");
     assert(file && fputc('X', file) != EOF && fclose(file) == 0);
@@ -466,7 +476,7 @@ static void check_imported_scene(void) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 3);
+    assert(argc == 4);
     const char *rodirs[] = { NULL };
     assert(fs_init(rodirs, argv[1], argv[1]));
     world_region_reset((struct WorldPoint){0, 0, 0});
@@ -510,7 +520,7 @@ int main(int argc, char **argv) {
     assert(fs_mount(argv[2]));
     check_bundled_diagnostic();
     check_wsc3_diagnostic();
-    check_imported_scene();
+    check_imported_scene(argv[3]);
     recorder.supports_scene_materials = false;
     assert(world_scene_open(&runtime, SCENE_DIAGNOSTIC_WSC3_PACKAGE, 0, NULL) == WORLD_SCENE_PROVIDER_FAILED);
     assert(!world_region_count());

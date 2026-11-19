@@ -100,15 +100,37 @@ def texture_binding(texture, resources, entries, pngs, filter_mode):
     _, version, endian, body = resources.typed_body(path, ("Texture",))
     source = o2r.parse_texture_descriptor(body, endian, version, path)
     width, height = source["width"], source["height"]
-    if load["kind"] != "block" or load["source_offset"] or [width, height] != uv["tile_extent"]:
-        raise ValueError(f"{path}: only full-resource LOADBLOCK textures are supported")
     if (source["flags"] or source["horizontal_byte_scale"] != 1 or source["vertical_pixel_scale"] != 1
-            or not source["expected_packed_size_matches"] or load["total_bytes"] != source["payload_size"]):
-        raise ValueError(f"{path}: texture flags, dimensions, scale or LOADBLOCK length do not match the backing image")
+            or not source["expected_packed_size_matches"]):
+        raise ValueError(f"{path}: texture flags, dimensions or scale do not match a packed image")
     expected_format = TEXTURE_FORMATS.get((tile["format"], tile["size"]))
     if expected_format is None or expected_format != source["format_code"]:
         raise ValueError(f"{path}: material tile format disagrees with its texture resource")
     payload = body[source["payload_offset"]:]
+    if load["kind"] == "block":
+        if load["source_offset"] or [width, height] != uv["tile_extent"] or load["total_bytes"] != len(payload):
+            raise ValueError(f"{path}: LOADBLOCK must cover the whole backing texture")
+    else:
+        image = load["image"]
+        texel_bytes = source["bits_per_pixel"] // 8
+        if (texel_bytes not in (1, 2) or image["size_bits"] != source["bits_per_pixel"]
+                or image["format"] != tile["format"] or image["offset"] or image["width"] != width
+                or any(value % 4 for value in load["bounds_10_2"])):
+            raise ValueError(f"{path}: LOADTILE requires aligned 8- or 16-bit source texels and matching source stride")
+        uls, ult, _, _ = load["bounds_10_2"]
+        left, top = uls // 4, ult // 4
+        crop_width, crop_height = load["width"], load["height"]
+        row_bytes = crop_width * texel_bytes
+        tmem_stride = ((row_bytes + 7) // 8) * 8
+        if (left + crop_width > width or top + crop_height > height
+                or uv["tile_extent"] != [crop_width, crop_height]
+                or load["destination_stride_bytes"] != tmem_stride or tile["line_words"] * 8 != tmem_stride):
+            raise ValueError(f"{path}: LOADTILE rectangle, TMEM stride, or render tile extent disagrees")
+        stride = width * texel_bytes
+        start = (top * width + left) * texel_bytes
+        payload = b"".join(payload[start + y * stride:start + y * stride + row_bytes] for y in range(crop_height))
+        width, height = crop_width, crop_height
+        source.update(width=width, height=height, image_data_size=len(payload))
     binding = {"name": "scenes/placeholder.rgba16", "width": width, "height": height,
                "filter": "three_point" if filter_mode == 2 else "point", "address": [],
                "scale": [], "origin": []}
@@ -184,6 +206,10 @@ class Conversion:
         self.scale, self.offset, self.layout = scale, offset, layout
         self.boundary = 32768 if expanded else 8192
         self.pngs, self.batches, self.failures = {}, defaultdict(list), []
+        self.converted_sources = set()
+        self.report = {"schema_version": 1, "status": "rejected", "source_scene": root,
+                       "source_room_paths": [], "candidate_draws": 0, "rooms": [], "entrances": [],
+                       "trace_issues": [], "draw_issues": self.failures, "scene_issues": []}
 
     def point(self, source):
         point = [round(n * self.scale) + offset for n, offset in zip(source, self.offset)]
@@ -222,6 +248,10 @@ class Conversion:
                 batches[-1]["render_vertices"].extend(vertices)
             else:
                 batches.append({"pass": draw["pass"], "material": material, "render_vertices": vertices})
+            self.converted_sources.update({draw["display_list"], *(ref[0] for ref in refs)})
+            for texture in draw["textures"]:
+                self.converted_sources.add(texture["load"]["image"]["path"])
+                self.converted_sources.update(entry["path"] for entry in texture.get("palette", {}).get("sources", []))
         except (ValueError, o2r.ImportFailure, trace.TraceError) as error:
             self.failures.append({"room": draw["room"], "pass": draw["pass"], "display_list": draw["display_list"],
                                   "offset": draw["offset"], "command": draw["command"], "reason": str(error)})
@@ -253,27 +283,44 @@ class Conversion:
             else:
                 raise ValueError(f"{path}: polygon {index} needs a surface_map entry for source surface {surface}")
             triangles.append({"indices": indices, "type": terrain})
+        self.converted_sources.add(path)
         return vertices, triangles
 
     def convert(self, segments):
         source = self.resources.read(self.root, ("Scene",))
         room_paths = [item["path"] for item in command_of(source, 4, self.root).get("rooms", [])] or [self.root]
+        self.report["source_room_paths"] = room_paths
         if len(room_paths) > 16 or len(set(room_paths)) != len(room_paths):
             raise ValueError("scene requires 1–16 distinct room resources")
         preludes = self.layout.get("pass_preludes", {})
         if not isinstance(preludes, dict) or set(preludes) - {"opaque", "translucent"}:
             raise ValueError("pass_preludes accepts opaque/translucent display-list paths")
         preludes = {key: o2r.safe_archive_path(path) for key, path in preludes.items()}
-        report = trace.DrawTracer(self.resources, self.root, segments, draw_sink=self.draw,
-                                  pass_preludes=preludes).run()
-        if report["issues"] or self.failures:
-            return None, {"status": "rejected", "trace_issues": report["issues"], "draw_issues": self.failures,
-                          "candidate_draws": len(report["draws"])}
-        if set(report["rooms"]) != set(room_paths):
-            raise ValueError("every room must have a normal mesh and at least one supported triangle")
+        room_input = self.layout.get("room_segments", {})
+        if not isinstance(room_input, dict) or set(room_input) - set(room_paths):
+            raise ValueError("room_segments keys must be resource paths in the selected scene's room table")
+        room_segments = {path: parse_segments(bindings) for path, bindings in room_input.items()}
+        self.report["pass_preludes"] = preludes
+        trace_report = trace.DrawTracer(self.resources, self.root, segments, draw_sink=self.draw,
+                                        pass_preludes=preludes, room_segments=room_segments).run()
+        self.report.update(candidate_draws=len(trace_report["draws"]), trace_issues=trace_report["issues"],
+                           trace_coverage=trace_report["coverage"], texture_count=len(self.pngs))
         rooms = [{"id": i + 1, "batches": self.batches[path], "neighbors": []} for i, path in enumerate(room_paths)]
+        summaries = [{"id": room["id"], "neighbors": room["neighbors"], "batches": len(room["batches"]),
+                      "render_triangles": sum(len(batch["render_vertices"]) // 3 for batch in room["batches"]),
+                      "collision_triangles": 0} for room in rooms]
+        self.report["rooms"] = summaries
+        self.report["materials"] = {
+            "unique": len({json.dumps(batch["material"], sort_keys=True)
+                           for room in rooms for batch in room["batches"]}),
+            "opaque_batches": sum(batch["pass"] == "opaque" for room in rooms for batch in room["batches"]),
+            "translucent_batches": sum(batch["pass"] == "translucent" for room in rooms for batch in room["batches"]),
+        }
         connect_rooms(rooms, command_of(source, 14, self.root).get("transition_actors", []),
                       self.layout.get("links", []))
+        if set(trace_report["rooms"]) != set(room_paths) or any(not room["batches"] for room in rooms):
+            self.report["scene_issues"].append({"stage": "geometry", "resource": self.root,
+                                               "reason": "every room needs a normal mesh with supported triangles"})
         root_collision = command_of(source, 3, self.root).get("collision_header")
         room_collision = [command_of(self.resources.read(path, ("Scene",)), 3, path).get("collision_header")
                           for path in room_paths]
@@ -294,22 +341,23 @@ class Conversion:
                 raise ValueError("every room requires a distinct collision header or a scene-wide header")
             for room, path in zip(rooms, room_collision):
                 assign_collision(room, *self.collision(path))
+        for room, summary in zip(rooms, summaries):
+            summary["collision_triangles"] = len(room["collision_triangles"])
         apply_bounds(rooms, self.layout.get("bounds"))
         entrances = self.entrances(source, rooms)
+        self.report["entrances"] = entrances
+        self.report["source_default_entrance"] = self.layout.get("entrance", 0)
         metadata = sorted({f"{path}: {command['name']} metadata has no WSC gameplay mapping"
                            for path in dict.fromkeys([self.root, *room_paths])
                            for command in self.resources.read(path, ("Scene",))
                            if command["id"] not in (0, 3, 4, 6, 8, 10, 14, 20)})
         if commands_of(source, 14):
             metadata.append("Transition actors provide room adjacency only; door actors and camera effects are not instantiated")
-        scene = {"version": 3, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
-        return scene, {"status": "converted", "source_scene": self.root, "source_room_paths": room_paths,
-                       "candidate_draws": len(report["draws"]), "texture_count": len(self.pngs),
-                       "rooms": [{"id": room["id"], "neighbors": room["neighbors"], "batches": len(room["batches"]),
-                                  "render_triangles": sum(len(batch["render_vertices"]) // 3 for batch in room["batches"]),
-                                  "collision_triangles": len(room["collision_triangles"])} for room in rooms],
-                       "entrances": entrances, "source_default_entrance": self.layout.get("entrance", 0),
-                       "pass_preludes": preludes, "unmapped_metadata": metadata}
+        self.report["unmapped_metadata"] = metadata
+        if any(self.report[key] for key in ("trace_issues", "draw_issues", "scene_issues")):
+            return None
+        self.converted_sources.update({self.root, *room_paths})
+        return {"version": 3, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
 
     def entrances(self, source, rooms):
         actors = command_of(source, 0, self.root).get("entries", [])
@@ -411,50 +459,87 @@ def safe_spawn(room, source):
     return result if wsc.inside(result, room["min"], room["max"]) else None
 
 
-def convert_archive(archive_path, source, layout, scale, offset, expanded, segments):
+def parse_segments(bindings):
+    if not isinstance(bindings, list) or len(bindings) > 16:
+        raise ValueError("segment bindings require a list of up to 16 HEX[@OFFSET]=RESOURCE entries")
+    segments = {}
+    for value in bindings:
+        descriptor, path = value.split("=", 1)
+        address, separator, offset = descriptor.partition("@")
+        number = int(address, 16)
+        base = int(offset, 16) if separator else 0
+        if number in segments or not 0 <= number < 16 or not 0 <= base <= 0xFFFFFE or base & 1:
+            raise ValueError(f"duplicate or invalid segment binding: {descriptor}")
+        segments[number] = trace.Reference(o2r.safe_archive_path(path), base)
+    return segments
+
+
+CONVERSION_ERRORS = (OSError, BadZipFile, KeyError, TypeError, ValueError, ZeroDivisionError,
+                     struct.error, o2r.ImportFailure, trace.TraceError)
+
+
+def convert_archive(archive_path, source, layout, scale, offset, expanded, segments, *, audit=False):
     if archive_path.stat().st_size > trace.MAX_ARCHIVE_FILE_BYTES:
         raise ValueError("archive file exceeds the O2R size limit")
     if scale <= 0 or scale > 1024:
         raise ValueError("--scale must be positive and no greater than 1024")
-    allowed = {"bounds", "collision_rooms", "links", "surface_map", "entrance", "pass_preludes"}
+    allowed = {"bounds", "collision_rooms", "links", "surface_map", "entrance", "pass_preludes", "room_segments"}
     if not isinstance(layout, dict) or set(layout) - allowed:
         raise ValueError("invalid layout fields")
     with ZipFile(archive_path) as archive:
-        conversion = Conversion(trace.ArchiveResources(archive), o2r.safe_archive_path(source),
-                                scale, offset, layout, expanded)
-        scene, report = conversion.convert(segments)
-        return (wsc.encode_scene(scene) if scene else None), conversion.pngs, report
+        resources = trace.ArchiveResources(archive)
+        conversion = Conversion(resources, o2r.safe_archive_path(source), scale, offset, layout, expanded)
+        stage = "scene, collision and entrances"
+        package = None
+        try:
+            scene = conversion.convert(segments)
+            if scene is not None:
+                stage = "WSC3 package bounds"
+                package = wsc.encode_scene(scene)
+                conversion.report.update(status="converted", package_bytes=len(package))
+        except CONVERSION_ERRORS as error:
+            if not audit:
+                raise
+            conversion.report["scene_issues"].append({"stage": stage, "resource": source, "reason": str(error)})
+        conversion.report["resources"] = {
+            "archive_entries": len(resources.index),
+            "observed": [{"path": path, **record} for path, record in sorted(resources.accessed.items())],
+            "converted": sorted(conversion.converted_sources),
+        }
+        return package, conversion.pngs, conversion.report
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("scene", help="exact scene resource path inside the archive")
-    parser.add_argument("output", type=Path, help="new directory to stage for copying into app Documents")
+    parser.add_argument("output", type=Path, nargs="?", help="new directory to stage for copying into app Documents")
+    parser.add_argument("--dry-run", action="store_true", help="print compatibility JSON to stdout without staging files")
     parser.add_argument("--layout", type=Path, help="optional scene-independent JSON ownership and room metadata")
     parser.add_argument("--scale", type=Fraction, default=Fraction(1), help="units multiplier, e.g. 1/2")
     parser.add_argument("--offset", type=int, nargs=3, default=(0, 0, 0), metavar=("X", "Y", "Z"))
     parser.add_argument("--expanded-grid", action="store_true", help="target a build with the expanded collision grid")
-    parser.add_argument("--segment", action="append", default=[], metavar="HEX=RESOURCE")
+    parser.add_argument("--segment", action="append", default=[], metavar="HEX[@OFFSET]=RESOURCE")
     args = parser.parse_args(argv)
+    if args.dry_run == (args.output is not None):
+        parser.error("provide either an output directory or --dry-run")
     try:
-        if args.output.exists() or args.output.is_symlink():
+        if args.output and (args.output.exists() or args.output.is_symlink()):
             raise ValueError("output must be a new directory")
         layout = {}
         if args.layout:
             if args.layout.stat().st_size > MAX_LAYOUT_BYTES:
                 raise ValueError("layout exceeds byte limit")
             layout = json.loads(args.layout.read_text(encoding="utf-8"))
-        segments = {}
-        for value in args.segment:
-            number, path = value.split("=", 1)
-            number = int(number, 16)
-            if number in segments or not 0 <= number < 16:
-                raise ValueError(f"duplicate or out-of-range segment {number:#x}")
-            segments[number] = trace.Reference(o2r.safe_archive_path(path))
+        segments = parse_segments(args.segment)
         package, pngs, report = convert_archive(args.archive, args.scene, layout, args.scale,
-                                               args.offset, args.expanded_grid, segments)
+                                               args.offset, args.expanded_grid, segments, audit=True)
+        if args.dry_run:
+            report["status"] = "compatible" if package is not None else "rejected"
         encoded_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.dry_run:
+            sys.stdout.write(encoded_report)
+            return 0 if package is not None else 2
         if package is None:
             sys.stderr.write(encoded_report)
             return 2
@@ -469,8 +554,13 @@ def main(argv=None):
             if args.output.exists():
                 raise ValueError("output already exists")
             output.rename(args.output)
-    except (OSError, BadZipFile, KeyError, TypeError, ValueError, ZeroDivisionError, struct.error, o2r.ImportFailure, trace.TraceError) as error:
-        print(f"o2r-to-wsc3: {error}", file=sys.stderr)
+    except CONVERSION_ERRORS as error:
+        if args.dry_run:
+            print(json.dumps({"schema_version": 1, "status": "rejected", "source_scene": args.scene,
+                              "scene_issues": [{"stage": "input", "resource": args.scene, "reason": str(error)}]},
+                             indent=2, sort_keys=True))
+        else:
+            print(f"o2r-to-wsc3: {error}", file=sys.stderr)
         return 2
     return 0
 

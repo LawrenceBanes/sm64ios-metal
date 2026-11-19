@@ -157,7 +157,8 @@ class ScenePackageTest(unittest.TestCase):
                     self.assertEqual(Path(local).read_bytes(), archive.read(member))
             imported = export_fixture(work)
             (work / "scenes/4100.wsc").write_bytes((imported / "scenes/4100.wsc").read_bytes())
-            for path in (imported / "gfx/scenes").glob("*.png"):
+            imported_textures = sorted((imported / "gfx/scenes").glob("*.png"))
+            for path in imported_textures:
                 (work / "gfx/scenes" / path.name).write_bytes(path.read_bytes())
             executable = work / "scene-test"
             sources = ["tests/test_world_scene_package.c", "src/engine/world_scene_file.c",
@@ -171,7 +172,8 @@ class ScenePackageTest(unittest.TestCase):
                 "-DIOS_O2R_SCENE_RUNTIME", "-DIOS_SCENE_DIAGNOSTIC", "-D_LANGUAGE_C", "-Iinclude", "-Isrc", "-I.",
                 *sources, "-lm", "-o", executable
             ], cwd=ROOT, check=True)
-            subprocess.run([executable, work, packed], cwd=work, check=True)
+            subprocess.run([executable, work, packed, work / "gfx/scenes" / imported_textures[0].name],
+                           cwd=work, check=True)
 
 
 if __name__ == "__main__":

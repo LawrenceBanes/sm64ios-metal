@@ -62,6 +62,7 @@ class ArchiveResources:
                 raise o2r.ImportFailure("resource path exceeds trace length limit")
             self.paths_by_hash[o2r.crc64_resource_path(path)].append(path)
         self.bytes_read = 0
+        self.accessed = {}
         self.body = lru_cache(maxsize=64)(self._body)
         self.read = lru_cache(maxsize=256)(self._read)
 
@@ -73,9 +74,11 @@ class ArchiveResources:
         return Reference(paths[0], offset)
 
     def _body(self, path):
+        record = self.accessed[path] = {"status": "missing"}
         if path not in self.index:
             raise TraceError("unresolved", f"resource path missing: {path}")
         info = self.index[path]
+        record.update(status="rejected", bytes=info.file_size)
         if info.file_size > MAX_RESOURCE_BYTES or self.bytes_read + info.file_size > MAX_READ_BYTES:
             raise TraceError("limit", f"resource byte budget exceeded: {path}")
         try:
@@ -85,6 +88,7 @@ class ArchiveResources:
         self.bytes_read += len(data)
         header = o2r.read_resource_header(data, path)
         kind = header.get("resource_type")
+        record.update(type=kind, version=header.get("version"))
         if header["status"] != "ok":
             raise TraceError("malformed", f"invalid resource header: {path}")
         if kind == "unknown":
@@ -95,6 +99,7 @@ class ArchiveResources:
 
         body = data[header["body_offset"]:]
         endian = "<" if header["endian"] == "little" else ">"
+        record["status"] = "header_read"
         return kind, version, endian, body
 
     def typed_body(self, path, expected):
@@ -231,12 +236,13 @@ class PassState:
 
 
 class DrawTracer:
-    def __init__(self, resources, scene, segments=None, profile=None, *, draw_sink=None, pass_preludes=None):
+    def __init__(self, resources, scene, segments=None, profile=None, *, draw_sink=None, pass_preludes=None, room_segments=None):
         self.resources, self.scene = resources, scene
         self.segments = segments or {}
         self.profile = profile
         self.draw_sink = draw_sink
         self.pass_preludes = pass_preludes or {}
+        self.room_segments = room_segments or {}
         self.generated = {}
         self.generated_calls = Counter()
         self.generated_uses = Counter()
@@ -272,7 +278,7 @@ class DrawTracer:
     def trace_pass(self, room, pass_name, roots, room_type=None):
         if not roots:
             return
-        state = PassState(self.segments)
+        state = PassState({**self.segments, **self.room_segments.get(room, {})})
         if self.profile:
             prelude = self.profile.prelude(pass_name, room_type)
             for segment, spec in prelude.bindings.items():
@@ -474,7 +480,8 @@ class DrawTracer:
             row = (width * texel_bits + 7) // 8
             length = (height - 1) * image_stride + row
             load = {"kind": "tile", "source_stride_bytes": image_stride, "row_bytes": row,
-                    "width": width, "height": height, "bounds_10_2": [uls, ult, lrs, lrt]}
+                    "width": width, "height": height, "bounds_10_2": [uls, ult, lrs, lrt],
+                    "destination_stride_bytes": tile["line_words"] * 8}
             if texel_bits == 4:
                 load["approximation"] = "packed nibble span; no TMEM swizzle or half-byte offset simulation"
                 if (uls // 4) & 1 and width % 2 == 0:
@@ -487,9 +494,11 @@ class DrawTracer:
             load["approximation"] = "unscaled source range for replacement texture"
         load.update(image=image, tmem_words=tmem, source_offset=image["offset"] + start, **provenance)
         if self.draw_sink is not None:
+            load["tmem_extent_bytes"] = length if opcode == 0xF3 else (
+                (height - 1) * max(row, load["destination_stride_bytes"]) + row)
             for base, prior in list(state.loaded.items()):
-                extent = prior.get("total_bytes", prior.get("height", 0) * prior.get("row_bytes", 0))
-                if base != tmem and base * 8 < tmem * 8 + length and tmem * 8 < base * 8 + extent:
+                if (base != tmem and base * 8 < tmem * 8 + load["tmem_extent_bytes"]
+                        and tmem * 8 < base * 8 + prior["tmem_extent_bytes"]):
                     # Neither partially overwritten source can be sampled as
                     # the original complete backing texture at the old base.
                     del state.loaded[base]
@@ -532,7 +541,8 @@ class DrawTracer:
                 (None, axis["normalization_dimension"])) for axis in (entry["uv"]["s"], entry["uv"]["t"])):
             gaps.add("sampler clamp, mirror or independent mask period")
         if [width, height] != allocation or load["kind"] == "tile" or load["source_offset"]:
-            approximations.add("UV normalization uses resource extent; loaded subregions and TMEM aliases are not lowered")
+            if self.draw_sink is None:
+                approximations.add("UV normalization uses resource extent; loaded subregions and TMEM aliases are not lowered")
             gaps.add("tile subregion or scrolling bounds need explicit lowering")
         if uls or ult:
             gaps.add("tile origin requires baking or a lowered scroll state")

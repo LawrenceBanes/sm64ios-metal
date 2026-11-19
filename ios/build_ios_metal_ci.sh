@@ -201,6 +201,9 @@ build_full_game() {
         1:1) validation_flags+=(--require-scene-diagnostic) ;;
         *) echo 'IOS_SCENE_DIAGNOSTIC must be 0 or 1 and requires IOS_O2R_SCENE_RUNTIME=1 when enabled' >&2; return 1 ;;
     esac
+    if [[ "$scene_diagnostic" == 1 && ${IOS_HYRULE_WORLD:-0} == 0 ]]; then
+        validation_flags+=(--require-local-scene-loader)
+    fi
     download_private_assets
     download_private_hyrule_archive
     local private_build_token=$SM64_PRIVATE_BUILD_GH_TOKEN
@@ -242,7 +245,7 @@ build_full_game() {
         return 1
     fi
     local validation_counts release_label
-    validation_counts=$(grep -E '^(bundle|app release|app bundle file entries|runtime resource pack file entries|build intermediates|WSC diagnostic resources):' \
+    validation_counts=$(grep -E '^(bundle|app release|app bundle file entries|runtime resource pack file entries|build intermediates|WSC diagnostic resources|Local WSC3 loader):' \
         "$private_dir/ipa-validation.log")
     release_label=$(sed -n 's/^app release: //p' "$private_dir/ipa-validation.log")
     local digest

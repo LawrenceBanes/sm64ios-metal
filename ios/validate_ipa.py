@@ -138,8 +138,27 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
             raise ValueError("WSC2/WSC3 diagnostic textures must be 16x16 RGBA PNGs")
 
 
+LOCAL_SCENE_STRINGS = (b"Load Local WSC3 Scene", b"Leave Local WSC3 Scene", b"scenes/4100.wsc")
+STOCK_AUDIO = ("sound/sequences.bin", "sound/sound_data.ctl", "sound/sound_data.tbl")
+BUNDLED_SCENE_PACKAGES = {
+    "scene-diagnostic/scenes/4098.wsc",
+    "scene-diagnostic/scenes/4099.wsc",
+    "scene-diagnostic/scenes/4294967294.wsc",
+}
+
+
+def reject_external_worlds(members, container, allowed_packages=()):
+    for name in members:
+        normalized = name.lower()
+        if (PurePosixPath(normalized).suffix in {".o2r", ".otr", ".z64", ".n64", ".v64"}
+                or (normalized.endswith(".wsc") and normalized not in allowed_packages)
+                or normalized.startswith(("gfx/scenes/", "gfx/levels/hyrule_field/"))):
+            raise ValueError(f"{container} contains a bundled external world asset: {name}")
+
+
 def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False,
-             require_scene_diagnostic: bool = False, require_shitbox_identity: bool = False) -> None:
+             require_scene_diagnostic: bool = False, require_shitbox_identity: bool = False,
+             require_local_scene_loader: bool = False) -> None:
     with zipfile.ZipFile(ipa_path) as ipa:
         bad_member = ipa.testzip()
         if bad_member:
@@ -159,6 +178,8 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
             raise ValueError("IPA is missing the app bundle directory entry")
         app_members = [name[len(app):] for name in names if name.startswith(app)]
         reject_build_intermediates(app_members, "app bundle")
+        if require_local_scene_loader:
+            reject_external_worlds(app_members, "app bundle")
         app_file_count = sum(not member.endswith("/") for member in app_members)
         resource_pack_path = app + "res/base.zip"
         resource_pack_file_count = None
@@ -171,11 +192,17 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
                     resource_members = resource_pack.namelist()
                     reject_build_intermediates(resource_members, "app resource pack")
                     resource_pack_file_count = sum(not member.endswith("/") for member in resource_members)
-                    if require_scene_diagnostic:
+                    if require_scene_diagnostic or require_local_scene_loader:
                         check_scene_diagnostic(resource_pack)
+                    if require_local_scene_loader:
+                        reject_external_worlds(resource_members, "app resource pack", BUNDLED_SCENE_PACKAGES)
+                        audio = {item.filename for item in resource_pack.infolist() if item.file_size > 0}
+                        missing = [name for name in STOCK_AUDIO if name not in audio]
+                        if missing:
+                            raise ValueError("missing or empty stock audio resources: " + ", ".join(missing))
             except zipfile.BadZipFile as exc:
                 raise ValueError("app resource pack is corrupt") from exc
-        elif require_scene_diagnostic:
+        elif require_scene_diagnostic or require_local_scene_loader:
             raise ValueError("WSC diagnostic IPA is missing res/base.zip")
         info_path = app + "Info.plist"
         try:
@@ -212,6 +239,8 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
             raise ValueError(f"main executable lacks an arm64 iPhoneOS Mach-O slice (slices: {slices})")
         if b"SM64SceneDelegate" not in executable:
             raise ValueError("main executable does not contain the configured SM64SceneDelegate class")
+        if require_local_scene_loader and not all(marker in executable for marker in LOCAL_SCENE_STRINGS):
+            raise ValueError("main executable is missing the Documents WSC3 loader or its menu actions")
         if "iPhoneOS" not in info.get("CFBundleSupportedPlatforms", []):
             raise ValueError("app bundle is not marked for iPhoneOS")
         if not info.get("CFBundleIdentifier"):
@@ -294,8 +323,10 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
     if resource_pack_file_count is not None:
         print(f"runtime resource pack file entries: {resource_pack_file_count}")
     print("build intermediates: 0")
-    if require_scene_diagnostic:
+    if require_scene_diagnostic or require_local_scene_loader:
         print("WSC diagnostic resources: WSC2/WSC3 rooms, textures, and failed-load probe present")
+    if require_local_scene_loader:
+        print("Local WSC3 loader: menu, Documents package slot, and stock audio present; no external world bundled")
     print("signature: unsigned structure check only; SideStore signing and device launch remain unverified")
 
 
@@ -306,9 +337,11 @@ def main() -> None:
     parser.add_argument("--require-game-textures", action="store_true", help="require original Castle, Battlefield, and Goomba PNGs in res/base.zip")
     parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2/WSC3 diagnostic resources in res/base.zip")
     parser.add_argument("--require-shitbox-identity", action="store_true", help="verify the SHITBOX LABZ INC. name, bundle ID, and release versions")
+    parser.add_argument("--require-local-scene-loader", action="store_true",
+                        help="require the Documents WSC3 loader and stock audio, and reject bundled external worlds")
     args = parser.parse_args()
     validate(args.ipa, args.require_system_deps, args.require_game_textures,
-             args.require_scene_diagnostic, args.require_shitbox_identity)
+             args.require_scene_diagnostic, args.require_shitbox_identity, args.require_local_scene_loader)
 
 
 if __name__ == "__main__":
