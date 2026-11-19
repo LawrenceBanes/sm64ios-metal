@@ -3531,6 +3531,27 @@ static int l_obj_set_model_extended(lua_State *L) {
     return 0;
 }
 
+#ifdef MOD_RUNTIME_HOST_TEST
+bool mod_runtime_host_set_object_model(struct Object *object, int extended_id,
+                                       char *error, size_t error_size) {
+    if (error && error_size) error[0] = 0;
+    if (!sLua || !object || extended_id < 0) return false;
+    lua_settop(sLua, 0);
+    push_object(sLua, object);
+    lua_pushinteger(sLua, extended_id);
+    lua_pushcfunction(sLua, l_obj_set_model_extended);
+    lua_insert(sLua, 1);
+    if (lua_pcall(sLua, 2, 0, 0) != LUA_OK) {
+        if (error && error_size)
+            snprintf(error, error_size, "%s", lua_tostring(sLua, -1));
+        lua_settop(sLua, 0);
+        return false;
+    }
+    lua_settop(sLua, 0);
+    return true;
+}
+#endif
+
 static int l_obj_has_model_extended(lua_State *L) {
     struct Object *object = lua_isnoneornil(L, 1) ? NULL : checked_object(L, 1);
     lua_Integer model_id = luaL_checkinteger(L, 2);

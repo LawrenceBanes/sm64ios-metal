@@ -7,6 +7,28 @@ trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
 
 LUA_SRC="$ROOT/vendor/lua53/src"
 cp -R "$ROOT/tests/mods/fixtures" "$BUILD/fixtures"
+python3 - "$BUILD/fixtures/mods/00_core/actors" <<'PY'
+import struct, sys, zlib
+from pathlib import Path
+root = Path(sys.argv[1]); root.mkdir(parents=True, exist_ok=True)
+def name(value):
+    raw = value.encode(); return bytes([len(raw)]) + raw
+body = bytearray()
+body += b'\x03' + name('fixture_vertices') + struct.pack('<I', 3) + bytes(48)
+body += b'\x04' + name('fixture_dl') + struct.pack('<I', 3)
+body += struct.pack('<II', 0x01000000, 0x52544e50) + name('fixture_vertices') + struct.pack('<I', 0)
+body += struct.pack('<II', 0x05000000, 0) + struct.pack('<II', 0xdf000000, 0)
+body += b'\x05' + name('fixture_actor') + struct.pack('<I', 6)
+body += struct.pack('<III', 0x0b, 0x04, 0x00)
+body += struct.pack('<I', 0x52544e50) + name('fixture_branch') + struct.pack('<I', 0)
+body += struct.pack('<II', 0x05, 0x01)
+body += b'\x05' + name('fixture_branch') + struct.pack('<I', 5)
+body += struct.pack('<II', 0x04, 0x15)
+body += struct.pack('<I', 0x52544e50) + name('fixture_dl') + struct.pack('<I', 0)
+body += struct.pack('<II', 0x05, 0x01)
+compressed = zlib.compress(body)
+(root / 'fixture_actor.bin').write_bytes(b'DYNOSBIN' + struct.pack('<Q', len(body)) + compressed)
+PY
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.
 ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-sections ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_HOST_TEST -DMOD_RUNTIME_REAL_ZIP \
@@ -16,7 +38,7 @@ ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-section
   "$ROOT/src/pc/mods/mod_runtime.c" "$ROOT/src/pc/mods/mod_audio.c" "$ROOT/src/pc/mods/mod_resource.c" \
   "$ROOT/src/pc/mods/dynos_actor.c" "$ROOT/src/pc/mods/dynos_actor_native.c" \
   "$ROOT/src/engine/geo_layout.c" "$ROOT/src/engine/graph_node.c" \
-  "$ROOT/src/engine/graph_node_manager.c" \
+  "$ROOT/src/engine/graph_node_manager.c" "$ROOT/src/game/rendering_graph_node.c" \
   "$ROOT/src/pc/fs/fs_packtype_zip.c" "$ROOT/src/pc/fs/dirtree.c" \
   "$LUA_SRC/lapi.c" "$LUA_SRC/lcode.c" "$LUA_SRC/lctype.c" "$LUA_SRC/ldebug.c" \
   "$LUA_SRC/ldo.c" "$LUA_SRC/ldump.c" "$LUA_SRC/lfunc.c" "$LUA_SRC/lgc.c" \
@@ -27,7 +49,7 @@ ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-section
   "$LUA_SRC/lmathlib.c" "$LUA_SRC/lstrlib.c" "$LUA_SRC/ltablib.c" "$LUA_SRC/lutf8lib.c" \
   -lm -o "$BUILD/mod_runtime_test"
 
-"$BUILD/mod_runtime_test" "$BUILD/fixtures"
+MOD_TEST_DYNOS_GRAPH_RENDER=1 "$BUILD/mod_runtime_test" "$BUILD/fixtures"
 printf '%s  %s\n' \
   7001744cb4023be31460960a0e4ff060f4311f573ccdac880564deb532617a3d \
   "$ROOT/tests/mods/real/sm64coop-achievements-2.1.0.zip" | sha256sum -c -

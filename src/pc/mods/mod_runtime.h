@@ -100,6 +100,8 @@ const uintptr_t *mod_runtime_behavior_for_list(int list);
 bool mod_runtime_host_load_dynos_model(size_t mod_index, const char *name,
                                        int *extended_id, char *error,
                                        size_t error_size);
+bool mod_runtime_host_set_object_model(struct Object *object, int extended_id,
+                                      char *error, size_t error_size);
 #endif
 
 /* ZIP importing uses this after a platform document picker has copied the ZIP

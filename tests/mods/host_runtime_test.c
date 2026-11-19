@@ -43,6 +43,10 @@
 #include "game/object_list_processor.h"
 #include "engine/surface_collision.h"
 #include "engine/math_util.h"
+#include "game/rendering_graph_node.h"
+#include "game/game_init.h"
+#include "game/memory.h"
+#include "pc/gfx/gfx_pc.h"
 #include "actors/common1.h"
 #include "game/print.h"
 #include "game/spawn_object.h"
@@ -67,6 +71,9 @@ struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
 struct ObjectNode *gObjectLists = gObjectListArray;
 static struct GraphNode *sLoadedGraphNodeStorage[0x100];
 struct GraphNode **gLoadedGraphNodes = sLoadedGraphNodeStorage;
+Gfx *gDisplayListHead;
+u8 *gGfxPoolEnd;
+struct GfxDimensions gfx_current_dimensions = { 640, 480, 4.0f / 3.0f };
 void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
     if (!pool || size <= 0) return NULL;
     size = (size + 7) & ~7;
@@ -139,6 +146,39 @@ s32 approach_s32(s32 current, s32 target, s32 inc, s32 dec) {
 void *vec3f_set(Vec3f dest, f32 x, f32 y, f32 z) {
     dest[0] = x; dest[1] = y; dest[2] = z;
     return NULL;
+}
+/* Minimal host support for the bounded production GeoLayout integration test. */
+void mtxf_identity(Mat4 matrix) {
+    memset(matrix, 0, sizeof(Mat4));
+    for (int i = 0; i < 4; ++i) matrix[i][i] = 1.0f;
+}
+void mtxf_mul(Mat4 out, Mat4 a, Mat4 b) {
+    Mat4 result;
+    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
+        result[r][c] = 0.0f;
+        for (int k = 0; k < 4; ++k) result[r][c] += a[r][k] * b[k][c];
+    }
+    memcpy(out, result, sizeof(result));
+}
+void mtxf_rotate_zxy_and_translate(Mat4 out, Vec3f pos, Vec3s angles) {
+    (void)angles; mtxf_identity(out); out[3][0] = pos[0]; out[3][1] = pos[1]; out[3][2] = pos[2];
+}
+void mtxf_scale_vec3f(Mat4 out, Mat4 in, Vec3f scale) {
+    memcpy(out, in, sizeof(Mat4));
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) out[r][c] *= scale[c];
+}
+void mtxf_to_mtx(Mtx *out, Mat4 in) { memset(out, 0, sizeof(*out)); (void)in; }
+void mtxf_billboard(Mat4 out, Mat4 in, Vec3f pos, s16 angle) {
+    (void)in; (void)angle; mtxf_rotate_zxy_and_translate(out, pos, gVec3sZero);
+}
+void mtxf_cylboard(Mat4 out, Mat4 in, Vec3f pos, s16 angle) {
+    mtxf_billboard(out, in, pos, angle);
+}
+void *alloc_display_list(u32 size) {
+    size = (size + 7u) & ~7u;
+    if (!gDisplayListHead || !gGfxPoolEnd || gGfxPoolEnd < (u8 *)gDisplayListHead + size) return NULL;
+    gGfxPoolEnd -= size;
+    return gGfxPoolEnd;
 }
 void *vec3f_copy(Vec3f dest, Vec3f src) {
     dest[0] = src[0]; dest[1] = src[1]; dest[2] = src[2];
@@ -1281,6 +1321,63 @@ int main(int argc, char **argv) {
     assert(mod_runtime_mod_enabled(8));
     assert(mod_runtime_mod_enabled(9));
     mod_runtime_update();
+#ifdef MOD_RUNTIME_HOST_TEST
+    if (getenv("MOD_TEST_DYNOS_GRAPH_RENDER")) {
+        char model_error[400] = {0};
+        int extended_id = 0;
+        if (!mod_runtime_host_load_dynos_model(0, "fixture_actor", &extended_id,
+                                               model_error, sizeof(model_error))) {
+            fprintf(stderr, "synthetic actor activation failed: %s\n", model_error);
+            assert(false);
+        }
+        assert(extended_id >= 0x10000 && gLoadedGraphNodes[0xE6] != NULL);
+        assert(mod_runtime_extended_model_id(0xE6) == extended_id);
+
+        struct Object *actor = &sMarioObject;
+        struct GraphNodeObject saved_actor_gfx = actor->header.gfx;
+        actor->header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
+        actor->header.gfx.unk18 = 1;
+        actor->header.gfx.pos[0] = 12.0f;
+        actor->header.gfx.pos[1] = 34.0f;
+        actor->header.gfx.pos[2] = -1000.0f;
+        vec3f_set(actor->header.gfx.scale, 1.0f, 1.0f, 1.0f);
+        assert(mod_runtime_host_set_object_model(actor, extended_id, model_error,
+                                                 sizeof(model_error)));
+        assert(actor->header.gfx.sharedChild == gLoadedGraphNodes[0xE6]);
+
+        struct GraphNodeRoot root = {0};
+        struct GraphNodePerspective frustum = {0};
+        struct GraphNodeCamera camera = {0};
+        struct GraphNodeMasterList master = {0};
+        root.areaIndex = 1;
+        frustum.fov = 45.0f;
+        frustum.near = 1;
+        frustum.far = 20000;
+        struct AllocOnlyPool display_pool = {0};
+        uint8_t display_storage[8192];
+        display_pool.totalSpace = sizeof(display_storage);
+        display_pool.startPtr = display_storage;
+        display_pool.freePtr = display_storage;
+        uint8_t gfx_scratch[4096];
+        assert(rendering_graph_host_process_object(actor, &root, &frustum, &camera,
+                                                   &master, &display_pool, gfx_scratch,
+                                                   sizeof(gfx_scratch)));
+        assert(rendering_graph_host_display_list_submissions() == 1);
+        assert(master.listHeads[0] != NULL);
+        assert(master.listHeads[0]->displayList != NULL);
+        assert(master.listHeads[0]->next == NULL);
+        assert(actor->header.gfx.cameraToObject[0] == 12.0f &&
+               actor->header.gfx.cameraToObject[1] == 34.0f &&
+               actor->header.gfx.cameraToObject[2] == -1000.0f);
+        actor->header.gfx.sharedChild = NULL;
+        assert(!rendering_graph_host_process_object(actor, &root, &frustum, &camera,
+                                                    &master, &display_pool, gfx_scratch,
+                                                    sizeof(gfx_scratch)));
+        assert(rendering_graph_host_display_list_submissions() == 0);
+        actor->header.gfx = saved_actor_gfx;
+        puts("DynOS host integration: registered model -> object -> geo_process_object -> geo_append_display_list passed");
+    }
+#endif
     assert(sMarioBodyState.modelState == 0x25 && sMarioBodyState.capState == 2 &&
            sMarioBodyState.punchState == 17); /* Lua writes native MarioBodyState storage. */
     assert(gPlayerCameraState[0].cameraEvent == 31 && gPlayerCameraState[0].pos[0] == 12.0f &&

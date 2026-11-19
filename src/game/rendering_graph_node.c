@@ -47,6 +47,9 @@
 s16 gMatStackIndex;
 Mat4 gMatStack[32];
 Mtx *gMatStackFixed[32];
+#ifdef MOD_RUNTIME_HOST_TEST
+static unsigned int sHostDisplayListSubmissions;
+#endif
 
 /**
  * Animation nodes have state in global variables, so this struct captures
@@ -200,6 +203,9 @@ static void geo_append_display_list(void *displayList, s16 layer) {
             gCurGraphNodeMasterList->listTails[layer]->next = listNode;
         }
         gCurGraphNodeMasterList->listTails[layer] = listNode;
+#ifdef MOD_RUNTIME_HOST_TEST
+        sHostDisplayListSubmissions++;
+#endif
     }
 }
 
@@ -888,6 +894,81 @@ static void geo_process_object(struct Object *node) {
 #endif
 }
 
+#ifdef MOD_RUNTIME_HOST_TEST
+bool rendering_graph_host_process_object(struct Object *object,
+                                         struct GraphNodeRoot *root,
+                                         struct GraphNodePerspective *frustum,
+                                         struct GraphNodeCamera *camera,
+                                         struct GraphNodeMasterList *master,
+                                         struct AllocOnlyPool *display_list_pool,
+                                         void *gfx_scratch, size_t gfx_scratch_size) {
+#ifdef MOD_RUNTIME_HOST_TEST
+    sHostDisplayListSubmissions = 0;
+#endif
+    if (!object || !root || !frustum || !camera || !master || !display_list_pool ||
+        !gfx_scratch || gfx_scratch_size < sizeof(Mtx) * 2 || !object->header.gfx.sharedChild)
+        return false;
+
+    struct GraphNodeRoot *saved_root = gCurGraphNodeRoot;
+    struct GraphNodeMasterList *saved_master = gCurGraphNodeMasterList;
+    struct GraphNodePerspective *saved_frustum = gCurGraphNodeCamFrustum;
+    struct GraphNodeCamera *saved_camera = gCurGraphNodeCamera;
+    struct GraphNodeObject *saved_object = gCurGraphNodeObject;
+    struct GraphNodeHeldObject *saved_held = gCurGraphNodeHeldObject;
+    struct AllocOnlyPool *saved_heap = gDisplayListHeap;
+    Gfx *saved_head = gDisplayListHead;
+    u8 *saved_pool_end = gGfxPoolEnd;
+    s16 saved_stack_index = gMatStackIndex;
+    u8 saved_anim_type = gCurAnimType;
+    Mat4 saved_matrix_stack[32];
+    Mtx *saved_fixed_stack[32];
+    memcpy(saved_matrix_stack, gMatStack, sizeof(saved_matrix_stack));
+    memcpy(saved_fixed_stack, gMatStackFixed, sizeof(saved_fixed_stack));
+    Mtx initial_matrix;
+
+    memset(master->listHeads, 0, sizeof(master->listHeads));
+    memset(master->listTails, 0, sizeof(master->listTails));
+    mtxf_identity(gMatStack[0]);
+    mtxf_to_mtx(&initial_matrix, gMatStack[0]);
+    gMatStackIndex = 0;
+    gMatStackFixed[0] = &initial_matrix;
+    gCurGraphNodeRoot = root;
+    gCurGraphNodeMasterList = master;
+    gCurGraphNodeCamFrustum = frustum;
+    gCurGraphNodeCamera = camera;
+    gCurGraphNodeObject = NULL;
+    gCurGraphNodeHeldObject = NULL;
+    gDisplayListHeap = display_list_pool;
+    gDisplayListHead = gfx_scratch;
+    gGfxPoolEnd = (u8 *)gfx_scratch + gfx_scratch_size;
+    gCurAnimType = ANIM_TYPE_NONE;
+    geo_process_object(object);
+
+    bool submitted = false;
+    for (int layer = 0; layer < GFX_NUM_MASTER_LISTS; ++layer)
+        submitted |= master->listHeads[layer] != NULL;
+
+    gCurGraphNodeRoot = saved_root;
+    gCurGraphNodeMasterList = saved_master;
+    gCurGraphNodeCamFrustum = saved_frustum;
+    gCurGraphNodeCamera = saved_camera;
+    gCurGraphNodeObject = saved_object;
+    gCurGraphNodeHeldObject = saved_held;
+    gDisplayListHeap = saved_heap;
+    gDisplayListHead = saved_head;
+    gGfxPoolEnd = saved_pool_end;
+    gMatStackIndex = saved_stack_index;
+    gCurAnimType = saved_anim_type;
+    memcpy(gMatStack, saved_matrix_stack, sizeof(saved_matrix_stack));
+    memcpy(gMatStackFixed, saved_fixed_stack, sizeof(saved_fixed_stack));
+    return submitted;
+}
+
+unsigned int rendering_graph_host_display_list_submissions(void) {
+    return sHostDisplayListSubmissions;
+}
+#endif
+
 /**
  * Process an object parent node. Temporarily assigns itself as the parent of
  * the subtree rooted at 'sharedChild' and processes the subtree, after which the
@@ -999,6 +1080,17 @@ void geo_process_node_and_siblings(struct GraphNode *firstNode) {
             if (curGraphNode->flags & GRAPH_RENDER_CHILDREN_FIRST) {
                 geo_try_process_children(curGraphNode);
             } else {
+#ifdef MOD_RUNTIME_HOST_TEST
+                /* The bounded host graph fixture exercises the same production
+                 * object and display-list handlers without pulling unrelated
+                 * platform/gameplay graph handlers into the test executable. */
+                if (curGraphNode->type == GRAPH_NODE_TYPE_OBJECT)
+                    geo_process_object((struct Object *)curGraphNode);
+                else if (curGraphNode->type == GRAPH_NODE_TYPE_DISPLAY_LIST)
+                    geo_process_display_list((struct GraphNodeDisplayList *)curGraphNode);
+                else
+                    geo_try_process_children(curGraphNode);
+#else
                 switch (curGraphNode->type) {
                     case GRAPH_NODE_TYPE_ORTHO_PROJECTION:
                         geo_process_ortho_projection((struct GraphNodeOrthoProjection *) curGraphNode);
@@ -1062,6 +1154,7 @@ void geo_process_node_and_siblings(struct GraphNode *firstNode) {
                         geo_try_process_children((struct GraphNode *) curGraphNode);
                         break;
                 }
+#endif
             }
         } else {
             if (curGraphNode->type == GRAPH_NODE_TYPE_OBJECT) {

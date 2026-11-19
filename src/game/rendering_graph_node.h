@@ -30,4 +30,20 @@ extern u16 gAreaUpdateCounter;
 void geo_process_node_and_siblings(struct GraphNode *firstNode);
 void geo_process_root(struct GraphNodeRoot *node, Vp *b, Vp *c, s32 clearColor);
 
+#ifdef MOD_RUNTIME_HOST_TEST
+#include <stddef.h>
+#include <stdbool.h>
+struct Object;
+struct AllocOnlyPool;
+/* Invoke the production object GeoLayout traversal with isolated host state. */
+bool rendering_graph_host_process_object(struct Object *object,
+                                         struct GraphNodeRoot *root,
+                                         struct GraphNodePerspective *frustum,
+                                         struct GraphNodeCamera *camera,
+                                         struct GraphNodeMasterList *master,
+                                         struct AllocOnlyPool *display_list_pool,
+                                         void *gfx_scratch, size_t gfx_scratch_size);
+unsigned int rendering_graph_host_display_list_submissions(void);
+#endif
+
 #endif // RENDERING_GRAPH_NODE_H
