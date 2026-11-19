@@ -11,6 +11,8 @@
 #include <unistd.h>
 
 #include "sm64.h"
+#include "game/area.h"
+#include "game/save_file.h"
 #include "game/level_update.h"
 #include "game/object_helpers.h"
 #include "game/object_list_processor.h"
@@ -24,11 +26,48 @@ char fs_writepath[SYS_MAX_PATH] = "";
 struct MarioState gMarioStates[1];
 struct MarioState *gMarioState = &gMarioStates[0];
 struct Object *gCurrentObject;
+s16 gCurrSaveFileNum = 1;
+s16 gCurrLevelNum;
+s16 gCurrAreaIndex;
+
+u32 save_file_get_flags(void) { return 0; }
+u32 save_file_get_star_flags(s32 file_index, s32 course_index) {
+    (void)file_index; (void)course_index; return 0;
+}
+
+char *sys_strdup(const char *source) { return source ? strdup(source) : NULL; }
 
 static struct Object sMarioObject;
 static struct Object sSpawnedObject;
 static struct Controller sController;
 static unsigned sPrintedText;
+
+static bool real_mod_storage_contains(const char *root, const char *needle) {
+    static const char hex[] = "0123456789abcdef";
+    const char *name = "sm64coop-achievements-2.1.0";
+    char path[SYS_MAX_PATH];
+    int n = snprintf(path, sizeof(path), "%s/mods_storage/", root);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return false;
+    size_t prefix = (size_t)n;
+    for (size_t i = 0; name[i]; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        if (prefix + i * 2 + 8 >= sizeof(path)) return false;
+        path[prefix + i * 2] = hex[c >> 4];
+        path[prefix + i * 2 + 1] = hex[c & 15];
+    }
+    snprintf(path + prefix + strlen(name) * 2, sizeof(path) - prefix - strlen(name) * 2, ".sav");
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    char data[16384];
+    size_t length = fread(data, 1, sizeof(data) - 1, file);
+    bool ok = !ferror(file) && feof(file);
+    fclose(file);
+    if (!ok) return false;
+    data[length] = '\0';
+    bool found = strstr(data, needle) != NULL;
+    if (!found) fprintf(stderr, "real mod storage missing '%s' in %s: %s\n", needle, path, data);
+    return found;
+}
 
 static bool list_add(fs_pathlist_t *list, const char *path) {
     if (list->numpaths == list->listcap) {
@@ -91,6 +130,7 @@ const char *fs_get_write_path(const char *path) {
     return output;
 }
 
+#ifndef MOD_RUNTIME_REAL_ZIP
 bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const char *dynos_dir,
                             char *installed, size_t installed_size, bool *contains_lua,
                             bool *contains_dynos, char *error, size_t error_size) {
@@ -100,6 +140,7 @@ bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const ch
     if (error && error_size) snprintf(error, error_size, "not part of runtime unit test");
     return false;
 }
+#endif
 
 u32 set_mario_action(struct MarioState *m, u32 action, u32 arg) {
     m->prevAction = m->action; m->action = action; m->actionArg = arg;
@@ -159,6 +200,47 @@ static void create_bytecode_fixture(const char *fixture_root) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--real-zip") == 0) {
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        assert(fs_sys_mkdir(fs_writepath));
+        reset_game_state();
+        char installed[SYS_MAX_PATH], error[512];
+        assert(mod_runtime_import_zip(argv[3], installed, sizeof(installed), error, sizeof(error)));
+        printf("real ZIP import: PASS (%s)\n", installed);
+        assert(mod_runtime_init());
+        assert(mod_runtime_mod_count() == 1);
+        printf("real ZIP discovered mod: %s\n", mod_runtime_mod_name(0));
+        mod_runtime_update();
+        assert(mod_runtime_menu_item_count(0) == 11);
+        ModRuntimeMenuItem menu_item;
+        assert(mod_runtime_menu_get_item(0, 0, &menu_item));
+        assert(menu_item.type == MOD_RUNTIME_MENU_SLIDER);
+        assert(menu_item.minimum == 1 && menu_item.maximum == 8);
+        assert(mod_runtime_request_menu_set_value(0, 0, 2));
+        mod_runtime_update();
+        assert(mod_runtime_menu_get_item(0, 0, &menu_item));
+        assert(menu_item.value == 2);
+        gMarioState->numStars = 1;
+        for (int frame = 0; frame < 15; ++frame) mod_runtime_after_mario_update(gMarioState);
+        assert(real_mod_storage_contains(argv[2], "73315f676574315374617273=31"));
+        /* Unsupported sound/HUD calls should be diagnosed and isolated to their hooks. */
+        mod_runtime_update();
+        mod_runtime_hud_render();
+        assert(mod_runtime_mod_enabled(0));
+        printf("real ZIP startup: %s\n", mod_runtime_mod_enabled(0) ? "loaded" : "failed/disabled");
+        assert(mod_runtime_set_enabled(0, false));
+        assert(mod_runtime_menu_item_count(0) == 0);
+        assert(mod_runtime_set_enabled(0, true));
+        assert(mod_runtime_menu_item_count(0) == 11);
+        mod_runtime_shutdown();
+        assert(mod_runtime_init());
+        mod_runtime_update();
+        gMarioState->numStars = 1;
+        mod_runtime_after_mario_update(gMarioState);
+        assert(real_mod_storage_contains(argv[2], "73315f676574315374617273=31"));
+        mod_runtime_shutdown();
+        return 0;
+    }
     assert(argc == 2);
     snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[1]);
     create_bytecode_fixture(argv[1]);

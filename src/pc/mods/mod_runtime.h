@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 struct MarioState;
 struct Object;
@@ -14,6 +15,7 @@ void mod_runtime_before_mario_update(struct MarioState *m);
 void mod_runtime_after_mario_update(struct MarioState *m);
 void mod_runtime_before_set_action(struct MarioState *m, uint32_t *action, uint32_t action_arg, bool *cancel);
 void mod_runtime_after_set_action(struct MarioState *m);
+void mod_runtime_on_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type, bool interacted);
 bool mod_runtime_mario_action(struct MarioState *m, int *in_loop);
 bool mod_runtime_mario_gravity(struct MarioState *m);
 void mod_runtime_hud_render(void);
@@ -32,6 +34,21 @@ bool mod_runtime_import_zip(const char *zip_path, char *installed_path, unsigned
 int mod_runtime_mod_count(void);
 const char *mod_runtime_mod_name(int index);
 bool mod_runtime_mod_enabled(int index);
+enum { MOD_RUNTIME_MENU_BUTTON = 0, MOD_RUNTIME_MENU_CHECKBOX = 1, MOD_RUNTIME_MENU_SLIDER = 2 };
+typedef struct {
+    int type;
+    char label[256];
+    int64_t value;
+    int64_t minimum;
+    int64_t maximum;
+} ModRuntimeMenuItem;
+int mod_runtime_menu_item_count(int mod_index);
+bool mod_runtime_menu_get_item(int mod_index, int item_index, ModRuntimeMenuItem *item);
+/* Invoke from the game thread. Checkboxes accept only 0/1; sliders must be in range. */
+bool mod_runtime_menu_set_value(int mod_index, int item_index, int64_t value);
+bool mod_runtime_request_menu_set_value(int mod_index, int item_index, int64_t value);
+/* Called by the native chat/input layer on the game thread with the token and remainder. */
+bool mod_runtime_dispatch_chat_command(const char *name, const char *message);
 bool mod_runtime_set_enabled(int index, bool enabled);
 bool mod_runtime_reload(int index);
 bool mod_runtime_request_enabled(int index, bool enabled);

@@ -1,6 +1,7 @@
 #include "mod_runtime.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
@@ -18,16 +19,20 @@
 
 #include "macros.h"
 #include "sm64.h"
+#include "level_table.h"
+#include "course_table.h"
 #include "types.h"
 #include "object_fields.h"
 #include "engine/behavior_script.h"
 #include "behavior_data.h"
+#include "game/area.h"
 #include "game/level_update.h"
 #include "game/mario.h"
 #include "game/object_helpers.h"
 #include "game/object_list_processor.h"
 #include "game/print.h"
 #include "game/spawn_object.h"
+#include "game/save_file.h"
 #include "pc/fs/fs.h"
 
 #define MOD_MAX_COUNT 128
@@ -40,6 +45,10 @@
 #define MOD_DYNAMIC_ID_BASE 0x70000000u
 #define MOD_ACTION_ID_BASE 0x000001c0u
 #define MOD_ACTION_ID_CAPACITY 64u
+#define MOD_STORAGE_MAX_KEYS 4096u
+#define MOD_STORAGE_MAX_ENTRY 1024u
+#define MOD_STORAGE_MAX_BYTES (1024u * 1024u)
+#define MOD_MAX_COMMANDS 128u
 
 enum { HOOK_UPDATE = 0, HOOK_MARIO_UPDATE = 1, HOOK_BEFORE_MARIO_UPDATE = 2,
        HOOK_ON_SET_MARIO_ACTION = 3, HOOK_BEFORE_PHYS_STEP = 4,
@@ -53,6 +62,9 @@ typedef struct ModBehavior ModBehavior;
 typedef struct ModObject ModObject;
 typedef struct ModModule ModModule;
 typedef struct ModRequest ModRequest;
+typedef struct ModStorageEntry ModStorageEntry;
+typedef struct ModMenuItem ModMenuItem;
+typedef struct ModCommand ModCommand;
 typedef struct DynosPack DynosPack;
 typedef struct ModCustomActionId ModCustomActionId;
 
@@ -61,7 +73,7 @@ struct ModAction { Mod *owner; char *file; uint32_t id; int every_frame_ref; int
 struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; ModBehavior *next_global; ModBehavior *next_owned; };
 struct ModObject { struct Object *object; uint32_t token; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
 struct ModModule { char *name; int value_ref; bool loading; ModModule *next; };
-struct ModRequest { int type; int index; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
+struct ModRequest { int type; int index; int item_index; int64_t value; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
 struct DynosPack {
     char name[MOD_MAX_NAME];
     char path[SYS_MAX_PATH];
@@ -69,6 +81,9 @@ struct DynosPack {
     DynosPack *next;
 };
 struct ModCustomActionId { Mod *owner; uint32_t id; unsigned slot; ModCustomActionId *next_owned; };
+struct ModStorageEntry { char *key; size_t key_length; char *value; size_t value_length; ModStorageEntry *next; };
+struct ModMenuItem { char label[256]; int type; lua_Integer value, minimum, maximum; int callback_ref; char *file; };
+struct ModCommand { char name[64]; char description[256]; int callback_ref; char *file; ModCommand *next; };
 
 struct Mod {
     char name[MOD_MAX_NAME];
@@ -84,13 +99,22 @@ struct Mod {
     ModAction *actions;
     ModBehavior *behaviors;
     ModCustomActionId *custom_action_ids;
+    ModStorageEntry *storage;
+    size_t storage_count;
+    size_t storage_bytes;
+    bool storage_loaded;
+    bool storage_failed;
+    ModMenuItem *menu_items;
+    size_t menu_item_count;
+    size_t menu_item_capacity;
+    ModCommand *commands;
     bool contains_dynos_assets;
     Mod *next;
 };
 
 typedef struct { size_t bytes; } LuaAllocator;
-typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT } LuaUserdataKind;
-typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; } LuaUserdata;
+typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT, LUA_UD_SURFACE } LuaUserdataKind;
+typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; struct Surface surface; } LuaUserdata;
 
 enum { VEC_MARIO_POS, VEC_MARIO_VEL, VEC_MARIO_FACE_ANGLE, VEC_MARIO_ANGLE_VEL };
 enum { HOOK_FN_INIT, HOOK_FN_LOOP, HOOK_FN_ACTION, HOOK_FN_GRAVITY };
@@ -117,8 +141,10 @@ static pthread_mutex_t sRequestMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t sModListMutex = PTHREAD_MUTEX_INITIALIZER;
 static ModRequest *sRequestHead;
 static ModRequest *sRequestTail;
+static Mod *mod_runtime_find_index(int index);
 
-enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP };
+enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP, MOD_REQUEST_MENU_VALUE };
+enum { MOD_MENU_BUTTON = 0, MOD_MENU_CHECKBOX = 1, MOD_MENU_SLIDER = 2 };
 
 static void mod_log(const char *level, const char *mod, const char *message) {
     fprintf(stderr, "[mods][%s][%s] %s\n", level, mod ? mod : "runtime", message ? message : "");
@@ -213,18 +239,14 @@ static int compare_strings(const void *a, const void *b) {
     return strcmp(*sa, *sb);
 }
 
+static bool mod_add_file(Mod *mod, const char *path);
+
 static bool mod_file_walk(void *userdata, const char *path) {
     Mod *mod = (Mod *)userdata;
     if (file_is_dynos_asset(path)) mod->contains_dynos_assets = true;
     if (mod->file_count >= MOD_MAX_FILES) return false;
     if (!file_has_suffix(path, ".lua") && !file_has_suffix(path, ".luac")) return true;
-    char *copy = strdup(path);
-    if (!copy) return false;
-    char **next = realloc(mod->files, sizeof(char *) * (mod->file_count + 1));
-    if (!next) { free(copy); return false; }
-    mod->files = next;
-    mod->files[mod->file_count++] = copy;
-    return true;
+    return mod_add_file(mod, path);
 }
 
 static void add_dynos_pack(const char *name, const char *path) {
@@ -264,6 +286,8 @@ static void add_dynos_pack(const char *name, const char *path) {
 
 static bool mod_add_file(Mod *mod, const char *path) {
     if (!mod || mod->file_count >= MOD_MAX_FILES) return false;
+    for (size_t i = 0; i < mod->file_count; ++i)
+        if (!strcmp(mod->files[i], path)) return true;
     char *copy = strdup(path);
     if (!copy) return false;
     char **next = realloc(mod->files, sizeof(char *) * (mod->file_count + 1));
@@ -417,9 +441,24 @@ static bool add_action(Mod *owner, uint32_t id, int every_ref, int gravity_ref) 
     return true;
 }
 
+static void refresh_local_player_tables(void) {
+    if (!sLua) return;
+    lua_getglobal(sLua, "gNetworkPlayers");
+    if (!lua_istable(sLua, -1)) { lua_pop(sLua, 1); return; }
+    lua_rawgeti(sLua, -1, 0);
+    if (lua_istable(sLua, -1)) {
+        lua_pushinteger(sLua, 0); lua_setfield(sLua, -2, "globalIndex");
+        lua_pushinteger(sLua, gCurrLevelNum); lua_setfield(sLua, -2, "currLevelNum");
+        lua_pushinteger(sLua, gCurrAreaIndex); lua_setfield(sLua, -2, "currAreaIndex");
+        lua_pushboolean(sLua, true); lua_setfield(sLua, -2, "connected");
+    }
+    lua_pop(sLua, 2);
+}
+
 /* Common callback entry that preserves a requested number of return values. */
 static int call_ref(Mod *owner, const char *file, int function_ref, const char *event, int nargs, int nresults) {
     lua_State *L = sLua;
+    refresh_local_player_tables();
     int base = lua_gettop(L) - nargs;
     lua_rawgeti(L, LUA_REGISTRYINDEX, function_ref);
     lua_insert(L, base + 1);
@@ -458,6 +497,15 @@ static void push_object(lua_State *L, struct Object *object) {
     ModObject *entry = find_object(object);
     *ud = (LuaUserdata){ .kind = LUA_UD_OBJECT, .object = object, .token = entry ? entry->token : 0 };
     luaL_getmetatable(L, "sm64.mod.Object"); lua_setmetatable(L, -2);
+}
+
+static void push_surface(lua_State *L, const struct Surface *surface) {
+    if (!surface) { lua_pushnil(L); return; }
+    LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
+    memset(ud, 0, sizeof(*ud));
+    ud->kind = LUA_UD_SURFACE;
+    ud->surface = *surface;
+    luaL_getmetatable(L, "sm64.mod.Surface"); lua_setmetatable(L, -2);
 }
 
 static void push_vector(lua_State *L, LuaUserdataKind kind, int field) {
@@ -531,6 +579,7 @@ static bool mario_number_get(struct MarioState *m, const char *key, lua_State *L
     GET_S32("floorAngle", floorAngle) GET_S32("floorHeight", floorHeight)
     GET_S32("waterLevel", waterLevel) GET_S32("hurtCounter", hurtCounter)
     GET_S32("terrainSoundAddend", terrainSoundAddend)
+    GET_S32("squishTimer", squishTimer)
 #undef GET_U32
 #undef GET_S32
 #undef GET_NUM
@@ -561,7 +610,9 @@ static int mario_index(lua_State *L) {
     struct MarioState *m = current_mario();
     const char *key = luaL_checkstring(L, 2);
     if (!m) { lua_pushnil(L); return 1; }
-    if (!strcmp(key, "pos")) push_vector(L, LUA_UD_VEC_F, VEC_MARIO_POS);
+    if (!strcmp(key, "playerIndex")) lua_pushinteger(L, 0);
+    else if (!strcmp(key, "floor")) push_surface(L, m->floor);
+    else if (!strcmp(key, "pos")) push_vector(L, LUA_UD_VEC_F, VEC_MARIO_POS);
     else if (!strcmp(key, "vel")) push_vector(L, LUA_UD_VEC_F, VEC_MARIO_VEL);
     else if (!strcmp(key, "faceAngle")) push_vector(L, LUA_UD_VEC_S, VEC_MARIO_FACE_ANGLE);
     else if (!strcmp(key, "angleVel")) push_vector(L, LUA_UD_VEC_S, VEC_MARIO_ANGLE_VEL);
@@ -663,13 +714,36 @@ static int object_newindex(lua_State *L) {
     return 0;
 }
 
+static int surface_index(lua_State *L) {
+    LuaUserdata *ud = luaL_checkudata(L, 1, "sm64.mod.Surface");
+    const char *key = luaL_checkstring(L, 2);
+    const struct Surface *surface = &ud->surface;
+    if (!strcmp(key, "type")) lua_pushinteger(L, surface->type);
+    else if (!strcmp(key, "force")) lua_pushinteger(L, surface->force);
+    else if (!strcmp(key, "flags")) lua_pushinteger(L, surface->flags);
+    else if (!strcmp(key, "room")) lua_pushinteger(L, surface->room);
+    else if (!strcmp(key, "lowerY")) lua_pushinteger(L, surface->lowerY);
+    else if (!strcmp(key, "upperY")) lua_pushinteger(L, surface->upperY);
+    else if (!strcmp(key, "normal")) {
+        lua_newtable(L);
+        lua_pushnumber(L, surface->normal.x); lua_setfield(L, -2, "x");
+        lua_pushnumber(L, surface->normal.y); lua_setfield(L, -2, "y");
+        lua_pushnumber(L, surface->normal.z); lua_setfield(L, -2, "z");
+    } else return luaL_error(L, "Surface field '%s' is unsupported by this adapter", key);
+    return 1;
+}
+
+static int surface_newindex(lua_State *L) {
+    return luaL_error(L, "Surface snapshots are read-only");
+}
+
 static int l_hook_event(lua_State *L) {
     int event = (int)luaL_checkinteger(L, 1);
     luaL_checktype(L, 2, LUA_TFUNCTION);
     if (event < 0 || event >= MOD_EVENT_COUNT) return luaL_error(L, "unknown CoopDX hook event id %d", event);
     if (event != HOOK_UPDATE && event != HOOK_MARIO_UPDATE && event != HOOK_BEFORE_MARIO_UPDATE
         && event != HOOK_ON_SET_MARIO_ACTION && event != HOOK_ON_HUD_RENDER
-        && event != HOOK_ON_LEVEL_INIT && event != 30 && event != HOOK_ON_EXIT)
+        && event != HOOK_ON_INTERACT && event != HOOK_ON_LEVEL_INIT && event != 30 && event != HOOK_ON_EXIT)
         return luaL_error(L, "CoopDX hook event %d is not supported by the current engine adapter", event);
     if (!sCurrentMod) return luaL_error(L, "hook_event must be called while loading a mod");
     lua_pushvalue(L, 2);
@@ -811,6 +885,349 @@ static int l_set_mario_animation(lua_State *L) {
     if (!m) { lua_pushinteger(L, 0); return 1; }
     lua_pushinteger(L, set_mario_animation(m, (s32)luaL_checkinteger(L, 2)));
     return 1;
+}
+
+static int l_get_current_save_file_num(lua_State *L) {
+    lua_pushinteger(L, gCurrSaveFileNum);
+    return 1;
+}
+
+static int l_save_file_get_flags(lua_State *L) {
+    lua_pushinteger(L, save_file_get_flags());
+    return 1;
+}
+
+static int l_save_file_get_star_flags(lua_State *L) {
+    int file_index = (int)luaL_checkinteger(L, 1);
+    int course_index = (int)luaL_checkinteger(L, 2);
+    if (file_index < 0 || file_index >= NUM_SAVE_FILES ||
+        course_index < -1 || course_index >= COURSE_COUNT)
+        return luaL_error(L, "save_file_get_star_flags() index is outside this engine's save table");
+    lua_pushinteger(L, save_file_get_star_flags(file_index, course_index));
+    return 1;
+}
+
+static void mod_storage_free_entries(Mod *mod) {
+    while (mod && mod->storage) {
+        ModStorageEntry *next = mod->storage->next;
+        free(mod->storage->key);
+        free(mod->storage->value);
+        free(mod->storage);
+        mod->storage = next;
+    }
+    if (mod) {
+        mod->storage_count = 0;
+        mod->storage_bytes = 0;
+    }
+}
+
+static bool mod_storage_paths(const Mod *mod, char *relative, size_t relative_size,
+                              char *absolute, size_t absolute_size) {
+    static const char hex[] = "0123456789abcdef";
+    size_t n = strlen(mod->name);
+    if (n * 2 + sizeof("mods_storage/.sav") > relative_size) return false;
+    int prefix = snprintf(relative, relative_size, "mods_storage/");
+    if (prefix < 0 || (size_t)prefix + n * 2 + sizeof(".sav") > relative_size) return false;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)mod->name[i];
+        relative[prefix + i * 2] = hex[c >> 4];
+        relative[prefix + i * 2 + 1] = hex[c & 15];
+    }
+    memcpy(relative + prefix + n * 2, ".sav", sizeof(".sav"));
+    const char *write_path = fs_get_write_path(relative);
+    if (!write_path) return false;
+    int written = snprintf(absolute, absolute_size, "%s", write_path);
+    if (written < 0 || (size_t)written >= absolute_size) return false;
+    return true;
+}
+
+static int mod_storage_hex_value(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static char *mod_storage_decode(const char *text, size_t length, size_t *out_length) {
+    if ((length & 1u) || length / 2 > MOD_STORAGE_MAX_ENTRY) return NULL;
+    size_t bytes = length / 2;
+    char *decoded = malloc(bytes + 1);
+    if (!decoded) return NULL;
+    for (size_t i = 0; i < bytes; ++i) {
+        int high = mod_storage_hex_value((unsigned char)text[i * 2]);
+        int low = mod_storage_hex_value((unsigned char)text[i * 2 + 1]);
+        if (high < 0 || low < 0 || (high == 0 && low == 0)) {
+            free(decoded);
+            return NULL;
+        }
+        decoded[i] = (char)((high << 4) | low);
+    }
+    decoded[bytes] = '\0';
+    *out_length = bytes;
+    return decoded;
+}
+
+static bool mod_storage_read_file(Mod *mod) {
+    char relative[MOD_MAX_NAME * 2 + 32], path[SYS_MAX_PATH];
+    if (!mod_storage_paths(mod, relative, sizeof(relative), path, sizeof(path))) return false;
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        if (errno == ENOENT) { mod->storage_loaded = true; return true; }
+        return false;
+    }
+    char line[MOD_STORAGE_MAX_ENTRY * 4 + 4];
+    unsigned lines = 0;
+    bool valid = fgets(line, sizeof(line), file) != NULL && strcmp(line, "SM64MODSTORAGE1\n") == 0;
+    while (valid && fgets(line, sizeof(line), file)) {
+        size_t line_length = strlen(line);
+        if (!line_length || line[line_length - 1] != '\n') { valid = false; break; }
+        line[--line_length] = '\0';
+        if (line_length && line[line_length - 1] == '\r') line[--line_length] = '\0';
+        char *equals = strchr(line, '=');
+        if (!equals || ++lines > MOD_STORAGE_MAX_KEYS) { valid = false; break; }
+        *equals = '\0';
+        size_t key_length = 0, value_length = 0;
+        char *key = mod_storage_decode(line, strlen(line), &key_length);
+        char *value = mod_storage_decode(equals + 1, strlen(equals + 1), &value_length);
+        if (!key || !value || !key_length || key_length > MOD_STORAGE_MAX_ENTRY ||
+            value_length > MOD_STORAGE_MAX_ENTRY ||
+            mod->storage_bytes + key_length + value_length > MOD_STORAGE_MAX_BYTES) {
+            free(key); free(value); valid = false; break;
+        }
+        for (ModStorageEntry *at = mod->storage; at; at = at->next) {
+            if (at->key_length == key_length && !memcmp(at->key, key, key_length)) {
+                valid = false;
+                break;
+            }
+        }
+        if (!valid) { free(key); free(value); break; }
+        ModStorageEntry *entry = calloc(1, sizeof(*entry));
+        if (!entry) { free(key); free(value); valid = false; break; }
+        entry->key = key; entry->key_length = key_length;
+        entry->value = value; entry->value_length = value_length;
+        entry->next = mod->storage; mod->storage = entry;
+        ++mod->storage_count; mod->storage_bytes += key_length + value_length;
+    }
+    if (ferror(file)) valid = false;
+    fclose(file);
+    if (!valid) {
+        mod_storage_free_entries(mod);
+        mod->storage_failed = true;
+        mod_log("error", mod->name, "mod storage is corrupt or exceeds the 1 MiB sandbox limit");
+        return false;
+    }
+    mod->storage_loaded = true;
+    return true;
+}
+
+static void mod_storage_write_hex(FILE *file, const char *data, size_t length) {
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)data[i];
+        fputc(hex[c >> 4], file);
+        fputc(hex[c & 15], file);
+    }
+}
+
+static bool mod_storage_write_file(Mod *mod) {
+    char relative[MOD_MAX_NAME * 2 + 32], path[SYS_MAX_PATH], temporary[SYS_MAX_PATH];
+    char directory[SYS_MAX_PATH];
+    int n = snprintf(directory, sizeof(directory), "%s/mods_storage", fs_writepath);
+    if (n <= 0 || (size_t)n >= sizeof(directory)) return false;
+    if (!fs_sys_dir_exists(directory) && !fs_sys_mkdir(directory)) return false;
+    if (!mod_storage_paths(mod, relative, sizeof(relative), path, sizeof(path))) return false;
+    n = snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+    if (n <= 0 || (size_t)n >= sizeof(temporary)) return false;
+    FILE *file = fopen(temporary, "wb");
+    if (!file) return false;
+    bool valid = fputs("SM64MODSTORAGE1\n", file) >= 0;
+    for (ModStorageEntry *entry = mod->storage; valid && entry; entry = entry->next) {
+        mod_storage_write_hex(file, entry->key, entry->key_length);
+        if (fputc('=', file) == EOF) { valid = false; break; }
+        mod_storage_write_hex(file, entry->value, entry->value_length);
+        if (fputc('\n', file) == EOF) valid = false;
+    }
+    if (fflush(file) != 0 || ferror(file)) valid = false;
+    if (fclose(file) != 0) valid = false;
+    if (valid && rename(temporary, path) == 0) return true;
+    unlink(temporary);
+    return false;
+}
+
+static ModStorageEntry *mod_storage_find(Mod *mod, const char *key, size_t key_length) {
+    for (ModStorageEntry *entry = mod->storage; entry; entry = entry->next)
+        if (entry->key_length == key_length && !memcmp(entry->key, key, key_length)) return entry;
+    return NULL;
+}
+
+static int l_mod_storage_load(lua_State *L) {
+    Mod *mod = sCurrentMod;
+    if (!mod) return luaL_error(L, "mod_storage_load() is only available while a mod is executing");
+    size_t key_length = 0, default_length = 0;
+    const char *key = luaL_checklstring(L, 1, &key_length);
+    const char *default_value = luaL_optlstring(L, 2, NULL, &default_length);
+    if (!key_length || key_length > MOD_STORAGE_MAX_ENTRY || memchr(key, '\0', key_length))
+        return luaL_error(L, "mod_storage_load() key must contain 1..%d bytes", MOD_STORAGE_MAX_ENTRY);
+    if (!mod->storage_loaded && !mod_storage_read_file(mod)) {
+        if (!mod->storage_failed) mod_log("error", mod->name, "could not read sandboxed mod storage");
+    }
+    ModStorageEntry *entry = mod_storage_find(mod, key, key_length);
+    if (entry) lua_pushlstring(L, entry->value, entry->value_length);
+    else if (default_value) lua_pushlstring(L, default_value, default_length);
+    else lua_pushnil(L);
+    return 1;
+}
+
+static int l_mod_storage_save(lua_State *L) {
+    Mod *mod = sCurrentMod;
+    if (!mod) return luaL_error(L, "mod_storage_save() is only available while a mod is executing");
+    size_t key_length = 0, value_length = 0;
+    const char *key = luaL_checklstring(L, 1, &key_length);
+    const char *value = luaL_checklstring(L, 2, &value_length);
+    if (!key_length || key_length > MOD_STORAGE_MAX_ENTRY || value_length > MOD_STORAGE_MAX_ENTRY ||
+        memchr(key, '\0', key_length) || memchr(value, '\0', value_length))
+        return luaL_error(L, "mod_storage_save() keys and values are limited to 1024 non-NUL bytes");
+    if (!mod->storage_loaded && !mod_storage_read_file(mod)) {
+        if (!mod->storage_failed) mod_log("error", mod->name, "could not read sandboxed mod storage");
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    if (mod->storage_failed) { lua_pushboolean(L, false); return 1; }
+    ModStorageEntry *entry = mod_storage_find(mod, key, key_length);
+    size_t old_value_length = entry ? entry->value_length : 0;
+    size_t old_total = entry ? entry->key_length + old_value_length : 0;
+    size_t new_total = key_length + value_length;
+    if ((!entry && mod->storage_count >= MOD_STORAGE_MAX_KEYS) ||
+        mod->storage_bytes - old_total + new_total > MOD_STORAGE_MAX_BYTES) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    char *new_value = malloc(value_length + 1);
+    if (!new_value) { lua_pushboolean(L, false); return 1; }
+    memcpy(new_value, value, value_length); new_value[value_length] = '\0';
+    bool created = false;
+    if (!entry) {
+        entry = calloc(1, sizeof(*entry));
+        if (!entry) { free(new_value); lua_pushboolean(L, false); return 1; }
+        entry->key = malloc(key_length + 1);
+        if (!entry->key) { free(new_value); free(entry); lua_pushboolean(L, false); return 1; }
+        memcpy(entry->key, key, key_length); entry->key[key_length] = '\0';
+        entry->key_length = key_length;
+        entry->next = mod->storage; mod->storage = entry;
+        ++mod->storage_count; created = true;
+    }
+    char *old_value = entry->value;
+    entry->value = new_value; entry->value_length = value_length;
+    mod->storage_bytes = mod->storage_bytes - old_total + new_total;
+    if (!mod_storage_write_file(mod)) {
+        mod->storage_bytes = mod->storage_bytes - new_total + old_total;
+        if (created) {
+            mod->storage = entry->next;
+            --mod->storage_count;
+            free(entry->key); free(entry);
+        } else {
+            entry->value = old_value; entry->value_length = old_value_length;
+        }
+        free(new_value);
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    free(old_value);
+    lua_pushboolean(L, true);
+    return 1;
+}
+
+static int mod_menu_add(lua_State *L, Mod *mod, int label_index, int callback_index,
+                        int type, lua_Integer value, lua_Integer minimum, lua_Integer maximum) {
+    size_t label_length = 0;
+    const char *label = luaL_checklstring(L, label_index, &label_length);
+    luaL_checktype(L, callback_index, LUA_TFUNCTION);
+    if (!label_length || label_length >= sizeof(((ModMenuItem *)0)->label) ||
+        memchr(label, '\0', label_length))
+        return luaL_error(L, "mod menu labels must contain 1..255 non-NUL bytes");
+    if (type == MOD_MENU_SLIDER && (minimum > maximum || value < minimum || value > maximum))
+        return luaL_error(L, "mod menu slider default must be inside its minimum/maximum range");
+    char *file = strdup(sCurrentFile ? sCurrentFile : "main.lua");
+    if (!file) return luaL_error(L, "out of memory storing mod menu source");
+    lua_pushvalue(L, callback_index);
+    int callback_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    pthread_mutex_lock(&sModListMutex);
+    if (mod->menu_item_count >= 256) {
+        pthread_mutex_unlock(&sModListMutex);
+        free(file); luaL_unref(L, LUA_REGISTRYINDEX, callback_ref);
+        return luaL_error(L, "mod '%s' exceeded the 256 item menu limit", mod->name);
+    }
+    if (mod->menu_item_count == mod->menu_item_capacity) {
+        size_t capacity = mod->menu_item_capacity ? mod->menu_item_capacity * 2 : 8;
+        ModMenuItem *items = realloc(mod->menu_items, capacity * sizeof(*items));
+        if (!items) {
+            pthread_mutex_unlock(&sModListMutex);
+            free(file); luaL_unref(L, LUA_REGISTRYINDEX, callback_ref);
+            return luaL_error(L, "out of memory registering mod menu item");
+        }
+        mod->menu_items = items; mod->menu_item_capacity = capacity;
+    }
+    ModMenuItem *item = &mod->menu_items[mod->menu_item_count];
+    memset(item, 0, sizeof(*item));
+    memcpy(item->label, label, label_length); item->label[label_length] = '\0';
+    item->type = type; item->value = value; item->minimum = minimum; item->maximum = maximum;
+    item->file = file;
+    item->callback_ref = callback_ref;
+    lua_Integer item_index = (lua_Integer)mod->menu_item_count;
+    ++mod->menu_item_count;
+    pthread_mutex_unlock(&sModListMutex);
+    lua_pushinteger(L, item_index);
+    return 1;
+}
+
+static int l_hook_mod_menu_button(lua_State *L) {
+    if (!sCurrentMod) return luaL_error(L, "hook_mod_menu_button() must be called while loading a mod");
+    return mod_menu_add(L, sCurrentMod, 1, 2, MOD_MENU_BUTTON, 0, 0, 0);
+}
+
+static int l_hook_mod_menu_checkbox(lua_State *L) {
+    if (!sCurrentMod) return luaL_error(L, "hook_mod_menu_checkbox() must be called while loading a mod");
+    return mod_menu_add(L, sCurrentMod, 1, 3, MOD_MENU_CHECKBOX,
+                        lua_toboolean(L, 2) ? 1 : 0, 0, 1);
+}
+
+static int l_hook_mod_menu_slider(lua_State *L) {
+    if (!sCurrentMod) return luaL_error(L, "hook_mod_menu_slider() must be called while loading a mod");
+    return mod_menu_add(L, sCurrentMod, 1, 5, MOD_MENU_SLIDER,
+                        luaL_checkinteger(L, 2), luaL_checkinteger(L, 3), luaL_checkinteger(L, 4));
+}
+
+static int l_hook_chat_command(lua_State *L) {
+    Mod *mod = sCurrentMod;
+    if (!mod) return luaL_error(L, "hook_chat_command() must be called while loading a mod");
+    size_t name_length = 0, description_length = 0;
+    const char *name = luaL_checklstring(L, 1, &name_length);
+    const char *description = luaL_checklstring(L, 2, &description_length);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    if (!name_length || name_length >= sizeof(((ModCommand *)0)->name) ||
+        description_length >= sizeof(((ModCommand *)0)->description) ||
+        memchr(name, '\0', name_length) || memchr(description, '\0', description_length))
+        return luaL_error(L, "chat command names must be 1..63 bytes and descriptions at most 255 bytes");
+    for (size_t i = 0; i < name_length; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        if (c >= 128 || !(isalnum(c) || c == '-' || c == '_'))
+            return luaL_error(L, "chat command names may contain only ASCII letters, digits, '-' and '_'");
+    }
+    unsigned count = 0;
+    for (ModCommand *at = mod->commands; at; at = at->next) {
+        ++count;
+        if (!strcasecmp(at->name, name)) return luaL_error(L, "mod '%s' registered duplicate chat command '%s'", mod->name, name);
+    }
+    if (count >= MOD_MAX_COMMANDS) return luaL_error(L, "mod '%s' exceeded the chat command limit", mod->name);
+    ModCommand *command = calloc(1, sizeof(*command));
+    if (!command) return luaL_error(L, "out of memory registering chat command");
+    memcpy(command->name, name, name_length); command->name[name_length] = '\0';
+    memcpy(command->description, description, description_length); command->description[description_length] = '\0';
+    command->file = strdup(sCurrentFile ? sCurrentFile : "main.lua");
+    if (!command->file) { free(command); return luaL_error(L, "out of memory storing chat command source"); }
+    lua_pushvalue(L, 3); command->callback_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    command->next = mod->commands; mod->commands = command;
+    return 0;
 }
 
 static int l_global_missing(lua_State *L) {
@@ -1022,6 +1439,7 @@ static void register_api(void) {
     register_metatable("sm64.mod.Vec3f", vector_index, vector_newindex);
     register_metatable("sm64.mod.Vec3s", vector_index, vector_newindex);
     register_metatable("sm64.mod.Object", object_index, object_newindex);
+    register_metatable("sm64.mod.Surface", surface_index, surface_newindex);
     register_api_function("hook_event", l_hook_event);
     register_api_function("allocate_mario_action", l_allocate_mario_action);
     register_api_function("hook_mario_action", l_hook_mario_action);
@@ -1032,6 +1450,15 @@ static void register_api(void) {
     register_api_function("mario_set_forward_vel", l_mario_set_forward_vel);
     register_api_function("set_mario_animation", l_set_mario_animation);
     register_api_function("require", l_mod_require);
+    register_api_function("mod_storage_load", l_mod_storage_load);
+    register_api_function("mod_storage_save", l_mod_storage_save);
+    register_api_function("hook_mod_menu_button", l_hook_mod_menu_button);
+    register_api_function("hook_mod_menu_checkbox", l_hook_mod_menu_checkbox);
+    register_api_function("hook_mod_menu_slider", l_hook_mod_menu_slider);
+    register_api_function("hook_chat_command", l_hook_chat_command);
+    register_api_function("get_current_save_file_num", l_get_current_save_file_num);
+    register_api_function("save_file_get_flags", l_save_file_get_flags);
+    register_api_function("save_file_get_star_flags", l_save_file_get_star_flags);
 
     expose_int("HOOK_UPDATE", HOOK_UPDATE);
     expose_int("HOOK_MARIO_UPDATE", HOOK_MARIO_UPDATE);
@@ -1064,10 +1491,38 @@ static void register_api(void) {
 
 #include "mod_constants.inc"
 
+    /* Level and course identifiers are enums generated from the engine's
+     * authoritative level/course lists, so they are not visible to the
+     * preprocessor-based constant generator. Expose those exact enum values. */
+#define STUB_LEVEL(_name, levelenum, courseenum, ...) \
+    expose_int(#levelenum, levelenum); expose_int(#courseenum, courseenum);
+#define DEFINE_LEVEL(_name, levelenum, courseenum, ...) \
+    expose_int(#levelenum, levelenum); expose_int(#courseenum, courseenum);
+#include "levels/level_defines.h"
+#undef STUB_LEVEL
+#undef DEFINE_LEVEL
+
+#define DEFINE_COURSE(courseenum, _cutscenes) expose_int(#courseenum, courseenum);
+#define DEFINE_COURSES_END()
+#define DEFINE_BONUS_COURSE(courseenum, _cutscenes) expose_int(#courseenum, courseenum);
+#include "levels/course_defines.h"
+#undef DEFINE_COURSE
+#undef DEFINE_COURSES_END
+#undef DEFINE_BONUS_COURSE
+
     lua_newtable(sLua);
     push_mario(sLua); lua_rawseti(sLua, -2, 0);
     lua_setglobal(sLua, "gMarioStates");
     push_mario(sLua); lua_setglobal(sLua, "gMarioState");
+
+    lua_newtable(sLua);
+    lua_newtable(sLua); lua_rawseti(sLua, -2, 0);
+    lua_setglobal(sLua, "gNetworkPlayers");
+    lua_newtable(sLua);
+    lua_newtable(sLua); lua_rawseti(sLua, -2, 0);
+    lua_setglobal(sLua, "gPlayerSyncTable");
+    lua_newtable(sLua); lua_setglobal(sLua, "gGlobalSyncTable");
+    refresh_local_player_tables();
 
     lua_pushglobaltable(sLua);
     lua_newtable(sLua); lua_pushcfunction(sLua, l_global_missing); lua_setfield(sLua, -2, "__index");
@@ -1087,13 +1542,16 @@ static void open_safe_libraries(lua_State *L) {
 }
 
 static bool load_mod(Mod *mod) {
-    if (!mod || mod->loaded || mod->load_failed) return mod && mod->loaded;
+    if (!mod) return false;
+    pthread_mutex_lock(&sModListMutex);
+    bool loaded = mod->loaded;
+    pthread_mutex_unlock(&sModListMutex);
+    if (loaded || mod->load_failed) return loaded;
     if (!mod->file_count) {
         mod->load_failed = true;
         mod_log("warning", mod->name, "mod contains no Lua scripts");
         return false;
     }
-    mod->loaded = true;
     /* CoopDX auto-runs root-level scripts in alphabetical path order. Nested
      * scripts stay available to require(), but are not startup entry points. */
     bool root_mod = !strcmp(mod->path, fs_get_write_path("mods"));
@@ -1103,7 +1561,6 @@ static bool load_mod(Mod *mod) {
         if (relative && !strcmp(relative, "main.lua")) found_main = true;
     }
     if (!found_main) {
-        mod->loaded = false;
         mod->load_failed = true;
         mod_log("warning", mod->name, "mod folder has no root-level main.lua");
         return false;
@@ -1122,6 +1579,9 @@ static bool load_mod(Mod *mod) {
         mod_log("warning", mod->name,
                 "package contains DynOS assets; import preserved them, but this engine has no DynOS actor decoder yet");
     }
+    pthread_mutex_lock(&sModListMutex);
+    mod->loaded = true;
+    pthread_mutex_unlock(&sModListMutex);
     mod_log("info", mod->name, "mod scripts loaded");
     return true;
 }
@@ -1196,7 +1656,20 @@ static void unload_mod(Mod *mod) {
         unref_if_valid(mod->modules->value_ref);
         free(mod->modules->name); free(mod->modules); mod->modules = next;
     }
+    pthread_mutex_lock(&sModListMutex);
+    for (size_t i = 0; i < mod->menu_item_count; ++i) {
+        unref_if_valid(mod->menu_items[i].callback_ref);
+        free(mod->menu_items[i].file);
+    }
+    free(mod->menu_items); mod->menu_items = NULL;
+    mod->menu_item_count = mod->menu_item_capacity = 0;
     mod->loaded = false;
+    pthread_mutex_unlock(&sModListMutex);
+    while (mod->commands) {
+        ModCommand *next = mod->commands->next;
+        unref_if_valid(mod->commands->callback_ref);
+        free(mod->commands->file); free(mod->commands); mod->commands = next;
+    }
 }
 
 static void call_event(int event, int nargs, bool push_mario_state, int extra_ints) {
@@ -1270,6 +1743,40 @@ bool mod_runtime_request_import_zip(const char *zip_path) {
     return enqueue_request(MOD_REQUEST_IMPORT_ZIP, 0, false, zip_path);
 }
 
+bool mod_runtime_request_menu_set_value(int mod_index, int item_index, int64_t value) {
+    if (mod_index < 0 || item_index < 0) return false;
+    ModRuntimeMenuItem item_info;
+    if (!mod_runtime_menu_get_item(mod_index, item_index, &item_info)) return false;
+    if (item_info.type == MOD_RUNTIME_MENU_BUTTON) {
+        if (value != 0) return false;
+    } else if (item_info.type == MOD_RUNTIME_MENU_CHECKBOX) {
+        if (value != 0 && value != 1) return false;
+    } else if (value < item_info.minimum || value > item_info.maximum) return false;
+    ModRequest *request = calloc(1, sizeof(*request));
+    if (!request) return false;
+    request->type = MOD_REQUEST_MENU_VALUE;
+    request->item_index = item_index;
+    request->value = value;
+    pthread_mutex_lock(&sModListMutex);
+    Mod *target = mod_runtime_find_index(mod_index);
+    if (target) snprintf(request->target_name, sizeof(request->target_name), "%s", target->name);
+    pthread_mutex_unlock(&sModListMutex);
+    if (!request->target_name[0]) { free(request); return false; }
+    pthread_mutex_lock(&sRequestMutex);
+    unsigned count = 0;
+    for (ModRequest *at = sRequestHead; at; at = at->next) ++count;
+    if (count >= 64) {
+        pthread_mutex_unlock(&sRequestMutex);
+        free(request);
+        return false;
+    }
+    if (sRequestTail) sRequestTail->next = request;
+    else sRequestHead = request;
+    sRequestTail = request;
+    pthread_mutex_unlock(&sRequestMutex);
+    return true;
+}
+
 static void process_requests(void) {
     for (;;) {
         pthread_mutex_lock(&sRequestMutex);
@@ -1317,6 +1824,14 @@ static void process_requests(void) {
             else if (ok) mod_logf("info", NULL, "imported mod archive: %s", installed);
             else mod_logf("error", NULL, "mod archive import failed: %s", error);
             unlink(request->path);
+        } else if (request->type == MOD_REQUEST_MENU_VALUE) {
+            Mod *target = find_mod(request->target_name);
+            if (target) {
+                int index = 0;
+                for (Mod *at = sMods; at && at != target; at = at->next) ++index;
+                if (index < mod_runtime_mod_count())
+                    ok = mod_runtime_menu_set_value(index, request->item_index, request->value);
+            }
         }
         if (!ok && request->type != MOD_REQUEST_IMPORT_ZIP)
             mod_log("warning", NULL, "queued mod management request could not be applied");
@@ -1357,6 +1872,19 @@ void mod_runtime_before_set_action(struct MarioState *m, uint32_t *action, uint3
 
 void mod_runtime_after_set_action(struct MarioState *m) {
     (void)m; call_event(HOOK_ON_SET_MARIO_ACTION, 1, true, 0);
+}
+
+void mod_runtime_on_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type, bool interacted) {
+    if (!sLua || !m || !obj) return;
+    for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
+        if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_ON_INTERACT) continue;
+        push_mario(sLua); push_object(sLua, obj);
+        lua_pushinteger(sLua, (lua_Integer)interact_type);
+        lua_pushboolean(sLua, interacted);
+        if (!call_ref(hook->owner, hook->file, hook->function_ref, "HOOK_ON_INTERACT", 4, 0)) {
+            hook->enabled = false; release_ref(&hook->function_ref);
+        }
+    }
 }
 
 bool mod_runtime_mario_action(struct MarioState *m, int *in_loop) {
@@ -1477,6 +2005,95 @@ bool mod_runtime_mod_enabled(int index) {
     return enabled;
 }
 
+static Mod *mod_runtime_find_index(int index) {
+    if (index < 0) return NULL;
+    for (Mod *mod = sMods; mod; mod = mod->next) if (!index--) return mod;
+    return NULL;
+}
+
+int mod_runtime_menu_item_count(int mod_index) {
+    pthread_mutex_lock(&sModListMutex);
+    Mod *mod = mod_runtime_find_index(mod_index);
+    int count = mod && mod->loaded && mod->enabled ? (int)mod->menu_item_count : 0;
+    pthread_mutex_unlock(&sModListMutex);
+    return count;
+}
+
+bool mod_runtime_menu_get_item(int mod_index, int item_index, ModRuntimeMenuItem *out) {
+    if (!out || item_index < 0) return false;
+    pthread_mutex_lock(&sModListMutex);
+    Mod *mod = mod_runtime_find_index(mod_index);
+    bool valid = mod && mod->loaded && mod->enabled && (size_t)item_index < mod->menu_item_count;
+    if (valid) {
+        const ModMenuItem *item = &mod->menu_items[item_index];
+        out->type = item->type;
+        snprintf(out->label, sizeof(out->label), "%s", item->label);
+        out->value = item->value;
+        out->minimum = item->minimum;
+        out->maximum = item->maximum;
+    }
+    pthread_mutex_unlock(&sModListMutex);
+    return valid;
+}
+
+bool mod_runtime_menu_set_value(int mod_index, int item_index, int64_t value) {
+    if (!sLua || item_index < 0) return false;
+    char file[SYS_MAX_PATH];
+    ModMenuItem snapshot;
+    pthread_mutex_lock(&sModListMutex);
+    Mod *mod = mod_runtime_find_index(mod_index);
+    if (!mod || !mod->enabled || !mod->loaded || (size_t)item_index >= mod->menu_item_count) {
+        pthread_mutex_unlock(&sModListMutex);
+        return false;
+    }
+    ModMenuItem *item = &mod->menu_items[item_index];
+    if (item->type == MOD_MENU_BUTTON) {
+        if (value != 0) { pthread_mutex_unlock(&sModListMutex); return false; }
+    } else if (item->type == MOD_MENU_CHECKBOX) {
+        if (value != 0 && value != 1) { pthread_mutex_unlock(&sModListMutex); return false; }
+        item->value = value;
+    } else {
+        if (value < item->minimum || value > item->maximum) { pthread_mutex_unlock(&sModListMutex); return false; }
+        item->value = value;
+    }
+    snapshot = *item;
+    snprintf(file, sizeof(file), "%s", item->file ? item->file : "main.lua");
+    pthread_mutex_unlock(&sModListMutex);
+    lua_pushinteger(sLua, item_index);
+    int nargs = 1;
+    if (snapshot.type != MOD_MENU_BUTTON) {
+        if (snapshot.type == MOD_MENU_CHECKBOX) lua_pushboolean(sLua, value != 0);
+        else lua_pushinteger(sLua, (lua_Integer)value);
+        ++nargs;
+    }
+    if (call_ref(mod, file, snapshot.callback_ref, "mod menu callback", nargs, 0)) return true;
+    pthread_mutex_lock(&sModListMutex);
+    if ((size_t)item_index < mod->menu_item_count && mod->menu_items[item_index].callback_ref == snapshot.callback_ref)
+        release_ref(&mod->menu_items[item_index].callback_ref);
+    pthread_mutex_unlock(&sModListMutex);
+    return false;
+}
+
+bool mod_runtime_dispatch_chat_command(const char *name, const char *message) {
+    if (!sLua || !name) return false;
+    for (Mod *mod = sMods; mod; mod = mod->next) {
+        if (!mod->enabled || !mod->loaded) continue;
+        for (ModCommand *command = mod->commands; command; command = command->next) {
+            if (strcasecmp(command->name, name)) continue;
+            if (command->callback_ref == LUA_NOREF) continue;
+            lua_pushstring(sLua, message ? message : "");
+            if (!call_ref(mod, command->file, command->callback_ref, "hook_chat_command", 1, 1)) {
+                release_ref(&command->callback_ref);
+                continue;
+            }
+            bool handled = lua_toboolean(sLua, -1);
+            lua_pop(sLua, 1);
+            if (handled) return true;
+        }
+    }
+    return false;
+}
+
 bool mod_runtime_set_enabled(int index, bool enabled) {
     if (index < 0) return false;
     for (Mod *mod = sMods; mod; mod = mod->next) if (!index--) {
@@ -1593,6 +2210,7 @@ void mod_runtime_shutdown(void) {
     lua_close(sLua); sLua = NULL;
     for (Mod *mod = sMods; mod;) {
         Mod *next = mod->next; free_string_list(mod->files, mod->file_count);
+        mod_storage_free_entries(mod);
         free(mod); mod = next;
     }
     sMods = NULL; sHooks = NULL; sActions = NULL; sBehaviors = NULL;

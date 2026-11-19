@@ -12,6 +12,10 @@
 #include <math.h>
 
 #if TARGET_OS_IOS
+@interface CoopDXModOptionsViewController : UITableViewController
+@property(nonatomic) NSInteger modIndex;
+@end
+
 @interface CoopDXModManagerViewController : UITableViewController <UIDocumentPickerDelegate>
 @end
 
@@ -124,6 +128,75 @@
         message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section != 0) return;
+    CoopDXModOptionsViewController *options = [[CoopDXModOptionsViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    options.modIndex = indexPath.row;
+    options.title = [NSString stringWithUTF8String:mod_runtime_mod_name((int)indexPath.row) ?: "Mod options"];
+    [self.navigationController pushViewController:options animated:YES];
+}
+@end
+
+@implementation CoopDXModOptionsViewController
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
+}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView; (void)section;
+    return mod_runtime_menu_item_count((int)self.modIndex);
+}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView;
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    ModRuntimeMenuItem item;
+    if (!mod_runtime_menu_get_item((int)self.modIndex, (int)indexPath.row, &item)) {
+        cell.textLabel.text = @"Unavailable";
+        return cell;
+    }
+    cell.textLabel.text = [NSString stringWithUTF8String:item.label];
+    if (item.type == MOD_RUNTIME_MENU_CHECKBOX) {
+        UISwitch *toggle = [[UISwitch alloc] init];
+        toggle.tag = indexPath.row;
+        toggle.on = item.value != 0;
+        [toggle addTarget:self action:@selector(menuSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else if (item.type == MOD_RUNTIME_MENU_SLIDER) {
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"%lld (%lld–%lld)",
+            (long long)item.value, (long long)item.minimum, (long long)item.maximum];
+        UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 150, 32)];
+        slider.tag = indexPath.row;
+        slider.minimumValue = (float)item.minimum;
+        slider.maximumValue = (float)item.maximum;
+        slider.value = (float)item.value;
+        slider.continuous = NO;
+        [slider addTarget:self action:@selector(menuSliderChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = slider;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else {
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    }
+    return cell;
+}
+- (void)menuSwitchChanged:(UISwitch *)sender {
+    if (!mod_runtime_request_menu_set_value((int)self.modIndex, (int)sender.tag, sender.isOn ? 1 : 0))
+        sender.on = !sender.isOn;
+}
+- (void)menuSliderChanged:(UISlider *)sender {
+    int64_t value = (int64_t)llroundf(sender.value);
+    if (!mod_runtime_request_menu_set_value((int)self.modIndex, (int)sender.tag, value))
+        [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:sender.tag inSection:0]] withRowAnimation:UITableViewRowAnimationNone];
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    ModRuntimeMenuItem item;
+    if (mod_runtime_menu_get_item((int)self.modIndex, (int)indexPath.row, &item) &&
+        item.type == MOD_RUNTIME_MENU_BUTTON &&
+        !mod_runtime_request_menu_set_value((int)self.modIndex, (int)indexPath.row, 0))
+        [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
 }
 @end
 #endif

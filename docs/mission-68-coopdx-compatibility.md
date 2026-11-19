@@ -2,7 +2,7 @@
 
 ## Status
 
-This worktree is based on `a173f28b6130e58982c6d427f2bbbb7fabbc238e` on the isolated `mission-68` branch. It is not integrated with Mission 67. The code currently provides an initial Lua compatibility core and a bounded ZIP importer. It does **not** run general existing SM64CoopDX mods unchanged yet.
+This worktree is based on `a173f28b6130e58982c6d427f2bbbb7fabbc238e` on the isolated `mission-68` branch. It is not integrated with Mission 67. A real, unmodified MIT-licensed SM64CoopDX release ZIP now imports and executes a supported Mario event and per-mod persistence path in the host runtime. This is a partial compatibility result, not general mod compatibility: unsupported APIs still prevent substantial features of that same mod from working.
 
 DynOS is a major compatibility milestone and a release gate. ZIP recognition and retention are only the import stage; packs are intentionally shown as inactive until the native engine can load and render their content.
 
@@ -19,21 +19,23 @@ The importer in this branch accepts both source and Lua 5.3 bytecode, validates 
 | Mod discovery and deterministic startup | Adapted | Discovers sandbox folders and sorts by directory name. Auto-runs only root-level `.lua`/`.luac` files in lexical path order; nested scripts remain available to `require()`. Directory mods require root-level `main.lua`. A failing root startup script tears down that mod's registrations and disables it. It does not yet parse upstream name/category/incompatibility metadata or resolve dependencies. |
 | Lua source / bytecode | Adapted | Embedded PUC Lua 5.3.5; source and compatible Lua 5.3 bytecode are accepted. LuaJIT sources are vendored for evaluation but are not part of the game build. |
 | Per-mod globals and `require` | Adapted | Per-mod environment and module cache; slash paths resolve relative to the script that calls `require`, including callbacks. `.` and `..` are normalized while preventing escape above the mod root. No arbitrary path, package loader, or native module access. |
-| `hook_event` | Partial | Supports `HOOK_UPDATE`, `HOOK_BEFORE_MARIO_UPDATE`, `HOOK_MARIO_UPDATE`, `HOOK_ON_SET_MARIO_ACTION`, `HOOK_BEFORE_SET_MARIO_ACTION`, `HOOK_ON_HUD_RENDER`, `HOOK_ON_LEVEL_INIT`, and `HOOK_ON_EXIT`. Other CoopDX event IDs throw an explicit unsupported-capability error. |
+| `hook_event` | Partial | Supports `HOOK_UPDATE`, `HOOK_BEFORE_MARIO_UPDATE`, `HOOK_MARIO_UPDATE`, `HOOK_ON_SET_MARIO_ACTION`, `HOOK_BEFORE_SET_MARIO_ACTION`, `HOOK_ON_HUD_RENDER`, `HOOK_ON_INTERACT`, `HOOK_ON_LEVEL_INIT`, and `HOOK_ON_EXIT`. `HOOK_ALLOW_INTERACT` and other CoopDX event IDs throw an explicit unsupported-capability error. `HOOK_ON_INTERACT` is connected to the native interaction path. |
 | `hook_mario_action` | Partial | Custom actions use a reserved native action-ID range and can supply `every_frame` and `gravity` callbacks. IDs are owned per mod and released on unload. Broader Mario physics interception is absent. |
-| Mario state | Partial | Bounded fields and vectors are exposed via checked userdata. Unsupported fields throw instead of returning dummy values. This is one local player only. |
+| Mario state | Partial | Bounded fields and vectors are exposed via checked userdata. A detached, read-only `floor` surface snapshot exposes selected fields. Unsupported fields throw instead of returning dummy values. This is one local player only. |
 | Controller input | Partial | Read-only controller fields are available through the Mario state adapter. Touch/controller translation remains in the native input path. CoopDX's full controller arrays and multiplayer player indexing are absent. |
 | `hook_behavior` | Partial | New local scripted behaviors can be registered and attached to locally spawned objects. Replacing native behavior IDs is rejected. No synchronization or complete behavior command API. |
 | Object spawning and lifecycle | Partial | Local objects use native spawn helpers, engine behavior lists, and owner cleanup. Only native model IDs are accepted. DynOS IDs are rejected. Object properties outside the allowlist fail explicitly. |
 | Animation registration | Unsupported | Native animation playback by existing ID is available; importing or registering custom animation data is not. |
 | Model registration | Unsupported | Existing native model IDs work. Dynamic model tables, actor parsing, custom geometry, and model symbol lookup are not implemented. |
 | Texture registration / overrides | Unsupported | No `.tex` or actor texture decoder/registration path. The ZIP importer retains files only. |
-| Sound registration / playback APIs | Unsupported | No custom sound bank decoder or CoopDX sound API bindings. |
+| Sound registration / playback APIs | Unsupported | No custom sound bank decoder, `play_sound`, DJUI sound API, or CoopDX sound registration bindings. Relevant constants can be read, but that does not play audio. |
 | Character Select | Unsupported | No CoopDX character registry, character metadata, model/animation binding, or selection screen integration. |
 | HUD and rendering | Partial / unsupported | `HOOK_ON_HUD_RENDER` can run. CoopDX DJUI drawing, text, textures, and render-state APIs are not bound. |
-| ModFS and persisted per-mod data | Unsupported | No `mod_fs_*` or storage bindings. `io`, `os`, `package`, and `debug` libraries are excluded; `dofile` and `loadfile` are disabled. |
+| ModFS and persisted per-mod data | Partial | `mod_storage_load` / `mod_storage_save` support bounded string keys and values in an app-owned, per-mod file. Writes use temp-file replacement; entries, key/value sizes, and total storage are bounded. The broader `mod_fs_*` API and typed storage helpers are unsupported. `io`, `os`, `package`, and `debug` libraries are excluded; `dofile` and `loadfile` are disabled. |
+| Mod menu | Partial | `hook_mod_menu_button`, `hook_mod_menu_checkbox`, and `hook_mod_menu_slider` register bounded callbacks. The iOS Cheats / Mods UI presents these controls and dispatches changes onto the game thread. `hook_mod_menu_text` and `hook_mod_menu_inputbox` are unsupported. |
+| Chat commands | Partial | `hook_chat_command` records isolated callbacks and the runtime can dispatch a named local command. The game has no chat UI/command entry path, so players cannot invoke these through native UI. |
 | Dependency/load ordering | Partial | Stable lexical ordering only. Dependency declarations, version constraints, conflict resolution, and upstream enable semantics are not implemented. |
-| Multiplayer sync / networking | Unsupported | Network tables, synchronized objects, remote players, lobby integration, and cross-client asset negotiation are unavailable. |
+| Multiplayer sync / networking | Unsupported | `gPlayerSyncTable`, `gGlobalSyncTable`, `gNetworkPlayers[0]`, and `playerIndex=0` are local adapters only. They are not replicated and do not model multiplayer. Remote players, lobby integration, and cross-client asset negotiation are unavailable. |
 | ZIP import | Partial | Sandboxed extraction with path, count, size, ratio, collision, symlink, and CRC checks. No automatic dependency install, signature validation, or upstream metadata processing. |
 
 ## DynOS: major compatibility milestone
@@ -76,8 +78,39 @@ ZIP import is bounded to 128 MiB compressed archive, 1,024 entries, 64 MiB per e
 
 ## Synthetic regression coverage
 
-`tests/mods/run_host_tests.sh` covers sorted discovery, slash-based and callback-relative Lua `require`, per-mod module-cache isolation, source and PUC Lua 5.3 bytecode loading, hook dispatch, Mario/controller bindings, custom actions and gravity, object behavior/spawning, callback errors, startup-failure cleanup, enable/disable, multiple mods, coroutine instruction limits, and read-only DynOS asset inventory. `tests/mods/run_zip_import_tests.sh` covers mixed Lua/DynOS import, DynOS-only classification, traversal rejection, and path collision rejection. These are framework tests, not proof that existing third-party mods work.
+`tests/mods/run_host_tests.sh` covers sorted discovery, slash-based and callback-relative Lua `require`, per-mod module-cache isolation, source and PUC Lua 5.3 bytecode loading, hook dispatch, Mario/controller bindings, custom actions and gravity, object behavior/spawning, callback errors, startup-failure cleanup, enable/disable, multiple mods, coroutine instruction limits, and read-only DynOS asset inventory. `tests/mods/run_zip_import_tests.sh` covers mixed Lua/DynOS import, DynOS-only classification, traversal rejection, and path collision rejection.
+
+### Unmodified real ZIP: SM64 Coop Achievements 2.1.0
+
+The original archive and its source, license, and checksum are recorded in [`tests/mods/real/README.md`](../tests/mods/real/README.md). The test imports the exact release ZIP with the production extractor; it does not rewrite Lua files. Host results:
+
+- ZIP path validation and extraction: pass.
+- Root Lua startup: pass; 11 mod-menu entries register.
+- Cheats / Mods menu slider callback: pass through the queued game-thread update.
+- `HOOK_MARIO_UPDATE`: pass; with a host-provided one-star Mario state, repeated event dispatch unlocks and persists the mod's “First Star!” record through `mod_storage_save`.
+- Unsupported calls are explicit: dispatching its sound and HUD hooks logs `unsupported CoopDX API 'play_sound'` and `unsupported CoopDX API 'djui_hud_set_resolution'`. Those callbacks are disabled; the mod itself remains enabled and the runtime continues.
+- Disable, re-enable, runtime shutdown, and reinitialization: pass; the mod re-registers and reads the persisted record.
+- This is host-runtime behavior using the native importer and compatibility layer, with a test-supplied Mario state and explicit event dispatch. It is not an iPhone test or an end-to-end interactive game session.
+- The same original mod also asks for `get_texture_info`, `play_sound`, DJUI HUD drawing, pause-state, and mouse-input APIs. Those capabilities are missing; HUD callbacks fail with diagnostics and are isolated. Its achievement visuals, sounds, and complete gallery/pause UI therefore do not work here.
+
+These tests establish one real mod's supported gameplay behavior, not overall CoopDX parity. They do not validate every function in the ZIP or any DynOS assets.
+
+## Integration assessment against the latest unified gameplay branch
+
+Compared with remote `mission-67h2-fast3d-trace` at `a908d84cef8f876db9fbc3ea44947c8e7324f1ab`. Both it and Mission 68 descend from `a173f28b6130e58982c6d427f2bbbb7fabbc238e`; they have diverged, and the gameplay branch has fourteen commits after that base. No files in Sol's worktree were changed by this audit.
+
+The main overlap points are `.github/workflows/ios-metal-ipa.yml`, `Makefile`, `ios/build_ios_metal_ci.sh`, `src/game/level_update.c`, `src/pc/fs/fs.h`, `src/pc/pc_main.m`, and `tests/run_linux_checks.sh`. These files changed on both branches. `sm64ios.xcodeproj/project.pbxproj`, `sm64ios/Info.plist`, WSC2/world-scene files, Metal rendering, branding, and diagnostic-room work are present on the gameplay branch; Mission 68's older snapshots of shared build/engine files must not replace them. `src/ios/CheatsViewController.m` is a separate Mission 68 UI addition, but should be reconciled with the current branded UIKit navigation and manager lifecycle.
+
+Recommended integration sequence:
+
+1. Start a dedicated integration branch from the current verified gameplay branch, preserving its app identity, WSC2 diagnostic, renderer, scene runtime, and native gameplay code.
+2. Cherry-pick Mission 68's compatibility commit onto that branch. Resolve shared build/CI and filesystem files by applying only the Lua runtime source-list, ZIP import, and game-thread request changes to the gameplay branch's current versions.
+3. Reconcile `level_update.c`, `pc_main.m`, and `CheatsViewController.m` so Lua callbacks attach to the active game loop and menu lifecycle without replacing native Cappy, SuperSlide, Bowser/Yoshi, cheats, or WSC2 paths.
+4. Run Linux tests, host real-ZIP tests, sanitizers, and `tests/check_metal_project_wiring.sh`; dispatch the Apple `compile_only` workflow against the integration branch. Build a private unsigned IPA only after that Apple build succeeds.
+5. Test the private build on an iPhone, then repeat enable/disable, resource cleanup, scene diagnostics, and native gameplay regressions before considering a merge.
+
+This is an integration plan only. Mission 68 remains unmerged. Re-check conflicts against the exact gameplay commit selected for integration because the active Mission 67 work can advance.
 
 ## Handoff to Astra
 
-Review this branch as an incomplete compatibility foundation. Keep it isolated from Mission 67. DynOS D1–D6, broader CoopDX API parity, real unmodified mod packages, full dependency semantics, and iOS toolchain/device validation remain integration blockers. Do not merge or distribute a build based on this status.
+Mission 68 now includes one legally redistributable, unmodified CoopDX release ZIP with a passing host execution path for Mario events, mod storage, and the native mod menu. It remains partial compatibility: the fixture's HUD, sound, chat UI, texture APIs, complete pause/gallery behavior, and broader dependency semantics are unsupported. DynOS D1–D6 remain inactive/unimplemented. iOS arm64 compilation, private IPA creation, and physical iPhone execution are still unverified. Keep the branch independent from Mission 67 until the integration sequence above passes.

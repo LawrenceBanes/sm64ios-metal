@@ -7,10 +7,14 @@ trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
 
 LUA_SRC="$ROOT/vendor/lua53/src"
 cp -R "$ROOT/tests/mods/fixtures" "$BUILD/fixtures"
-cc -std=gnu99 -O1 -g -DNON_MATCHING=1 -DAVOID_UB=1 \
+# MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
+# host fixture can be run with sanitizers without changing its build command.
+${CC:-cc} -std=gnu99 -O1 -g ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_REAL_ZIP \
+  -DNON_MATCHING=1 -DAVOID_UB=1 \
   -I"$ROOT/include" -I"$ROOT/src" -I"$ROOT" -I"$LUA_SRC" \
   "$ROOT/tests/mods/host_runtime_test.c" \
   "$ROOT/src/pc/mods/mod_runtime.c" \
+  "$ROOT/src/pc/fs/fs_packtype_zip.c" "$ROOT/src/pc/fs/dirtree.c" \
   "$LUA_SRC/lapi.c" "$LUA_SRC/lcode.c" "$LUA_SRC/lctype.c" "$LUA_SRC/ldebug.c" \
   "$LUA_SRC/ldo.c" "$LUA_SRC/ldump.c" "$LUA_SRC/lfunc.c" "$LUA_SRC/lgc.c" \
   "$LUA_SRC/llex.c" "$LUA_SRC/lmem.c" "$LUA_SRC/lobject.c" "$LUA_SRC/lopcodes.c" \
@@ -21,3 +25,9 @@ cc -std=gnu99 -O1 -g -DNON_MATCHING=1 -DAVOID_UB=1 \
   -lm -o "$BUILD/mod_runtime_test"
 
 "$BUILD/mod_runtime_test" "$BUILD/fixtures"
+printf '%s  %s\n' \
+  7001744cb4023be31460960a0e4ff060f4311f573ccdac880564deb532617a3d \
+  "$ROOT/tests/mods/real/sm64coop-achievements-2.1.0.zip" | sha256sum -c -
+mkdir -p "$BUILD/real-mod"
+"$BUILD/mod_runtime_test" --real-zip "$BUILD/real-mod" \
+  "$ROOT/tests/mods/real/sm64coop-achievements-2.1.0.zip"
