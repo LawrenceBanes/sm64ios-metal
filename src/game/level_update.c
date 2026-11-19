@@ -1028,12 +1028,13 @@ static void apply_scene_diagnostic_request(void) {
     }
     if (request == SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD) {
         scene_diagnostic_check_failed_load();
-    } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA) {
+    } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA || request == SCENE_DIAGNOSTIC_TOGGLE_WSC3) {
         if (mario_ios_is_riding_yoshi(gMarioState) || mario_ios_is_driving_kart(gMarioState)) {
             gfx_ios_diag_log("WSC2 warp ignored: dismount before changing area");
             return;
         }
-        s16 destination = gCurrentArea->index == SCENE_DIAGNOSTIC_AREA ? 1 : SCENE_DIAGNOSTIC_AREA;
+        s16 sceneArea = request == SCENE_DIAGNOSTIC_TOGGLE_WSC3 ? SCENE_DIAGNOSTIC_WSC3_AREA : SCENE_DIAGNOSTIC_AREA;
+        s16 destination = gCurrentArea->index == sceneArea ? 1 : sceneArea;
         initiate_warp(LEVEL_CASTLE_GROUNDS, destination, SCENE_DIAGNOSTIC_NODE, 0);
     }
 }

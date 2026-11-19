@@ -32,9 +32,17 @@ enum {
 #define SHADER_OPT_NOISE (1 << 27)
 #define SHADER_OPT_ALPHA_ONE (1 << 28)
 
+#define SHADER_OPT_SCENE_MATERIAL (1u << 29)
+#define SHADER_SCENE_TEX0 1u
+#define SHADER_SCENE_TEX1 2u
+#define SHADER_SCENE_CUTOUT 4u
+#define SHADER_SCENE_BLEND 8u
+
 struct CCFeatures {
     uint8_t c[2][4];
     bool opt_alpha;
+    bool scene_material;
+    bool scene_blend;
     bool opt_fog;
     bool opt_texture_edge;
     bool opt_noise;

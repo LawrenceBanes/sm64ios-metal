@@ -78,5 +78,9 @@ int main(int argc, char **argv) {
            emit_shader_id(argv[1], "device_failure_00000045", 0x00000045u) &&
            emit_shader_id(argv[1], "device_failure_00000200", 0x00000200u) &&
            emit_shader_id(argv[1], "device_failure_01200a00", 0x01200a00u) &&
+           emit_shader_id(argv[1], "wsc3_dual_blend", SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX0 |
+                                                        SHADER_SCENE_TEX1 | SHADER_SCENE_BLEND) &&
+           emit_shader_id(argv[1], "wsc3_dual_cutout", SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX0 |
+                                                         SHADER_SCENE_TEX1 | SHADER_SCENE_CUTOUT) &&
            emit_present_shader(argv[1]) ? 0 : 1;
 }

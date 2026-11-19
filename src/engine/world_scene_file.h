@@ -11,6 +11,28 @@
 #define WORLD_SCENE_GFX_TAG 0xd6730001u
 #define WORLD_SCENE_STATE_OPCODE (((u32)G_NOOP << 24) | 0x673002u)
 
+#define WORLD_SCENE_MATERIAL_OPCODE (((u32)G_NOOP << 24) | 0x673003u)
+
+enum WorldSceneMaterialFlags {
+    WORLD_SCENE_DEPTH_TEST = 1, WORLD_SCENE_DEPTH_WRITE = 2,
+    WORLD_SCENE_CUTOUT = 4, WORLD_SCENE_BACK_CULL = 8, WORLD_SCENE_BLEND = 16,
+};
+
+struct WorldSceneTexture {
+    char name[96];
+    u16 width, height;
+    s16 scale[2], origin[2], scroll[2];
+    u8 address[2], filter;
+};
+
+struct WorldSceneMaterial {
+    struct WorldSceneTexture texture[2];
+    u8 flags, primitive[4], environment[4], alphaPeak;
+    u16 alphaPeriod;
+};
+
+bool gfx_supports_scene_materials(void);
+
 struct WorldSceneDrawState {
     s16 scrollS, scrollT; /* 1/32 texel per rendered frame */
     u8 tint[4];           /* multiplier for vertex RGBA */

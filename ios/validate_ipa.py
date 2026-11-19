@@ -123,14 +123,19 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
     try:
         scene = resource_pack.read(prefix + "scenes/4098.wsc")
         invalid = resource_pack.read(prefix + "scenes/4294967294.wsc")
+        wsc3 = resource_pack.read(prefix + "scenes/4099.wsc")
         textures = [resource_pack.read(prefix + f"gfx/scenes/67f-ci{bits}.rgba16.png") for bits in (4, 8)]
+        textures.extend(resource_pack.read(prefix + f"gfx/scenes/wsc3-{name}.rgba16.png")
+                        for name in ("grid", "wave"))
     except KeyError as exc:
-        raise ValueError("WSC2 diagnostic resource missing from base.zip") from exc
+        raise ValueError("WSC2/WSC3 diagnostic resource missing from base.zip") from exc
     if len(scene) <= 14 or scene[:8] != struct.pack("<4sI", b"WSC2", 4098) or invalid != b"WSC2":
         raise ValueError("incorrect WSC2 diagnostic package or failed-load probe")
+    if len(wsc3) <= 14 or wsc3[:8] != struct.pack("<4sI", b"WSC3", 4099):
+        raise ValueError("incorrect WSC3 diagnostic package")
     for png in textures:
         if not png.startswith(b"\x89PNG\r\n\x1a\n") or png[12:29] != struct.pack(">4sIIBBBBB", b"IHDR", 16, 16, 8, 6, 0, 0, 0):
-            raise ValueError("WSC2 diagnostic textures must be 16x16 RGBA PNGs")
+            raise ValueError("WSC2/WSC3 diagnostic textures must be 16x16 RGBA PNGs")
 
 
 def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bool = False,
@@ -171,7 +176,7 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
             except zipfile.BadZipFile as exc:
                 raise ValueError("app resource pack is corrupt") from exc
         elif require_scene_diagnostic:
-            raise ValueError("WSC2 diagnostic IPA is missing res/base.zip")
+            raise ValueError("WSC diagnostic IPA is missing res/base.zip")
         info_path = app + "Info.plist"
         try:
             info = plistlib.loads(ipa.read(info_path))
@@ -290,7 +295,7 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
         print(f"runtime resource pack file entries: {resource_pack_file_count}")
     print("build intermediates: 0")
     if require_scene_diagnostic:
-        print("WSC2 diagnostic resources: room, CI4/CI8 PNGs, and failed-load probe present")
+        print("WSC diagnostic resources: WSC2/WSC3 rooms, textures, and failed-load probe present")
     print("signature: unsigned structure check only; SideStore signing and device launch remain unverified")
 
 
@@ -299,7 +304,7 @@ def main() -> None:
     parser.add_argument("ipa")
     parser.add_argument("--require-system-deps", action="store_true", help="inspect linked dylibs with Apple's otool")
     parser.add_argument("--require-game-textures", action="store_true", help="require original Castle, Battlefield, and Goomba PNGs in res/base.zip")
-    parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2 diagnostic resources in res/base.zip")
+    parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2/WSC3 diagnostic resources in res/base.zip")
     parser.add_argument("--require-shitbox-identity", action="store_true", help="verify the SHITBOX LABZ INC. name, bundle ID, and release versions")
     args = parser.parse_args()
     validate(args.ipa, args.require_system_deps, args.require_game_textures,

@@ -211,7 +211,7 @@ build_full_game() {
     echo "iOS hat movement compile flag: $hat_movement"
     echo "iOS connected world compile flag: $connected_world"
     echo "iOS O2R scene runtime compile flag: $scene_runtime"
-    echo "iOS WSC2 scene diagnostic compile flag: $scene_diagnostic"
+    echo "iOS WSC2/WSC3 scene diagnostic compile flag: $scene_diagnostic"
     if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
         IOS_HYRULE_WORLD="${IOS_HYRULE_WORLD:-0}" IOS_HYRULE_GATE_DIAGNOSTICS="${IOS_HYRULE_GATE_DIAGNOSTICS:-0}" IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
         IOS_HAT_MOVEMENT="$hat_movement" IOS_CONNECTED_WORLD="$connected_world" IOS_O2R_SCENE_RUNTIME="$scene_runtime" \
@@ -242,7 +242,7 @@ build_full_game() {
         return 1
     fi
     local validation_counts release_label
-    validation_counts=$(grep -E '^(bundle|app release|app bundle file entries|runtime resource pack file entries|build intermediates|WSC2 diagnostic resources):' \
+    validation_counts=$(grep -E '^(bundle|app release|app bundle file entries|runtime resource pack file entries|build intermediates|WSC diagnostic resources):' \
         "$private_dir/ipa-validation.log")
     release_label=$(sed -n 's/^app release: //p' "$private_dir/ipa-validation.log")
     local digest

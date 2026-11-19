@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the original Mission 67F room and its private-build pack manifest."""
+"""Generate the original WSC2 and WSC3 diagnostic rooms and its private-build pack manifest."""
 import argparse
 from pathlib import Path
 import re
@@ -13,7 +13,7 @@ else:
 def build_config():
     header = Path(__file__).resolve().parents[1] / "include/scene_diagnostic.h"
     config = dict(re.findall(r'^#define SCENE_DIAGNOSTIC_(\w+) (.+)$', header.read_text(), re.M))
-    return int(config["PACKAGE"]), int(config["INVALID_PACKAGE"]), config["DIRECTORY"].strip('"')
+    return int(config["PACKAGE"]), int(config["WSC3_PACKAGE"]), int(config["INVALID_PACKAGE"]), config["DIRECTORY"].strip('"')
 
 
 def quad(points, color=(255, 255, 255, 255), uv_max=(0, 0)):
@@ -75,20 +75,56 @@ def authored_scene(scene_id):
                             states=[dict(scroll=[19, 0]), dict(tint=[87, 226, 255, 220])])])
 
 
-def generate(output):
-    scene_id, invalid_id, prefix = build_config()
+def authored_wsc3_scene(scene_id):
     scene = authored_scene(scene_id)
+    scene["version"] = 3
+    room = scene["rooms"][0]
+    room.pop("states")
+    # Reuse the original walkable diagnostic floor and author the panels
+    # independently of the WSC2 material batches.
+    floor = room["batches"][0]["render_vertices"][:-12]
+    grid = indexed("grid", 4, ("rgba5551", "10ff2f3f6fffbeff"),
+                   lambda x, y: (x // 2 + y // 4) % 4)
+    wave = indexed("wave", 8, ("ia88", "9040cc96ffe47000"),
+                   lambda x, y: ((x - y) // 3) % 4)
+    for image, name in zip((grid, wave), ("grid", "wave")):
+        image["name"] = f"scenes/wsc3-{name}.rgba16"
+    scene["indexed_textures"] = [grid, wave]
+    tex0, tex1 = [{key: image[key] for key in ("name", "width", "height")} for image in (grid, wave)]
+    dual = {
+        "textures": [{**tex0, "address": ["repeat", "clamp"], "scroll": [17, 0]},
+                     {**tex1, "address": ["mirror", "repeat"], "scale": [128, 384],
+                      "origin": [96, -128], "scroll": [-13, 9], "filter": "three_point"}],
+        "environment": [255, 245, 237, 24], "alpha_peak": 233, "alpha_period": 180,
+    }
+    floor.extend(panel(150, 1030, 100, 580, -730, color=(219, 115, 54, 255)))
+    room["batches"] = [
+        {"render_vertices": floor, "material": {}},
+        {"render_vertices": panel(-1080, -95, 115, 590, -790, uv_max=(2304, 1280)), "material": dual},
+        {"render_vertices": panel(205, 825, 125, 475, -690, uv_max=(1550, 1170)),
+         "material": {**dual, "cutout": True}},
+        {"render_vertices": panel(360, 1110, 240, 670, -590, uv_max=(1580, 1440)), "pass": "translucent",
+         "material": {**dual, "primitive": [175, 255, 238, 158]}},
+    ]
+    return scene
+
+
+def generate(output):
+    scene_id, wsc3_id, invalid_id, prefix = build_config()
+    scenes = [authored_scene(scene_id), authored_wsc3_scene(wsc3_id)]
     scene_dir = output / "scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
-    good_path = f"scenes/{scene_id}.wsc"
     bad_path = f"scenes/{invalid_id}.wsc"
-    (output / good_path).write_bytes(encode_scene(scene))
-    (output / bad_path).write_bytes(b"WSC2")  # recognizable magic, intentionally truncated header
-    paths = [good_path, bad_path]
-    for name, (width, height, rgba) in indexed_textures(scene).items():
-        path = f"gfx/{name.decode('ascii')}.png"
-        write_rgba_png(output / path, width, height, rgba)
-        paths.append(path)
+    (output / bad_path).write_bytes(b"WSC2")  # intentional truncated input
+    paths = [bad_path]
+    for scene in scenes:
+        good_path = f"scenes/{scene['id']}.wsc"
+        (output / good_path).write_bytes(encode_scene(scene))
+        paths.append(good_path)
+        for name, (width, height, rgba) in indexed_textures(scene).items():
+            path = f"gfx/{name.decode('ascii')}.png"
+            write_rgba_png(output / path, width, height, rgba)
+            paths.append(path)
     (output / "basepack.lst").write_text("".join(f"{output / path} {prefix}{path}\n" for path in paths))
 
 

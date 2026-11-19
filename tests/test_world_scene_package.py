@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.hyrule_importer import write_rgba_png
 from tools.world_scene_package import decode_indexed_rgba, encode_scene
-from tools.scene_diagnostic import generate
+from tools.scene_diagnostic import authored_wsc3_scene, generate
 from ios.validate_ipa import check_scene_diagnostic
 
 
@@ -86,6 +86,16 @@ class ScenePackageTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 encode_scene(scene)
 
+    def test_wsc3_rejects_unsupported_sampler_and_material(self):
+        for changes in ({"fog": True}, {"cutout": 1}, {"alpha_period": 1},
+                        {"textures": [None, {}]}, {"textures": [{"name": "scenes/x.rgba16",
+                                                                 "width": 4, "height": 1,
+                                                                 "address": ["repeat", "mask"]}]}):
+            scene = authored_wsc3_scene(4099)
+            scene["rooms"][0]["batches"][1]["material"].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                encode_scene(scene)
+
     def test_rejects_invalid_authored_input(self):
         scene, _ = make_pair()
         for key, value in (
@@ -129,13 +139,17 @@ class ScenePackageTest(unittest.TestCase):
             bad_asset = copy.deepcopy({**content, "id": 23})
             bad_asset["rooms"][0]["batches"][0]["texture"]["height"] = 1
             (work / "scenes/23.wsc").write_bytes(encode_scene(bad_asset))
+            bad = bytearray(encode_scene(authored_wsc3_scene(24)))
+            # Unknown material flags must fail without replacing the active room.
+            bad[14 + 26 + 4] |= 0x80
+            (work / "scenes/24.wsc").write_bytes(bad)
             fixture = work / "generated"
             generate(fixture)
             packed = work / "base.zip"
             subprocess.run([sys.executable, ROOT / "tools/mkzip.py", fixture / "basepack.lst", packed], check=True)
             with zipfile.ZipFile(packed) as archive:
                 check_scene_diagnostic(archive)
-                self.assertEqual(len(archive.namelist()), 4)
+                self.assertEqual(len(archive.namelist()), 7)
                 generate(fixture)
                 for line in (fixture / "basepack.lst").read_text().splitlines():
                     local, member = line.split()

@@ -32,6 +32,11 @@
 #ifdef IOS_O2R_SCENE_RUNTIME
 #include "engine/world_scene_file.h"
 static const struct WorldSceneDrawState *scene_draw_state;
+static const struct WorldSceneMaterial *scene_material;
+#ifdef EXTERNAL_DATA
+static const struct WorldSceneMaterial *scene_bound_material;
+static bool scene_material_ready;
+#endif
 static bool inside_scene_display_list;
 static u32 scene_render_frame;
 #endif
@@ -348,6 +353,16 @@ static void gfx_hd_texture_log_fallback(const char *asset, const char *reason,
 static unsigned long get_time(void) {
     return 0;
 }
+
+#ifdef IOS_O2R_SCENE_RUNTIME
+bool gfx_supports_scene_materials(void) {
+#ifdef EXTERNAL_DATA
+    return gfx_rapi && gfx_rapi->supports_scene_materials;
+#else
+    return false;
+#endif
+}
+#endif
 
 static void gfx_flush(void) {
     if (buf_vbo_len > 0) {
@@ -742,8 +757,10 @@ static uint8_t *decode_scene_png(const char *path, int width, int height) {
     uint8_t *png;
 #ifdef IOS_SCENE_DIAGNOSTIC
     if (!strcmp(path, "gfx/scenes/67f-ci4.rgba16.png") ||
-        !strcmp(path, "gfx/scenes/67f-ci8.rgba16.png")) {
-        char bundled[sizeof(SCENE_DIAGNOSTIC_DIRECTORY "gfx/scenes/67f-ci4.rgba16.png")];
+        !strcmp(path, "gfx/scenes/67f-ci8.rgba16.png") ||
+        !strcmp(path, "gfx/scenes/wsc3-grid.rgba16.png") ||
+        !strcmp(path, "gfx/scenes/wsc3-wave.rgba16.png")) {
+        char bundled[sizeof(SCENE_DIAGNOSTIC_DIRECTORY "gfx/scenes/wsc3-grid.rgba16.png")];
         snprintf(bundled, sizeof(bundled), SCENE_DIAGNOSTIC_DIRECTORY "%s", path);
         png = fs_load_file_bounded(bundled, 256 * 1024, &length);
     } else
@@ -786,6 +803,12 @@ void gfx_forget_scene_texture(const char *name) {
     /* Detached cache nodes retain their renderer IDs for the next rollover.
      * Replace the key before its provider frees the string. */
     const uint8_t *address = (const uint8_t *)name;
+    for (int tile = 0; tile < 2; ++tile) {
+        if (rendering_state.textures[tile] && rendering_state.textures[tile]->texture_addr == address) {
+            rendering_state.textures[tile] = NULL;
+            rdp.textures_changed[tile] = true;
+        }
+    }
     for (size_t i = 0; i < sizeof(gfx_texture_cache.pool) / sizeof(gfx_texture_cache.pool[0]); ++i) {
         if (gfx_texture_cache.pool[i].texture_addr == address) {
             gfx_texture_cache.pool[i].texture_addr = (const uint8_t *)"";
@@ -1204,6 +1227,12 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         
         short U = v->tc[0] * rsp.texture_scaling_factor.s >> 16;
         short V = v->tc[1] * rsp.texture_scaling_factor.t >> 16;
+#ifdef IOS_O2R_SCENE_RUNTIME
+        if (scene_material) {
+            U = v->tc[0];
+            V = v->tc[1];
+        }
+#endif
         
         if (rsp.geometry_mode & G_LIGHTING) {
             if (rsp.lights_changed) {
@@ -1323,6 +1352,115 @@ static void gfx_tile_uv(const struct LoadedVertex *vertex, u32 width, u32 height
     *outV = v / height;
 }
 
+#if defined(IOS_O2R_SCENE_RUNTIME) && defined(EXTERNAL_DATA)
+static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
+    uint32_t shader = SHADER_OPT_SCENE_MATERIAL;
+    if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
+    if (material->texture[1].name[0]) shader |= SHADER_SCENE_TEX1;
+    if (material->flags & WORLD_SCENE_CUTOUT) shader |= SHADER_SCENE_CUTOUT;
+    bool blend = (material->flags & WORLD_SCENE_BLEND) != 0;
+    if (blend) shader |= SHADER_SCENE_BLEND;
+
+    gfx_flush();
+    struct ShaderProgram *program = gfx_lookup_or_create_shader_program(shader);
+    if (!program) return false;
+    if (rendering_state.shader_program != program) {
+        gfx_rapi->unload_shader(rendering_state.shader_program);
+        gfx_rapi->load_shader(program);
+        rendering_state.shader_program = program;
+    }
+    if (rendering_state.alpha_blend != blend) {
+        gfx_rapi->set_use_alpha(blend);
+        rendering_state.alpha_blend = blend;
+    }
+
+    int count = material->texture[1].name[0] ? 2 : material->texture[0].name[0] ? 1 : 0;
+    for (int retry = 0; retry < 2; ++retry) {
+        for (int tile = 0; tile < count; ++tile) {
+            const struct WorldSceneTexture *texture = &material->texture[tile];
+            struct TextureHashmapNode **binding = &rendering_state.textures[tile];
+            if (!gfx_texture_cache_lookup(tile, binding, (const uint8_t *)texture->name,
+                                          G_IM_FMT_RGBA, G_IM_SIZ_16b, false)) {
+                if (!*binding || !(*binding)->texture_id) return false;
+                char path[sizeof(texture->name) + sizeof("gfx/.png")];
+                snprintf(path, sizeof(path), "gfx/%s.png", texture->name);
+                uint8_t *rgba = decode_scene_png(path, texture->width, texture->height);
+                if (!rgba) {
+                    fprintf(stderr, "WSC3 texture became unavailable: %s\n", path);
+                    gfx_forget_scene_texture(texture->name);
+                    return false;
+                }
+                gfx_rapi->upload_texture(rgba, texture->width, texture->height);
+                stbi_image_free(rgba);
+            }
+        }
+        if (!count || (rendering_state.textures[0] && (count < 2 || rendering_state.textures[1]))) {
+            // Set each slot after both binds. The same texture may appear in
+            // both slots with different modes, including after a cache reset.
+            for (int tile = 0; tile < count; ++tile) {
+                const struct WorldSceneTexture *texture = &material->texture[tile];
+                struct TextureHashmapNode *binding = rendering_state.textures[tile];
+                bool linear = texture->filter != 0;
+                gfx_rapi->set_sampler_parameters(tile, linear, texture->address[0], texture->address[1]);
+                binding->linear_filter = linear;
+                binding->cms = texture->address[0];
+                binding->cmt = texture->address[1];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static float gfx_scene_uv(const struct WorldSceneTexture *texture, int axis, s16 uv) {
+    s64 dimension = axis == 0 ? texture->width : texture->height;
+    s64 scroll = (s64)texture->scroll[axis] * scene_render_frame;
+    if (texture->address[axis] != G_TX_CLAMP)
+        scroll %= dimension * 32 * (texture->address[axis] == G_TX_MIRROR ? 2 : 1);
+    double value = uv * (texture->scale[axis] / 256.0) + texture->origin[axis] + scroll;
+    return (value / 32.0 + (texture->filter ? 0.5 : 0.0)) / dimension;
+}
+
+static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
+    const struct WorldSceneMaterial *mat = scene_material;
+    if (scene_bound_material != mat) {
+        scene_bound_material = mat;
+        scene_material_ready = gfx_bind_scene_material(mat);
+    }
+    if (!scene_material_ready) {
+        GFX_RENDER_SECTION_INCREMENT(missing_binding);
+        return;
+    }
+
+    float alpha = mat->environment[3];
+    if (mat->alphaPeriod) {
+        unsigned phase = scene_render_frame % mat->alphaPeriod;
+        unsigned distance = phase < mat->alphaPeriod - phase ? phase : mat->alphaPeriod - phase;
+        alpha += (mat->alphaPeak - alpha) * ((float)distance / (mat->alphaPeriod / 2));
+    }
+    bool normalized_depth = gfx_rapi->z_is_from_0_to_1();
+    for (int index = 0; index < 3; ++index) {
+        const struct LoadedVertex *vertex = vertices[index];
+        buf_vbo[buf_vbo_len++] = vertex->x;
+        buf_vbo[buf_vbo_len++] = vertex->y;
+        buf_vbo[buf_vbo_len++] = normalized_depth ? (vertex->z + vertex->w) / 2.0f : vertex->z;
+        buf_vbo[buf_vbo_len++] = vertex->w;
+        for (int tile = 0; tile < 2 && mat->texture[tile].name[0]; ++tile) {
+            buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 0, vertex->u);
+            buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 1, vertex->v);
+        }
+        buf_vbo[buf_vbo_len++] = vertex->color.r / 255.0f;
+        buf_vbo[buf_vbo_len++] = vertex->color.g / 255.0f;
+        buf_vbo[buf_vbo_len++] = vertex->color.b / 255.0f;
+        buf_vbo[buf_vbo_len++] = vertex->color.a / 255.0f;
+        for (int c = 0; c < 4; ++c) buf_vbo[buf_vbo_len++] = mat->primitive[c] / 255.0f;
+        for (int c = 0; c < 3; ++c) buf_vbo[buf_vbo_len++] = mat->environment[c] / 255.0f;
+        buf_vbo[buf_vbo_len++] = alpha / 255.0f;
+    }
+    if (++buf_vbo_num_tris == MAX_BUFFERED) gfx_flush();
+}
+#endif
+
 static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     struct LoadedVertex *v1 = &rsp.loaded_vertices[vtx1_idx];
     struct LoadedVertex *v2 = &rsp.loaded_vertices[vtx2_idx];
@@ -1375,6 +1513,9 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     bool depth_test = (rsp.geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (scene_material) depth_test = (scene_material->flags & WORLD_SCENE_DEPTH_TEST) != 0;
+#endif
     if (depth_test != rendering_state.depth_test) {
         gfx_flush();
         gfx_rapi->set_depth_test(depth_test);
@@ -1382,6 +1523,9 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     bool z_upd = (rdp.other_mode_l & Z_UPD) == Z_UPD;
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (scene_material) z_upd = (scene_material->flags & WORLD_SCENE_DEPTH_WRITE) != 0;
+#endif
     if (z_upd != rendering_state.depth_mask) {
         gfx_flush();
         gfx_rapi->set_depth_mask(z_upd);
@@ -1409,6 +1553,12 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         rdp.viewport_or_scissor_changed = false;
     }
     
+#if defined(IOS_O2R_SCENE_RUNTIME) && defined(EXTERNAL_DATA)
+    if (scene_material) {
+        gfx_draw_scene_triangle(v_arr);
+        return;
+    }
+#endif
     uint32_t cc_id = rdp.combine_mode;
     
     bool use_alpha = (rdp.other_mode_l & (G_BL_A_MEM << 18)) == 0;
@@ -2127,6 +2277,7 @@ static void gfx_run_dl(Gfx *cmd);
 static void gfx_run_scene_dl(Gfx *cmd) {
     struct RDP saved_rdp = rdp;
     const struct WorldSceneDrawState *saved_state = scene_draw_state;
+    const struct WorldSceneMaterial *saved_material = scene_material;
     bool saved_scope = inside_scene_display_list;
     u32 geometry_mode = rsp.geometry_mode;
     u16 scale_s = rsp.texture_scaling_factor.s;
@@ -2135,10 +2286,18 @@ static void gfx_run_scene_dl(Gfx *cmd) {
     memcpy(vertices, rsp.loaded_vertices, sizeof(vertices));
     gfx_flush();
     scene_draw_state = NULL;
+    scene_material = NULL;
+#ifdef EXTERNAL_DATA
+    scene_bound_material = NULL;
+#endif
     inside_scene_display_list = true;
     gfx_run_dl(cmd + 1);
     gfx_flush();
     scene_draw_state = saved_state;
+    scene_material = saved_material;
+#ifdef EXTERNAL_DATA
+    scene_bound_material = NULL;
+#endif
     inside_scene_display_list = saved_scope;
     rdp = saved_rdp;
     rdp.textures_changed[0] = rdp.textures_changed[1] = true;
@@ -2158,6 +2317,11 @@ static void gfx_run_dl(Gfx* cmd) {
 #if defined(TARGET_OS_IOS) || defined(IOS_O2R_SCENE_RUNTIME)
             case G_NOOP:
 #ifdef IOS_O2R_SCENE_RUNTIME
+                if (inside_scene_display_list && cmd->words.w0 == WORLD_SCENE_MATERIAL_OPCODE) {
+                    gfx_flush();
+                    scene_material = gfx_supports_scene_materials() ? (const struct WorldSceneMaterial *)cmd->words.w1 : NULL;
+                    break;
+                }
                 if (inside_scene_display_list && cmd->words.w0 == WORLD_SCENE_STATE_OPCODE) {
                     gfx_flush();
                     scene_draw_state = (const struct WorldSceneDrawState *)cmd->words.w1;

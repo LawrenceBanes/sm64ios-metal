@@ -19,8 +19,9 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
     int expected = 0;
     struct GfxMetalVertexLayout layout;
     assert(gfx_metal_get_vertex_layout(features, &layout));
-    assert(layout.attribute_count == 1 + layout.has_uv + layout.has_fog + features->num_inputs);
-    assert(layout.stride == 16 + (layout.has_uv ? 8 : 0) + (layout.has_fog ? 16 : 0) +
+    bool uv1 = layout.uv1_attribute != UINT8_MAX;
+    assert(layout.attribute_count == 1 + layout.has_uv + uv1 + layout.has_fog + features->num_inputs);
+    assert(layout.stride == 16 + (layout.has_uv ? 8 : 0) + (uv1 ? 8 : 0) + (layout.has_fog ? 16 : 0) +
            features->num_inputs * (features->opt_alpha ? 16 : 12));
     uint16_t expected_offset = 0;
     for (int i = 0; i < layout.attribute_count; ++i) {
@@ -207,6 +208,21 @@ int main(void) {
 
     assert(!gfx_metal_build_shader(id, source, 8, &features));
     assert(!gfx_metal_build_shader(id, NULL, sizeof(source), &features));
+    const uint32_t wsc3 = SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX0 | SHADER_SCENE_TEX1;
+    assert(gfx_metal_build_shader(wsc3 | SHADER_SCENE_BLEND, source, sizeof(source), &features));
+    assert(features.scene_material && features.scene_blend && features.num_inputs == 3);
+    assert(strstr(source, "float2 uv1 [[attribute(2)]]"));
+    assert(strstr(source, "sampleTex(tex1,samp1,in.uv1"));
+    assert(strstr(source, "mix(texel0,texel1,in.input3.a)"));
+    assert_dense_vertex_attributes(source, &features);
+    assert(gfx_metal_build_shader(wsc3 | SHADER_SCENE_CUTOUT, source, sizeof(source), &features));
+    assert(strstr(source, "if(color.a<0.5) discard_fragment();"));
+    assert(strstr(source, "color.a=1.0;"));
+    assert_dense_vertex_attributes(source, &features);
+    assert(!gfx_metal_build_shader(wsc3 | SHADER_SCENE_CUTOUT | SHADER_SCENE_BLEND,
+                                  source, sizeof(source), &features));
+    assert(!gfx_metal_build_shader(SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX1,
+                                  source, sizeof(source), &features));
     puts("Metal shader source generation checks passed");
     return 0;
 }

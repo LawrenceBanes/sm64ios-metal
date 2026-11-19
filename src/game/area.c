@@ -78,6 +78,8 @@ static struct WorldSceneRuntime sAreaScene;
 #ifdef IOS_SCENE_DIAGNOSTIC
 _Static_assert(SCENE_DIAGNOSTIC_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DIAGNOSTIC_AREA),
                "WSC2 diagnostic package ID must match the Castle Grounds area key");
+_Static_assert(SCENE_DIAGNOSTIC_WSC3_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DIAGNOSTIC_WSC3_AREA),
+               "WSC3 diagnostic package ID must match the Castle Grounds area key");
 #if defined(IOS_BUILD)
 #define SCENE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
 #else
@@ -116,11 +118,11 @@ static void load_area_scene(s32 index) {
     world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
     enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, NULL);
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (sceneId == SCENE_DIAGNOSTIC_PACKAGE) {
+    if (sceneId == SCENE_DIAGNOSTIC_PACKAGE || sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE) {
         struct Surface *floor;
         f32 height = find_floor(0, 40, 720, &floor);
-        SCENE_DIAG_LOG("WSC2 diagnostic entry package=%u result=%d room=%u floor=%s y=%.1f",
-                       sceneId, result, world_scene_current_room(&sAreaScene), floor ? "hit" : "miss", height);
+        SCENE_DIAG_LOG("WSC%u diagnostic entry package=%u result=%d room=%u floor=%s y=%.1f",
+                       sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE ? 3u : 2u, sceneId, result, world_scene_current_room(&sAreaScene), floor ? "hit" : "miss", height);
     }
 #endif
     (void)result;
@@ -419,12 +421,14 @@ void unload_area(void) {
 #ifdef IOS_O2R_SCENE_RUNTIME
         if (area_scene_package_id()) {
 #ifdef IOS_SCENE_DIAGNOSTIC
-            bool diagnostic = area_scene_package_id() == SCENE_DIAGNOSTIC_PACKAGE;
+            u32 sceneId = area_scene_package_id();
+            bool diagnostic = sceneId == SCENE_DIAGNOSTIC_PACKAGE || sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE;
 #endif
             world_scene_close(&sAreaScene);
 #ifdef IOS_SCENE_DIAGNOSTIC
             if (diagnostic) {
-                SCENE_DIAG_LOG("WSC2 diagnostic exit activeRooms=%u", world_scene_active_room_count(&sAreaScene));
+                SCENE_DIAG_LOG("WSC%u diagnostic exit activeRooms=%u", sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE ? 3u : 2u,
+                               world_scene_active_room_count(&sAreaScene));
             }
 #endif
 #if defined(IOS_CONNECTED_WORLD_TEST)

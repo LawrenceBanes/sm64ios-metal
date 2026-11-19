@@ -13,6 +13,7 @@
 #include "game/mario.h"
 #include "game/ios_reality.h"
 #include "scene_diagnostic.h"
+#include "game/area.h"
 #import "src/ios/CheatsViewController.h"
 #if TARGET_OS_IOS
 #include "ios_app_branding.h"
@@ -282,6 +283,12 @@ static int sm64RenderDiagnosticMode;
     [menu addAction:[UIAlertAction actionWithTitle:@"Enter / leave WSC2 diagnostic" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_AREA);
+    }]];
+    NSString *wsc3Title = area_scene_package_id() == SCENE_DIAGNOSTIC_WSC3_PACKAGE ?
+        @"Leave WSC3 Diagnostic" : @"Enter WSC3 Diagnostic";
+    [menu addAction:[UIAlertAction actionWithTitle:wsc3Title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_WSC3);
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Probe WSC2 failed-load recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;

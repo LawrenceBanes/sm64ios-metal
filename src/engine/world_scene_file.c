@@ -25,6 +25,7 @@ struct FileBatch {
     u16 triangleCount, width, height;
     u16 pass, state;
     char texture[96];
+    struct WorldSceneMaterial *material;
 };
 
 struct FileRoom {
@@ -90,7 +91,14 @@ static bool room_contains(const struct WorldSceneRoomDesc *room, struct WorldPoi
 static void invalidate_room_textures(const struct FileRoom *room) {
 #ifdef EXTERNAL_DATA
     for (u16 j = 0; room->batches && j < room->batchCount; ++j) {
-        if (room->batches[j].texture[0]) gfx_forget_scene_texture(room->batches[j].texture);
+        const struct FileBatch *batch = &room->batches[j];
+        if (batch->texture[0]) gfx_forget_scene_texture(batch->texture);
+        if (batch->material) {
+            for (int tile = 0; tile < 2; ++tile) {
+                const char *name = batch->material->texture[tile].name;
+                if (name[0]) gfx_forget_scene_texture(name);
+            }
+        }
     }
 #else
     (void)room;
@@ -108,6 +116,7 @@ static void release_scene(void *context, struct WorldScenePackage *package) {
             invalidate_room_textures(room);
             for (u16 j = 0; room->batches && j < room->batchCount; ++j) {
                 free(room->batches[j].vertices);
+                free(room->batches[j].material);
             }
             free(room->batches);
             free(room->states);
@@ -124,18 +133,19 @@ static void release_scene(void *context, struct WorldScenePackage *package) {
     free(scene);
 }
 
-static bool read_texture(struct SceneReader *reader, struct FileBatch *batch, bool legacy) {
+static bool read_texture(struct SceneReader *reader, char texture[96], u16 width, u16 height, bool legacy) {
     u16 length = read_u16(reader);
-    if (length == 0) return batch->width == 0 && batch->height == 0 && !reader->failed;
+    if (length == 0) return width == 0 && height == 0 && !reader->failed;
 #ifndef EXTERNAL_DATA
+    (void)texture;
     (void)legacy;
     return false;
 #else
     static const char prefix[] = "scenes/";
     static const char suffix[] = ".rgba16";
-    if (length >= sizeof(batch->texture) || length < sizeof(prefix) + sizeof(suffix) - 1
-        || batch->width < 4 || (batch->width & 3) != 0 || !batch->height
-        || (u32)batch->width * batch->height > 2048) return false;
+    if (length >= 96 || length < sizeof(prefix) + sizeof(suffix) - 1
+        || width < 4 || (width & 3) != 0 || !height
+        || (u32)width * height > 2048) return false;
     const u8 *name = read_bytes(reader, length);
     if (!name || memcmp(name, prefix, sizeof(prefix) - 1)
         || memcmp(name + length - (sizeof(suffix) - 1), suffix, sizeof(suffix) - 1)) return false;
@@ -143,28 +153,64 @@ static bool read_texture(struct SceneReader *reader, struct FileBatch *batch, bo
         u8 c = name[i];
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return false;
     }
-    memcpy(batch->texture, name, length);
-    char path[sizeof(batch->texture) + sizeof("gfx/.png")];
-    snprintf(path, sizeof(path), "gfx/%s.png", batch->texture);
+    memcpy(texture, name, length);
+    char path[96 + sizeof("gfx/.png")];
+    snprintf(path, sizeof(path), "gfx/%s.png", texture);
     if (legacy) return fs_sys_file_exists(fs_get_write_path(path));
-    if (!gfx_validate_scene_texture(path, batch->width, batch->height)) {
+    if (!gfx_validate_scene_texture(path, width, height)) {
         fprintf(stderr, "Scene package texture cannot decode as %ux%u PNG: %s\n",
-                (unsigned)batch->width, (unsigned)batch->height, path);
+                (unsigned)width, (unsigned)height, path);
         return false;
     }
     return true;
 #endif
 }
 
+static bool read_material(struct SceneReader *reader, struct FileBatch *batch) {
+    struct WorldSceneMaterial *material = batch->material = calloc(1, sizeof(*material));
+    if (!material) return false;
+    u16 flags = read_u16(reader);
+    const u8 *colors = read_bytes(reader, 8);
+    if (!colors || (flags & ~31u) || !!(flags & WORLD_SCENE_BLEND) != !!batch->pass
+        || ((flags & WORLD_SCENE_BLEND) && (flags & WORLD_SCENE_CUTOUT))) return false;
+    material->flags = flags;
+    memcpy(material->primitive, colors, 4);
+    memcpy(material->environment, colors + 4, 4);
+    material->alphaPeriod = read_u16(reader);
+    u16 peak = read_u16(reader);
+    if (peak > 255 || (material->alphaPeriod && material->alphaPeriod < 2)) return false;
+    material->alphaPeak = peak;
+    for (int index = 0; index < 2; ++index) {
+        struct WorldSceneTexture *texture = &material->texture[index];
+        texture->width = read_u16(reader);
+        texture->height = read_u16(reader);
+        u16 sampler = read_u16(reader);
+        if (sampler > 31 || (sampler & 3) == 3 || ((sampler >> 2) & 3) == 3) return false;
+        texture->address[0] = sampler & 3;
+        texture->address[1] = (sampler >> 2) & 3;
+        texture->filter = (sampler >> 4) & 1;
+        for (int i = 0; i < 2; ++i) texture->scale[i] = read_s16(reader);
+        for (int i = 0; i < 2; ++i) texture->origin[i] = read_s16(reader);
+        for (int i = 0; i < 2; ++i) texture->scroll[i] = read_s16(reader);
+        if (!read_texture(reader, texture->name, texture->width, texture->height, false)) return false;
+    }
+    return !material->texture[1].name[0] || material->texture[0].name[0];
+}
+
 static Gfx *emit_batch(Gfx *cmd, const struct FileBatch *batch,
                        const struct WorldSceneDrawState *states, bool legacy) {
     gDPPipeSync(cmd++);
-    if (!legacy) {
+    if (batch->material) {
+        cmd->words.w0 = WORLD_SCENE_MATERIAL_OPCODE;
+        cmd->words.w1 = (uintptr_t)batch->material;
+        ++cmd;
+        gSPGeometryMode(cmd++, G_CULL_BOTH, (batch->material->flags & WORLD_SCENE_BACK_CULL) ? G_CULL_BACK : 0);
+    } else if (!legacy) {
         cmd->words.w0 = WORLD_SCENE_STATE_OPCODE;
         cmd->words.w1 = batch->state ? (uintptr_t)&states[batch->state - 1] : 0;
         ++cmd;
     }
-    if (batch->texture[0]) {
+    if (!batch->material && batch->texture[0]) {
         gDPLoadTextureBlock(cmd++, batch->texture, G_IM_FMT_RGBA, G_IM_SIZ_16b, batch->width, batch->height,
                             0, G_TX_WRAP, G_TX_WRAP, 0, 0, 0, 0);
         gSPTexture(cmd++, 0xffff, 0xffff, 0, G_TX_RENDERTILE, G_ON);
@@ -173,7 +219,7 @@ static Gfx *emit_batch(Gfx *cmd, const struct FileBatch *batch,
         } else {
             gDPSetCombineMode(cmd++, G_CC_MODULATERGB, G_CC_MODULATERGB);
         }
-    } else {
+    } else if (!batch->material) {
         gDPSetCombineMode(cmd++, G_CC_SHADE, G_CC_SHADE);
     }
     for (u32 i = 0; i < batch->triangleCount;) {
@@ -241,7 +287,7 @@ static bool read_render_vertices(struct SceneReader *reader, const struct WorldS
 }
 
 static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *desc,
-                      struct FileRoom *room, bool legacy) {
+                      struct FileRoom *room, bool legacy, bool materialFormat) {
     desc->id = read_u32(reader);
     desc->min = read_point(reader);
     desc->max = read_point(reader);
@@ -253,7 +299,7 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
     room->batchCount = legacy ? 1 : count;
     if (reader->failed || desc->neighborCount > WORLD_SCENE_MAX_ROOM_NEIGHBORS
         || !count || (legacy && count > WORLD_SCENE_FILE_MAX_TRIANGLES)
-        || room->batchCount > WORLD_SCENE_MAX_BATCHES || stateCount > WORLD_SCENE_MAX_BATCHES
+        || room->batchCount > WORLD_SCENE_MAX_BATCHES || stateCount > WORLD_SCENE_MAX_BATCHES || (materialFormat && stateCount)
         || !room->vertexCount || room->vertexCount > WORLD_REGION_MAX_VERTICES
         || !room->triangleCount || room->triangleCount > WORLD_REGION_MAX_TRIANGLES) return false;
 
@@ -264,7 +310,7 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
         batch->triangleCount = count;
         batch->width = read_u16(reader);
         batch->height = read_u16(reader);
-        if (!read_texture(reader, batch, true)) return false;
+        if (!read_texture(reader, batch->texture, batch->width, batch->height, true)) return false;
     }
     desc->neighbors = room->neighbors;
     desc->userData = room;
@@ -286,13 +332,17 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
     u32 total = 0;
     for (u16 i = 0; i < room->batchCount; ++i) {
         struct FileBatch *batch = &room->batches[i];
-        if (!legacy) {
+        if (materialFormat) {
+            batch->pass = read_u16(reader);
+            batch->triangleCount = read_u16(reader);
+            if (batch->pass > 1 || !read_material(reader, batch)) return false;
+        } else if (!legacy) {
             batch->pass = read_u16(reader);
             batch->state = read_u16(reader);
             batch->triangleCount = read_u16(reader);
             batch->width = read_u16(reader);
             batch->height = read_u16(reader);
-            if (batch->pass > 1 || batch->state > stateCount || !read_texture(reader, batch, false))
+            if (batch->pass > 1 || batch->state > stateCount || !read_texture(reader, batch->texture, batch->width, batch->height, false))
                 return false;
         }
         total += batch->triangleCount;
@@ -330,7 +380,8 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     (void)context;
     u8 *bytes;
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (id == SCENE_DIAGNOSTIC_PACKAGE || id == SCENE_DIAGNOSTIC_INVALID_PACKAGE) {
+    if (id == SCENE_DIAGNOSTIC_PACKAGE || id == SCENE_DIAGNOSTIC_WSC3_PACKAGE
+        || id == SCENE_DIAGNOSTIC_INVALID_PACKAGE) {
         snprintf(path, sizeof(path), SCENE_DIAGNOSTIC_DIRECTORY "scenes/%u.wsc", id);
         bytes = fs_load_file_bounded(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
     } else
@@ -354,7 +405,12 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     u16 exits = read_u16(&reader);
     struct FileScene *scene = NULL;
     bool legacy = magic && !memcmp(magic, "WSC1", 4);
-    if (!magic || (!legacy && memcmp(magic, "WSC2", 4)) || fileId != id || reader.failed
+    bool materialFormat = magic && !memcmp(magic, "WSC3", 4);
+    if (materialFormat && !gfx_supports_scene_materials()) {
+        fprintf(stderr, "Scene package %u requires WSC3 render support\n", id);
+        goto fail;
+    }
+    if (!magic || (!legacy && !materialFormat && memcmp(magic, "WSC2", 4)) || fileId != id || reader.failed
         || rooms == 0 || rooms > WORLD_REGION_MAX || entrances == 0
         || entrances > WORLD_SCENE_MAX_ENTRANCES || exits > WORLD_SCENE_MAX_EXITS) goto fail;
 
@@ -369,7 +425,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     if (!scene->rooms || !scene->descs || !scene->entrances || (exits && !scene->exits)) goto fail;
 
     for (u32 i = 0; i < rooms; ++i) {
-        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy)) goto fail;
+        if (!read_room(&reader, &scene->descs[i], &scene->rooms[i], legacy, materialFormat)) goto fail;
     }
     for (u32 i = 0; i < entrances; ++i) {
         struct WorldSceneEntranceDesc *entrance = &scene->entrances[i];

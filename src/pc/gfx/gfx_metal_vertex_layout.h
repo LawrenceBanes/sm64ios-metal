@@ -19,6 +19,7 @@ struct GfxMetalVertexLayout {
     uint8_t attribute_count;
     uint16_t stride;
     uint8_t uv_attribute;
+    uint8_t uv1_attribute;
     uint8_t fog_attribute;
     uint8_t input_attribute[4];
     bool has_uv;
@@ -36,6 +37,7 @@ static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features
     layout->has_uv = features->used_textures[0] || features->used_textures[1];
     layout->has_fog = features->opt_fog;
     layout->uv_attribute = UINT8_MAX;
+    layout->uv1_attribute = UINT8_MAX;
     layout->fog_attribute = UINT8_MAX;
     layout->attribute_count = 0;
     layout->stride = 0;
@@ -45,6 +47,12 @@ static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features
     offset += 4 * sizeof(float);
     if (layout->has_uv) {
         layout->uv_attribute = count;
+        layout->format[count] = GFX_METAL_VERTEX_FLOAT2;
+        layout->offset[count++] = offset;
+        offset += 2 * sizeof(float);
+    }
+    if (features->scene_material && features->used_textures[1]) {
+        layout->uv1_attribute = count;
         layout->format[count] = GFX_METAL_VERTEX_FLOAT2;
         layout->offset[count++] = offset;
         offset += 2 * sizeof(float);

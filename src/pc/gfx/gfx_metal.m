@@ -1337,7 +1337,7 @@ struct GfxRenderingAPI gfx_metal_api = {
     gfx_metal_set_sampler_parameters, gfx_metal_set_depth_test, gfx_metal_set_depth_mask,
     gfx_metal_set_zmode_decal, gfx_metal_set_viewport, gfx_metal_set_scissor,
     gfx_metal_set_use_alpha, gfx_metal_draw_triangles, gfx_metal_init, gfx_metal_on_resize,
-    gfx_metal_start_frame, gfx_metal_end_frame, gfx_metal_finish_render, gfx_metal_shutdown
+    gfx_metal_start_frame, gfx_metal_end_frame, gfx_metal_finish_render, gfx_metal_shutdown, true
 };
 
 #endif

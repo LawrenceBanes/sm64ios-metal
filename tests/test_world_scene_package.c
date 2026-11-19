@@ -25,7 +25,7 @@ static struct Object inactive_object;
 static bool base_terrain_loaded;
 
 void load_area_terrain(s16 index, s16 *data, s8 *rooms, s16 *macroObjects) {
-    assert((index == 1 || index == SCENE_DIAGNOSTIC_AREA) && data && !rooms && !macroObjects);
+    assert((index == 1 || index == SCENE_DIAGNOSTIC_AREA || index == SCENE_DIAGNOSTIC_WSC3_AREA) && data && !rooms && !macroObjects);
     assert(world_region_count() == 0);
     base_terrain_loaded = true;
 }
@@ -36,7 +36,7 @@ void spawn_objects_from_info(s32 index, struct SpawnInfo *info) {
 }
 
 void unload_objects_from_area(s32 index, s32 area) {
-    assert(index == 0 && (area == 1 || area == SCENE_DIAGNOSTIC_AREA) && world_region_count() == 1);
+    assert(index == 0 && (area == 1 || area == SCENE_DIAGNOSTIC_AREA || area == SCENE_DIAGNOSTIC_WSC3_AREA) && world_region_count() == 1);
 }
 
 void geo_call_global_function_nodes(struct GraphNode *node, s32 context) {
@@ -84,6 +84,9 @@ static unsigned shaderCount;
 static unsigned triangles, textures;
 static bool check_materials;
 static bool check_diagnostic;
+static bool check_wsc3;
+static unsigned wsc3_draws, bound_ids[2], bound_s[2], bound_t[2];
+static float wsc3_first_uv[4], wsc3_first_alpha;
 static unsigned translucent_triangles;
 
 static struct ShaderProgram *lookup(u32 id) {
@@ -108,13 +111,20 @@ static u32 new_texture(void) { return 1 + textures; }
 static bool depth_range(void) { return true; }
 static void toggle(bool enabled) { (void)enabled; }
 static void rectangle(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
-static void select_texture(int tile, u32 id) { assert(tile == 0 && id > 0); }
+static void select_texture(int tile, u32 id) {
+    assert(tile >= 0 && tile <= (check_wsc3 ? 1 : 0) && id > 0);
+    bound_ids[tile] = id;
+}
 static void sampler(int tile, bool linear, u32 s, u32 t) {
-    assert(tile == 0);
-    (void)linear; (void)s; (void)t;
+    assert(tile >= 0 && tile <= (check_wsc3 ? 1 : 0));
+    (void)linear;
+    bound_s[tile] = s;
+    bound_t[tile] = t;
 }
 static void upload(const u8 *rgba, int width, int height) {
-    if (check_diagnostic) {
+    if (check_wsc3) {
+        assert(width == 16 && height == 16 && rgba);
+    } else if (check_diagnostic) {
         assert(width == 16 && height == 16);
         if (textures % 2 == 0) {
             assert(memcmp(rgba, (u8[]){0, 0, 123, 255}, 4) == 0);
@@ -135,7 +145,7 @@ static void upload(const u8 *rgba, int width, int height) {
     textures++;
 }
 static void draw(float *data, size_t length, size_t count) {
-    assert((check_diagnostic ? count > 0 : count == 1) && length > 0);
+    assert(((check_diagnostic || check_wsc3) ? count > 0 : count == 1) && length > 0);
     for (size_t i = 0; i < length; ++i) assert(isfinite(data[i]));
     if (check_materials) {
         struct CCFeatures features;
@@ -158,6 +168,28 @@ static void draw(float *data, size_t length, size_t count) {
             assert(fabsf(data[7] - 128.0f / 255.0f) < 1e-6f);
         }
     }
+    if (check_wsc3) {
+        struct CCFeatures features;
+        char msl[8192];
+        assert(gfx_metal_build_shader(rendering_state.shader_program->id, msl, sizeof(msl), &features));
+        assert(features.scene_material && rendering_state.depth_test);
+        assert(length == count * 3 * (features.used_textures[1] ? 20 : 16));
+        assert(rendering_state.depth_mask != rendering_state.alpha_blend);
+        if (features.used_textures[1]) {
+            assert(features.used_textures[0] && bound_ids[0] && bound_ids[1] && bound_ids[0] != bound_ids[1]);
+            assert(bound_s[0] == G_TX_WRAP && bound_t[0] == G_TX_CLAMP);
+            assert(bound_s[1] == G_TX_MIRROR && bound_t[1] == G_TX_WRAP);
+            assert(strstr(msl, "sampleTex(tex1,samp1,in.uv1"));
+            assert(strstr(msl, "mix(texel0,texel1,in.input3.a)"));
+            assert(features.opt_texture_edge == (wsc3_draws == 1));
+            assert(features.scene_blend == (wsc3_draws == 2));
+            if (!wsc3_draws) {
+                memcpy(wsc3_first_uv, data + 4, sizeof(wsc3_first_uv));
+                wsc3_first_alpha = data[19];
+            }
+            ++wsc3_draws;
+        }
+    }
     if (check_diagnostic) {
         assert(rendering_state.depth_test);
         assert(rendering_state.depth_mask != rendering_state.alpha_blend);
@@ -173,6 +205,7 @@ static struct GfxRenderingAPI recorder = {
     .upload_texture = upload, .set_sampler_parameters = sampler, .set_depth_test = toggle,
     .set_depth_mask = toggle, .set_zmode_decal = toggle, .set_use_alpha = toggle,
     .set_viewport = rectangle, .set_scissor = rectangle, .draw_triangles = draw,
+    .supports_scene_materials = true,
 };
 
 static void prepare_projection(void) {
@@ -303,6 +336,53 @@ static void check_bundled_diagnostic(void) {
     check_diagnostic = false;
 }
 
+static void check_wsc3_diagnostic(void) {
+    static struct GraphNodeRoot root;
+    static s16 terrain;
+    const float projection[4][4] = {
+        {0.0006f, 0, 0, 0}, {0, 0.001f, 0, 0}, {0, -0.0004f, -0.0003f, 0}, {0, 0, 0.6f, 1},
+    };
+    gCurrLevelNum = LEVEL_CASTLE_GROUNDS;
+    gAreaData[SCENE_DIAGNOSTIC_WSC3_AREA] = (struct Area){.index = SCENE_DIAGNOSTIC_WSC3_AREA,
+        .unk04 = &root, .terrainData = &terrain};
+    check_wsc3 = true;
+    textures = 0;
+    for (int visit = 0; visit < 2; ++visit) {
+        load_area(SCENE_DIAGNOSTIC_WSC3_AREA);
+        assert(area_scene_package_id() == SCENE_DIAGNOSTIC_WSC3_PACKAGE);
+        struct Surface *floor;
+        assert(find_floor(0, 40, 720, &floor) == 0 && floor);
+        struct WorldRegionInfo region;
+        assert(world_region_info_at(0, &region) && region.active && region.renderList && region.translucentList);
+        Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
+        frame[0].words.w1 = (uintptr_t)region.renderList;
+        frame[1].words.w1 = (uintptr_t)region.translucentList;
+        prepare_projection();
+        gfx_sp_matrix(G_MTX_PROJECTION | G_MTX_LOAD, (const int32_t *)projection);
+        float previous_uv[4];
+        for (int step = 0; step < 2; ++step) {
+            scene_render_frame = step * 90;
+            triangles = wsc3_draws = 0;
+            gfx_run_dl(frame);
+            assert(triangles == 72 && wsc3_draws == 3);
+            assert(textures == (visit + 1) * 2u);
+            assert(!scene_material && !scene_bound_material && !inside_scene_display_list);
+            assert(rsp.geometry_mode == (G_ZBUFFER | G_FOG) && rdp.combine_mode == 0x1234);
+            assert(fabsf(wsc3_first_alpha - (step == 0 ? 24.0f : 233.0f) / 255.0f) < 1e-6f);
+            if (step == 0) {
+                memcpy(previous_uv, wsc3_first_uv, sizeof(previous_uv));
+            } else {
+                assert(wsc3_first_uv[0] != previous_uv[0] && wsc3_first_uv[1] == previous_uv[1]);
+                assert(wsc3_first_uv[2] != previous_uv[2] && wsc3_first_uv[3] != previous_uv[3]);
+            }
+        }
+        unload_area();
+        assert(area_scene_package_id() == 0 && world_region_count() == 0);
+        assert(find_floor(0, 40, 720, &floor) == -11000.0f && !floor);
+    }
+    check_wsc3 = false;
+}
+
 int main(int argc, char **argv) {
     assert(argc == 3);
     const char *rodirs[] = { NULL };
@@ -329,6 +409,7 @@ int main(int argc, char **argv) {
 
     assert(world_scene_transition(&runtime, 13, 0, &destination) == WORLD_SCENE_PROVIDER_FAILED);
     assert(world_scene_transition(&runtime, 14, 0, &destination) == WORLD_SCENE_PROVIDER_FAILED);
+    assert(world_scene_transition(&runtime, 24, 0, &destination) == WORLD_SCENE_PROVIDER_FAILED);
     assert(world_scene_active_id(&runtime) == 11 && world_region_count() == 1);
     assert(find_floor(150, 80, -100, &floor) == 0 && floor);
     assert(world_scene_traverse_exit(&runtime, 42, &destination) == WORLD_SCENE_OK);
@@ -346,6 +427,10 @@ int main(int argc, char **argv) {
     check_wsc2_rendering(&runtime);
     assert(fs_mount(argv[2]));
     check_bundled_diagnostic();
+    check_wsc3_diagnostic();
+    recorder.supports_scene_materials = false;
+    assert(world_scene_open(&runtime, SCENE_DIAGNOSTIC_WSC3_PACKAGE, 0, NULL) == WORLD_SCENE_PROVIDER_FAILED);
+    assert(!world_region_count());
     puts("Scene packages: render, texture upload, collision, room transitions and rollback passed");
     return 0;
 }

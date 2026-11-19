@@ -1,6 +1,17 @@
 #include "gfx_cc.h"
 
 void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
+    if (shader_id & SHADER_OPT_SCENE_MATERIAL) {
+        *cc_features = (struct CCFeatures){
+            .scene_material = true, .opt_alpha = true,
+            .scene_blend = (shader_id & SHADER_SCENE_BLEND) != 0,
+            .opt_texture_edge = (shader_id & SHADER_SCENE_CUTOUT) != 0,
+            .used_textures = {(shader_id & SHADER_SCENE_TEX0) != 0, (shader_id & SHADER_SCENE_TEX1) != 0},
+            .num_inputs = 3,
+        };
+        return;
+    }
+    cc_features->scene_material = cc_features->scene_blend = false;
     for (int i = 0; i < 4; i++) {
         cc_features->c[0][i] = (shader_id >> (i * 3)) & 7;
         cc_features->c[1][i] = (shader_id >> (12 + i * 3)) & 7;

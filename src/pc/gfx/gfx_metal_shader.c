@@ -114,6 +114,10 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     if (!features) features = &local;
     if (!w.ok) return false;
     gfx_cc_get_features(shader_id, features);
+    if (features->scene_material &&
+        ((features->used_textures[1] && !features->used_textures[0]) ||
+         (features->scene_blend && features->opt_texture_edge) ||
+         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | 15u)))) return false;
     if (!gfx_metal_get_vertex_layout(features, &vertex_layout)) return false;
     out[0] = '\0';
 
@@ -152,6 +156,9 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         if (vertex_layout.has_uv) {
             write_format(&w, "float2 uv [[attribute(%d)]];\n", vertex_layout.uv_attribute, 0);
         }
+        if (vertex_layout.uv1_attribute != UINT8_MAX) {
+            write_format(&w, "float2 uv1 [[attribute(%d)]];\n", vertex_layout.uv1_attribute, 0);
+        }
         if (vertex_layout.has_fog) {
             write_format(&w, "float4 fog [[attribute(%d)]];\n", vertex_layout.fog_attribute, 0);
         }
@@ -162,6 +169,7 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     }
     write_text(&w, "};\nstruct VOut { float4 pos [[position]]; float3 barycentric;\n");
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "float2 uv;\n");
+    if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "float2 uv1;\n");
     if (features->opt_fog) write_text(&w, "float4 fog;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, features->opt_alpha ? "float4 input%d;\n" : "float3 input%d;\n", i + 1, 0);
@@ -170,6 +178,7 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         "VOut o; o.pos=in.pos; uint corner=vertex_id%3u; "
         "o.barycentric=corner==0u?float3(1.0,0.0,0.0):(corner==1u?float3(0.0,1.0,0.0):float3(0.0,0.0,1.0));\n");
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "o.uv=in.uv;\n");
+    if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "o.uv1=in.uv1;\n");
     if (features->opt_fog) write_text(&w, "o.fog=in.fog;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, "o.input%d=in.input%d;\n", i + 1, i + 1);
@@ -183,7 +192,9 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     if (features->used_textures[0])
         write_text(&w, "float4 texel0=params.diagnosticMode==1u?float4(1.0):sampleTex(tex0,samp0,in.uv,params.filter0!=0);\n");
     if (features->used_textures[1])
-        write_text(&w, "float4 texel1=params.diagnosticMode==1u?float4(1.0):sampleTex(tex1,samp1,in.uv,params.filter1!=0);\n");
+        write_text(&w, features->scene_material
+            ? "float4 texel1=params.diagnosticMode==1u?float4(1.0):sampleTex(tex1,samp1,in.uv1,params.filter1!=0);\n"
+            : "float4 texel1=params.diagnosticMode==1u?float4(1.0):sampleTex(tex1,samp1,in.uv,params.filter1!=0);\n");
     write_text(&w, "if(params.diagnosticMode==2u) { ");
     if (features->used_textures[0] || features->used_textures[1])
         write_text(&w, "return float4(fract(in.uv),0.0,1.0); ");
@@ -203,6 +214,18 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                    "float3 line=smoothstep(float3(0.0),fw*1.25,in.barycentric); "
                    "float edge=1.0-min(min(line.x,line.y),line.z); "
                    "return float4(mix(float3(0.78),float3(0.04),edge),1.0); }\n");
+    if (features->scene_material) {
+        const char *sample = features->used_textures[1] ? "mix(texel0,texel1,in.input3.a)"
+                           : features->used_textures[0] ? "texel0" : "float4(1.0)";
+        write_text(&w, "float4 color=");
+        write_text(&w, sample);
+        write_text(&w, "*in.input1*in.input2*float4(in.input3.rgb,1.0);\n");
+        if (features->opt_texture_edge)
+            write_text(&w, "if(color.a<0.5) discard_fragment();\n");
+        if (!features->scene_blend) write_text(&w, "color.a=1.0;\n");
+        write_text(&w, "return color; }\n");
+        return w.ok;
+    }
     if (features->opt_alpha && !features->color_alpha_same) {
         write_text(&w, "float4 color=float4(");
         write_formula(&w, features, 0, false, false);

@@ -25,7 +25,7 @@ on:
         required: false
         default: false
       scene_diagnostic:
-        description: Include the original WSC2 diagnostic room and developer menu commands
+        description: Include the original WSC2 and WSC3 diagnostics and developer menu commands
         type: boolean
         required: false
         default: false
