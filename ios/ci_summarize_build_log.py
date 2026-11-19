@@ -26,6 +26,22 @@ def summarize(text: str) -> list[str]:
                 kind = "undeclared symbol"
             elif "incompatible" in lowered or "no matching" in lowered:
                 kind = "type or call mismatch"
+            elif "too many arguments" in lowered or "too few arguments" in lowered:
+                kind = "argument count mismatch"
+            elif "expected" in lowered:
+                kind = "syntax or declaration error"
+            elif "redefinition" in lowered or "duplicate" in lowered:
+                kind = "duplicate definition"
+            elif "not an integer constant" in lowered:
+                kind = "invalid constant expression"
+            elif "array designator" in lowered or "exceeds array bounds" in lowered:
+                kind = "array bounds error"
+            elif "use of undeclared" in lowered:
+                kind = "undeclared symbol"
+            elif "unknown type name" in lowered:
+                kind = "unknown type"
+            elif "macro" in lowered:
+                kind = "macro expansion error"
             summary.append(f"{filename}:{match.group(2)}: {kind}")
         elif "Undefined symbols for architecture" in line:
             summary.append("arm64 linker: undefined symbols")
