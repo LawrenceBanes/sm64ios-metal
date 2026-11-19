@@ -49,7 +49,7 @@ xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \
 
 echo "Checking the Gameplay import command against the iOS SDK."
 xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \
-    -mios-version-min=15.0 -fobjc-arc -fsyntax-only -DNON_MATCHING=1 -DAVOID_UB=1 \
+    -mios-version-min=15.0 -fno-objc-arc -fobjc-weak -fsyntax-only -DNON_MATCHING=1 -DAVOID_UB=1 \
     -DIOS_BUILD=1 -DEXTERNAL_DATA=1 -DIOS_O2R_SCENE_RUNTIME=1 -DIOS_SCENE_DIAGNOSTIC=1 \
     "$repo_dir/src/pc/gfx/gfx_uikit.m"
 
