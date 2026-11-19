@@ -8050,7 +8050,7 @@ bool mod_runtime_import_zip(const char *zip_path, char *installed_path, unsigned
     if (!contains_lua) {
         if (contains_dynos) add_dynos_pack(name, installed);
         if (error && error_size) snprintf(error, error_size,
-            "DynOS pack imported, but model, animation, texture, and behavior decoding is not available in this engine yet");
+            "DynOS pack imported; supported actor models, PNG-backed textures, and a limited behavior subset can activate, while animation playback, collision assets, and some GeoLayout or material features remain unavailable");
         return contains_dynos;
     }
     add_mod(name, installed);
@@ -8100,7 +8100,7 @@ const char *mod_runtime_dynos_pack_summary(int index) {
     for (DynosPack *pack = sDynosPacks; pack; pack = pack->next) {
         if (!index--) {
             snprintf(result, sizeof(result),
-                     "%u model bins · %u texture assets · %u collision · %u levels · %u behaviors · %u audio · %u other · inactive",
+                     "%u model bins · %u texture assets · %u collision · %u levels · %u behaviors · %u audio · %u other · support varies",
                      pack->model_bins, pack->texture_assets, pack->collision_assets,
                      pack->level_assets, pack->behavior_assets, pack->audio_assets, pack->other_assets);
             break;

@@ -46,7 +46,7 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    return section == 1 ? @"DynOS packs are imported and retained, but this engine does not yet decode their model, animation, texture, or behavior assets." : nil;
+    return section == 1 ? @"Supported actor models, PNG-backed textures, and a limited behavior subset can be activated by enabled mods. Animation playback, collision assets, and some GeoLayout or material features are not supported yet." : nil;
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
@@ -58,7 +58,7 @@
         const char *name = mod_runtime_dynos_pack_name((int)indexPath.row);
         cell.textLabel.text = name ? [NSString stringWithUTF8String:name] : @"DynOS pack";
         const char *summary = mod_runtime_dynos_pack_summary((int)indexPath.row);
-        cell.detailTextLabel.text = summary ? [NSString stringWithUTF8String:summary] : @"Imported; DynOS runtime is unavailable";
+        cell.detailTextLabel.text = summary ? [NSString stringWithUTF8String:summary] : @"DynOS resources scanned; support varies by asset type";
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
@@ -118,7 +118,7 @@
         [self showMessage:error.localizedDescription ?: @"Could not queue this ZIP for import."];
         return;
     }
-    [self showMessage:@"Import queued. The game will validate and extract the package on its next update; unsupported DynOS assets will be listed as inactive."];
+    [self showMessage:@"Import queued. The game will validate and extract the package on its next update. Enable the imported mod, then use Activate imported OMM Peach model in Cheats / Play."];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self.tableView reloadData];
     });

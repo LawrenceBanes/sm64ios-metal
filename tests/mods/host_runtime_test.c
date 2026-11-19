@@ -1334,7 +1334,7 @@ int main(int argc, char **argv) {
     assert(mod_runtime_dynos_pack_count() == 1);
     assert(strcmp(mod_runtime_dynos_pack_name(0), "FixturePack") == 0);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "1 model bins · 2 texture assets") != NULL);
-    assert(strstr(mod_runtime_dynos_pack_summary(0), "inactive") != NULL);
+    assert(strstr(mod_runtime_dynos_pack_summary(0), "support varies") != NULL);
     assert(strcmp(mod_runtime_mod_name(0), "00_core") == 0);
     assert(mod_runtime_mod_enabled(0));
     assert(mod_runtime_mod_enabled(8));
