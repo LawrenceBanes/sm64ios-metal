@@ -7,12 +7,14 @@ import re
 
 
 SOURCE_ERROR = re.compile(r"(?:^|\s)([^\s:]+\.(?:c|cc|cpp|h|m|mm)):(\d+)(?::\d+)?:\s*(?:fatal )?error:")
+LINKER_SYMBOL = re.compile(r'^\s+["\']([A-Za-z0-9_.$@?]+)["\'],\s+referenced from:')
 
 
 def summarize(text: str) -> list[str]:
     summary = ["Full iPhoneOS game build: FAILED", "Raw Xcode output remains runner-local and is not published."]
     for line in text.splitlines():
         match = SOURCE_ERROR.search(line)
+        linker_symbol = LINKER_SYMBOL.match(line)
         if match:
             filename = Path(match.group(1)).name
             # Only the file basename, line number, and broad class leave the runner.
@@ -27,6 +29,8 @@ def summarize(text: str) -> list[str]:
             summary.append(f"{filename}:{match.group(2)}: {kind}")
         elif "Undefined symbols for architecture" in line:
             summary.append("arm64 linker: undefined symbols")
+        elif linker_symbol:
+            summary.append(f"arm64 linker missing: {linker_symbol.group(1)}")
         elif "ld: " in line and "error:" in line:
             summary.append("arm64 linker: error")
         if len(summary) >= 14:

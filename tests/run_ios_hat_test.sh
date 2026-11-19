@@ -70,6 +70,7 @@ for hyrule in 0 1; do
     $cc $common $flags -ffunction-sections -fdata-sections \
         -Iinclude -Isrc -I. tests/test_ios_hat.c $engine_sources \
         src/game/mario_actions_airborne.c src/pc/cheats.c src/engine/math_util.c \
+        tests/mods/mod_runtime_stubs.c \
         -Wl,--gc-sections -lm -o "$scratch/hat-test"
     "$scratch/hat-test"
 done

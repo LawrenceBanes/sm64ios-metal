@@ -45,6 +45,8 @@
 #include "ios_app_branding.h"
 #endif
 #include "fs/fs.h"
+#include "pc/mods/mod_runtime.h"
+#include "pc/mods/mod_audio.h"
 
 #import "src/ios/FrameController.h"
 #import "src/ios/GameTimer.h"
@@ -138,6 +140,7 @@ void produce_one_frame(void) {
         }
         //printf("Audio samples before submitting: %d\n", audio_api->buffered());
 
+        mod_audio_mix(audio_buffer, 2 * num_audio_samples, (f32)configSfxVolume / 127.0f * master_mod);
         audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
         gfx_end_frame();
         if (frame <= 3 || frame == 30) gfx_ios_diag_log("gfx_end_frame returned frame=%llu audioSamples=%u", (unsigned long long)frame, num_audio_samples);
@@ -155,6 +158,7 @@ void audio_shutdown(void) {
 }
 
 void game_deinit(void) {
+    mod_runtime_shutdown();
 #ifdef DISCORDRPC
     discord_shutdown();
 #endif
@@ -221,6 +225,7 @@ void main_func(void) {
     const char *gamedir = gCLIOpts.GameDir[0] ? gCLIOpts.GameDir : FS_BASEDIR;
     const char *userpath = gCLIOpts.SavePath[0] ? gCLIOpts.SavePath : sys_user_path();
     fs_init(sys_ropaths, gamedir, userpath);
+    mod_runtime_init();
     gfx_ios_diag_log("Filesystem initialized gameDir=%s userPath=%s", gamedir, userpath);
 
     configfile_load(configfile_name());

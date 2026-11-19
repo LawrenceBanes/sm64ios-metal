@@ -1,0 +1,648 @@
+#include <assert.h>
+#include <dirent.h>
+#include <errno.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lua.h"
+#include "lauxlib.h"
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "sm64.h"
+#include "audio_defines.h"
+#include "game/area.h"
+#include "game/camera.h"
+#include "pc/mods/mod_audio.h"
+#include "game/save_file.h"
+#include "game/level_update.h"
+#include "game/object_helpers.h"
+#include "game/object_list_processor.h"
+#include "game/print.h"
+#include "game/spawn_object.h"
+#include "pc/fs/fs.h"
+#include "pc/mods/mod_runtime.h"
+
+char fs_gamedir[SYS_MAX_PATH] = "";
+char fs_writepath[SYS_MAX_PATH] = "";
+struct MarioState gMarioStates[1];
+struct MarioState *gMarioState = &gMarioStates[0];
+struct Object *gCurrentObject;
+struct Camera *gCamera;
+f32 get_sound_pan(f32 x, f32 z) { (void)x; (void)z; return 0.5f; }
+struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
+struct ObjectNode *gObjectLists = gObjectListArray;
+static struct GraphNode *sLoadedGraphNodeStorage[0x100];
+struct GraphNode **gLoadedGraphNodes = sLoadedGraphNodeStorage;
+f32 gGlobalSoundSource[3];
+f32 gDefaultSoundArgs[3];
+s16 gCurrSaveFileNum = 1;
+s16 gCurrLevelNum;
+s16 gCurrAreaIndex;
+static s32 sLastSoundBits;
+static f32 sLastSoundPosition[3];
+static s32 sLastCompatSoundBits;
+static f32 sLastCompatSoundPosition[3];
+static s32 sLastGraphSoundBits;
+static f32 sLastGraphSoundPosition[3];
+int gModHudTestRectCount;
+int gModHudTestTextCount;
+int gModHudTestResolution;
+int gModHudTestColor[4] = { 255, 255, 255, 255 };
+s16 gMenuMode = -1;
+
+void mod_hud_reset_frame(void) {
+    gModHudTestRectCount = 0;
+    gModHudTestTextCount = 0;
+    gModHudTestResolution = 0;
+    gModHudTestColor[0] = gModHudTestColor[1] = gModHudTestColor[2] = gModHudTestColor[3] = 255;
+}
+bool mod_hud_set_resolution(int resolution) {
+    if (resolution < 0 || resolution > 1) return false;
+    gModHudTestResolution = resolution;
+    return true;
+}
+bool mod_hud_set_font(int font) { return font == 0; }
+void mod_hud_set_color(u8 r, u8 g, u8 b, u8 a) {
+    gModHudTestColor[0] = r; gModHudTestColor[1] = g; gModHudTestColor[2] = b; gModHudTestColor[3] = a;
+}
+void mod_hud_reset_color(void) { mod_hud_set_color(255, 255, 255, 255); }
+int mod_hud_get_screen_width(void) { return gModHudTestResolution == 0 ? 960 : 320; }
+int mod_hud_get_screen_height(void) { return gModHudTestResolution == 0 ? 720 : 240; }
+bool mod_hud_measure_text(const char *text, float *width, float *height) {
+    if (!text || !width || !height) return false;
+    *width = (float)strlen(text) * 8.0f;
+    *height = 16.0f;
+    return true;
+}
+bool mod_hud_render_rect(float x, float y, float width, float height) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) || width <= 0 || height <= 0) return false;
+    ++gModHudTestRectCount;
+    return true;
+}
+bool mod_hud_print_text(const char *text, float x, float y, float scale_x, float scale_y) {
+    if (!text || !isfinite(x) || !isfinite(y) || scale_x <= 0 || scale_y <= 0) return false;
+    ++gModHudTestTextCount;
+    return true;
+}
+u32 save_file_get_flags(void) { return 0; }
+u32 save_file_get_star_flags(s32 file_index, s32 course_index) {
+    (void)file_index; (void)course_index; return 0;
+}
+
+char *sys_strdup(const char *source) { return source ? strdup(source) : NULL; }
+
+static struct Object sMarioObject;
+static struct Object sSpawnedObject;
+static struct Object sSpawnedNativeObjects[3];
+static s32 sSpawnedNativeModels[3];
+static unsigned sSpawnedNativeObjectCount;
+static s32 sLastSpawnedModel;
+static struct Object sGoombas[3];
+const BehaviorScript bhvGoomba[] = { ((uintptr_t)OBJ_LIST_GENACTOR << 16) };
+const BehaviorScript bhvTree[] = { ((uintptr_t)OBJ_LIST_POLELIKE << 16) };
+static struct Controller sController;
+static unsigned sPrintedText;
+
+u32 get_object_list_from_behavior(const BehaviorScript *behavior) {
+    return (u32)((behavior[0] >> 16) & 0xFFu);
+}
+
+void obj_mark_for_deletion(struct Object *object) {
+    object->activeFlags = ACTIVE_FLAG_DEACTIVATED;
+}
+
+static void append_test_object(int list, struct Object *object, const BehaviorScript *behavior,
+                               s16 active_flags, s32 action) {
+    struct ObjectNode *head = &gObjectLists[list];
+    memset(object, 0, sizeof(*object));
+    object->behavior = behavior;
+    object->activeFlags = active_flags;
+    object->oAction = action;
+    object->header.prev = head->prev;
+    object->header.next = head;
+    head->prev->next = &object->header;
+    head->prev = &object->header;
+}
+
+static bool real_mod_storage_contains(const char *root, const char *needle) {
+    static const char hex[] = "0123456789abcdef";
+    const char *name = "sm64coop-achievements-2.1.0";
+    char path[SYS_MAX_PATH];
+    int n = snprintf(path, sizeof(path), "%s/mods_storage/", root);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return false;
+    size_t prefix = (size_t)n;
+    for (size_t i = 0; name[i]; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        if (prefix + i * 2 + 8 >= sizeof(path)) return false;
+        path[prefix + i * 2] = hex[c >> 4];
+        path[prefix + i * 2 + 1] = hex[c & 15];
+    }
+    snprintf(path + prefix + strlen(name) * 2, sizeof(path) - prefix - strlen(name) * 2, ".sav");
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    char data[16384];
+    size_t length = fread(data, 1, sizeof(data) - 1, file);
+    bool ok = !ferror(file) && feof(file);
+    fclose(file);
+    if (!ok) return false;
+    data[length] = '\0';
+    bool found = strstr(data, needle) != NULL;
+    if (!found) fprintf(stderr, "real mod storage missing '%s' in %s: %s\n", needle, path, data);
+    return found;
+}
+
+static bool list_add(fs_pathlist_t *list, const char *path) {
+    if (list->numpaths == list->listcap) {
+        int next_cap = list->listcap ? list->listcap * 2 : 16;
+        char **next = realloc(list->paths, sizeof(char *) * (size_t)next_cap);
+        if (!next) return false;
+        list->paths = next; list->listcap = next_cap;
+    }
+    list->paths[list->numpaths] = strdup(path);
+    if (!list->paths[list->numpaths]) return false;
+    list->numpaths++;
+    return true;
+}
+
+static bool walk_dir(const char *base, walk_fn_t callback, void *user, bool recur) {
+    DIR *dir = opendir(base);
+    if (!dir) return false;
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        if (entry->d_name[0] == '.') continue;
+        char full[SYS_MAX_PATH];
+        int n = snprintf(full, sizeof(full), "%s/%s", base, entry->d_name);
+        if (n <= 0 || (size_t)n >= sizeof(full)) { closedir(dir); return false; }
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (recur && !walk_dir(full, callback, user, recur)) { closedir(dir); return false; }
+        } else if (S_ISREG(st.st_mode) && !callback(user, full)) { closedir(dir); return false; }
+    }
+    closedir(dir);
+    return true;
+}
+
+bool fs_sys_walk(const char *base, walk_fn_t walk, void *user, const bool recur) {
+    return walk_dir(base, walk, user, recur);
+}
+
+static bool enum_cb(void *user, const char *path) { return list_add(user, path); }
+
+fs_pathlist_t fs_sys_enumerate(const char *base, const bool recur) {
+    fs_pathlist_t list = {0};
+    if (!walk_dir(base, enum_cb, &list, recur)) fs_pathlist_free(&list);
+    return list;
+}
+
+void fs_pathlist_free(fs_pathlist_t *list) {
+    if (!list) return;
+    for (int i = 0; i < list->numpaths; ++i) free(list->paths[i]);
+    free(list->paths); *list = (fs_pathlist_t){0};
+}
+
+bool fs_sys_dir_exists(const char *path) { struct stat st; return stat(path, &st) == 0 && S_ISDIR(st.st_mode); }
+bool fs_sys_file_exists(const char *path) { struct stat st; return stat(path, &st) == 0 && S_ISREG(st.st_mode); }
+bool fs_sys_mkdir(const char *path) { return mkdir(path, 0777) == 0 || errno == EEXIST; }
+bool fs_sys_copy_file(const char *src, const char *dst) { (void)src; (void)dst; return false; }
+
+const char *fs_get_write_path(const char *path) {
+    static char output[SYS_MAX_PATH];
+    snprintf(output, sizeof(output), "%s/%s", fs_writepath, path);
+    return output;
+}
+
+#ifndef MOD_RUNTIME_REAL_ZIP
+bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const char *dynos_dir,
+                            char *installed, size_t installed_size, bool *contains_lua,
+                            bool *contains_dynos, char *error, size_t error_size) {
+    (void)zip_path; (void)mods_dir; (void)dynos_dir; (void)installed; (void)installed_size;
+    if (contains_lua) *contains_lua = false;
+    if (contains_dynos) *contains_dynos = false;
+    if (error && error_size) snprintf(error, error_size, "not part of runtime unit test");
+    return false;
+}
+#endif
+
+u32 set_mario_action(struct MarioState *m, u32 action, u32 arg) {
+    m->prevAction = m->action; m->action = action; m->actionArg = arg;
+    m->actionState = m->actionTimer = 0;
+    return TRUE;
+}
+
+s32 perform_ground_step(struct MarioState *m) {
+    assert(m == gMarioState);
+    return GROUND_STEP_HIT_WALL;
+}
+
+s32 perform_air_step(struct MarioState *m, u32 step_arg) {
+    assert(m == gMarioState);
+    return (s32)(100 + step_arg);
+}
+
+u32 perform_water_step(struct MarioState *m) {
+    assert(m == gMarioState);
+    return WATER_STEP_CANCELLED;
+}
+
+s16 set_mario_animation(struct MarioState *m, s32 id) { (void)m; return (s16)id; }
+
+struct Object *spawn_object(struct Object *parent, s32 model, const BehaviorScript *behavior) {
+    if (behavior == bhvGoomba) {
+        assert(sSpawnedNativeObjectCount < sizeof(sSpawnedNativeObjects) / sizeof(sSpawnedNativeObjects[0]));
+        unsigned slot = sSpawnedNativeObjectCount++;
+        struct Object *native_object = &sSpawnedNativeObjects[slot];
+        sSpawnedNativeModels[slot] = model;
+        append_test_object(OBJ_LIST_GENACTOR, native_object, behavior, ACTIVE_FLAG_ACTIVE, 0);
+        native_object->parentObj = parent;
+        sLastSpawnedModel = model;
+        return native_object;
+    }
+    memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
+    sSpawnedObject.parentObj = parent; sSpawnedObject.behavior = behavior;
+    sSpawnedObject.activeFlags = ACTIVE_FLAG_ACTIVE;
+    sLastSpawnedModel = model;
+    return &sSpawnedObject;
+}
+
+struct Object *spawn_object_abs_with_rot(struct Object *parent, s16 spawn_type, u32 model,
+    const BehaviorScript *behavior, s16 x, s16 y, s16 z, s16 pitch, s16 yaw, s16 roll) {
+    (void)spawn_type;
+    struct Object *obj = spawn_object(parent, (s32)model, behavior);
+    obj->oPosX = x; obj->oPosY = y; obj->oPosZ = z;
+    obj->oFaceAnglePitch = pitch; obj->oFaceAngleYaw = yaw; obj->oFaceAngleRoll = roll;
+    return obj;
+}
+
+void print_text(s32 x, s32 y, const char *text) { (void)x; (void)y; (void)text; ++sPrintedText; }
+
+void play_sound(s32 sound_bits, f32 *position) {
+    sLastSoundBits = sound_bits;
+    memcpy(sLastSoundPosition, position, sizeof(sLastSoundPosition));
+    if (sound_bits == 0x1357) {
+        sLastCompatSoundBits = sound_bits;
+        memcpy(sLastCompatSoundPosition, position, sizeof(sLastCompatSoundPosition));
+    } else if (sound_bits == 0x2468) {
+        sLastGraphSoundBits = sound_bits;
+        memcpy(sLastGraphSoundPosition, position, sizeof(sLastGraphSoundPosition));
+    }
+}
+
+static void reset_game_state(void) {
+    memset(gMarioStates, 0, sizeof(gMarioStates));
+    memset(&sMarioObject, 0, sizeof(sMarioObject));
+    memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
+    memset(sSpawnedNativeObjects, 0, sizeof(sSpawnedNativeObjects));
+    memset(sSpawnedNativeModels, 0, sizeof(sSpawnedNativeModels));
+    sSpawnedNativeObjectCount = 0;
+    sLastSpawnedModel = -1;
+    memset(sGoombas, 0, sizeof(sGoombas));
+    memset(sLoadedGraphNodeStorage, 0, sizeof(sLoadedGraphNodeStorage));
+    sLoadedGraphNodeStorage[MODEL_GOOMBA] = (struct GraphNode *)1;
+    memset(gObjectListArray, 0, sizeof(gObjectListArray));
+    for (int i = 0; i < NUM_OBJ_LISTS; ++i) {
+        gObjectListArray[i].next = &gObjectListArray[i];
+        gObjectListArray[i].prev = &gObjectListArray[i];
+    }
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[0], bhvGoomba, ACTIVE_FLAG_ACTIVE, 101);
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[1], bhvGoomba, ACTIVE_FLAG_DEACTIVATED, 999);
+    append_test_object(OBJ_LIST_GENACTOR, &sGoombas[2], bhvGoomba, ACTIVE_FLAG_ACTIVE, 202);
+    memset(&sController, 0, sizeof(sController));
+    sController.buttonDown = D_JPAD;
+    memset(gGlobalSoundSource, 0, sizeof(gGlobalSoundSource));
+    memset(gDefaultSoundArgs, 0, sizeof(gDefaultSoundArgs));
+    sLastSoundBits = 0;
+    memset(sLastSoundPosition, 0, sizeof(sLastSoundPosition));
+    sLastCompatSoundBits = sLastGraphSoundBits = 0;
+    memset(sLastCompatSoundPosition, 0, sizeof(sLastCompatSoundPosition));
+    memset(sLastGraphSoundPosition, 0, sizeof(sLastGraphSoundPosition));
+    gMarioState = &gMarioStates[0];
+    gMarioState->marioObj = &sMarioObject;
+    sMarioObject.activeFlags = ACTIVE_FLAG_ACTIVE;
+    gMarioState->controller = &sController;
+    gMarioState->action = ACT_IDLE;
+    sController.buttonPressed = A_BUTTON | D_JPAD;
+}
+
+static int bytecode_writer(lua_State *L, const void *data, size_t size, void *userdata) {
+    (void)L;
+    return fwrite(data, 1, size, (FILE *)userdata) != size;
+}
+
+static void create_bytecode_fixture(const char *fixture_root) {
+    char path[SYS_MAX_PATH];
+    snprintf(path, sizeof(path), "%s/mods/01_require/scripts/precompiled.luac", fixture_root);
+    lua_State *compiler = luaL_newstate();
+    assert(compiler);
+    assert(luaL_loadstring(compiler, "return 3") == LUA_OK);
+    FILE *file = fopen(path, "wb");
+    assert(file);
+    assert(lua_dump(compiler, bytecode_writer, file, 0) == 0);
+    assert(fclose(file) == 0);
+    lua_close(compiler);
+}
+
+static void write_bytecode_script(const char *path, const char *source, unsigned other_size_t_width) {
+    lua_State *compiler = luaL_newstate();
+    assert(compiler);
+    assert(luaL_loadstring(compiler, source) == LUA_OK);
+    FILE *file = fopen(path, "wb");
+    assert(file);
+    assert(lua_dump(compiler, bytecode_writer, file, 0) == 0);
+    assert(fclose(file) == 0);
+    lua_close(compiler);
+    if (other_size_t_width) {
+        file = fopen(path, "r+b");
+        assert(file);
+        assert(fseek(file, 13, SEEK_SET) == 0);
+        assert(fputc((int)other_size_t_width, file) != EOF);
+        assert(fclose(file) == 0);
+    }
+}
+
+static void create_architecture_variant_fixture(const char *fixture_root) {
+    char directory[SYS_MAX_PATH], path[SYS_MAX_PATH];
+    snprintf(directory, sizeof(directory), "%s/mods/07_architecture_variants", fixture_root);
+    assert(fs_sys_mkdir(directory));
+    snprintf(path, sizeof(path), "%s/main.lua", directory);
+    FILE *file = fopen(path, "wb");
+    assert(file);
+    assert(fputs("-- paired Lua 5.3 bytecode architecture fixture\n", file) >= 0);
+    assert(fclose(file) == 0);
+
+    bool is_64_bit = sizeof(size_t) == 8;
+    snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "00-64.lua" : "00-32.lua");
+    write_bytecode_script(path, "gMarioState.numCoins = gMarioState.numCoins + 64", 0);
+    snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "01-32.lua" : "01-64.lua");
+    write_bytecode_script(path, "gMarioState.numCoins = gMarioState.numCoins + 1000", is_64_bit ? 4 : 8);
+}
+
+int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--external-root") == 0) {
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        assert(fs_sys_mkdir(fs_writepath));
+        reset_game_state();
+        assert(mod_runtime_init());
+        printf("external mod inventory: %d\n", mod_runtime_mod_count());
+        mod_runtime_update();
+        for (int i = 0; i < mod_runtime_mod_count(); ++i) {
+            printf("external mod %s: %s\n", mod_runtime_mod_name(i),
+                   mod_runtime_mod_enabled(i) ? "enabled" : "disabled");
+        }
+        mod_runtime_shutdown();
+        return 0;
+    }
+    if (argc == 4 && (!strcmp(argv[1], "--external-zip") || !strcmp(argv[1], "--possession-zip"))) {
+        bool possession = !strcmp(argv[1], "--possession-zip");
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        reset_game_state();
+        char installed[SYS_MAX_PATH], error[512] = {0};
+        if (!mod_runtime_init() ||
+            !mod_runtime_import_zip(argv[3], installed, sizeof(installed), error, sizeof(error))) {
+            fprintf(stderr, "ZIP import failed: %s\n", error);
+            return 1;
+        }
+        mod_runtime_update();
+        printf("Imported %s, startup %s\n", mod_runtime_mod_name(0), mod_runtime_mod_enabled(0) ? "passed" : "failed");
+        if (!mod_runtime_mod_enabled(0)) {
+            mod_runtime_shutdown();
+            return 1;
+        }
+        if (possession) {
+            append_test_object(OBJ_LIST_PLAYER, &sMarioObject, NULL, ACTIVE_FLAG_ACTIVE, 0);
+            sMarioObject.header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
+            sGoombas[0].oPosX = 80;
+            sGoombas[2].oPosX = 140;
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            sController.buttonPressed = 0;
+            gMarioState->forwardVel = 12;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(gMarioState->pos[0] == 80 && gMarioState->forwardVel == 24);
+            mod_runtime_hud_render();
+            assert(gModHudTestTextCount == 1);
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            assert(mod_runtime_set_enabled(0, false));
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            assert(mod_runtime_set_enabled(0, true));
+            sController.buttonPressed = D_JPAD;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(!(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE));
+            mod_runtime_object_unload(&sGoombas[0]);
+            sGoombas[0].oPosX = 400;
+            sController.buttonPressed = 0;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE);
+            assert(gMarioState->pos[0] == 80);
+            puts("Original possession callback: button, actor selection, visibility, following, velocity, and release passed");
+        } else {
+            mod_runtime_before_mario_update(gMarioState);
+            mod_runtime_after_mario_update(gMarioState);
+            mod_runtime_hud_render();
+        }
+        mod_runtime_shutdown();
+        return 0;
+    }
+    if (argc == 4 && strcmp(argv[1], "--real-zip") == 0) {
+        snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[2]);
+        assert(fs_sys_mkdir(fs_writepath));
+        reset_game_state();
+        char installed[SYS_MAX_PATH], error[512];
+        assert(mod_runtime_import_zip(argv[3], installed, sizeof(installed), error, sizeof(error)));
+        printf("real ZIP import: PASS (%s)\n", installed);
+        assert(mod_runtime_init());
+        assert(mod_runtime_mod_count() == 1);
+        printf("real ZIP discovered mod: %s\n", mod_runtime_mod_name(0));
+        mod_runtime_update();
+        assert(mod_runtime_menu_item_count(0) == 11);
+        ModRuntimeMenuItem menu_item;
+        assert(mod_runtime_menu_get_item(0, 0, &menu_item));
+        assert(menu_item.type == MOD_RUNTIME_MENU_SLIDER);
+        assert(menu_item.minimum == 1 && menu_item.maximum == 8);
+        assert(mod_runtime_request_menu_set_value(0, 0, 2));
+        mod_runtime_update();
+        assert(mod_runtime_menu_get_item(0, 0, &menu_item));
+        assert(menu_item.value == 2);
+        gMarioState->numStars = 1;
+        for (int frame = 0; frame < 15; ++frame) mod_runtime_after_mario_update(gMarioState);
+        assert(real_mod_storage_contains(argv[2], "73315f676574315374617273=31"));
+        /* Unsupported sound/HUD calls should be diagnosed and isolated to their hooks. */
+        mod_runtime_update();
+        mod_runtime_hud_render();
+        assert(mod_runtime_mod_enabled(0));
+        printf("real ZIP startup: %s\n", mod_runtime_mod_enabled(0) ? "loaded" : "failed/disabled");
+        assert(mod_runtime_set_enabled(0, false));
+        assert(mod_runtime_menu_item_count(0) == 0);
+        assert(mod_runtime_set_enabled(0, true));
+        assert(mod_runtime_menu_item_count(0) == 11);
+        mod_runtime_shutdown();
+        assert(mod_runtime_init());
+        mod_runtime_update();
+        gMarioState->numStars = 1;
+        mod_runtime_after_mario_update(gMarioState);
+        assert(real_mod_storage_contains(argv[2], "73315f676574315374617273=31"));
+        mod_runtime_shutdown();
+        return 0;
+    }
+    assert(argc == 2);
+    snprintf(fs_writepath, sizeof(fs_writepath), "%s", argv[1]);
+    create_bytecode_fixture(argv[1]);
+    create_architecture_variant_fixture(argv[1]);
+    reset_game_state();
+    assert(mod_runtime_init());
+    assert(mod_runtime_mod_count() == 9);
+    assert(mod_runtime_dynos_pack_count() == 1);
+    assert(strcmp(mod_runtime_dynos_pack_name(0), "FixturePack") == 0);
+    assert(strstr(mod_runtime_dynos_pack_summary(0), "1 model bins · 2 texture assets") != NULL);
+    assert(strstr(mod_runtime_dynos_pack_summary(0), "inactive") != NULL);
+    assert(strcmp(mod_runtime_mod_name(0), "00_core") == 0);
+    assert(mod_runtime_mod_enabled(0));
+    assert(mod_runtime_mod_enabled(8));
+
+    mod_runtime_update();
+    mod_runtime_hud_render();
+    assert(mod_runtime_mod_enabled(8));
+    assert(gModHudTestRectCount == 2 && gModHudTestTextCount == 2);
+    assert(gModHudTestResolution == 0);
+    assert(gModHudTestColor[0] == 255 && gModHudTestColor[1] == 255 &&
+           gModHudTestColor[2] == 255 && gModHudTestColor[3] == 255);
+    assert(sLastSoundBits == SOUND_MENU_PINCH_MARIO_FACE); /* Upstream popup notification sound. */
+    int16_t pcm[256] = {0};
+    mod_audio_mix(pcm, 128, 1);
+    bool heard = false;
+    for (size_t i = 0; i < 256; i += 2) {
+        assert(pcm[i] == pcm[i + 1]);
+        heard |= pcm[i] != 0;
+    }
+    assert(heard);
+    assert(mod_runtime_set_enabled(8, false));
+    memset(pcm, 0, sizeof(pcm));
+    mod_audio_mix(pcm, 128, 1);
+    for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
+    mod_runtime_hud_render();
+    assert(gModHudTestRectCount == 0 && gModHudTestTextCount == 0); /* Unload clears owner popups. */
+    assert(mod_runtime_set_enabled(8, true));
+    mod_runtime_hud_render();
+    assert(gModHudTestRectCount == 2 && gModHudTestTextCount == 2);
+    assert(mod_runtime_menu_set_value(8, 0, 0));
+    mod_audio_mix(pcm, 128, 1);
+    for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
+    assert(sSpawnedNativeObjectCount == 3);
+    assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);
+    assert(sSpawnedNativeModels[2] == MODEL_NONE);
+    assert(sSpawnedNativeObjects[0].activeFlags == ACTIVE_FLAG_DEACTIVATED); /* Failed setup was discarded. */
+    assert(sSpawnedNativeObjects[1].behavior == bhvGoomba);
+    assert(sSpawnedNativeObjects[1].parentObj == &sSpawnedNativeObjects[1]);
+    assert(sSpawnedNativeObjects[1].oPosX == 12.5f && sSpawnedNativeObjects[1].oPosY == 34.5f &&
+           sSpawnedNativeObjects[1].oPosZ == 56.5f);
+    assert(sSpawnedNativeObjects[1].oHomeX == 12.5f && sSpawnedNativeObjects[1].oHomeY == 34.5f &&
+           sSpawnedNativeObjects[1].oHomeZ == 56.5f);
+    assert(sSpawnedNativeObjects[1].oAction == 909);
+    assert(sSpawnedNativeObjects[2].parentObj == &sSpawnedNativeObjects[2]);
+    assert(sSpawnedNativeObjects[2].oPosX == 100.0f && sSpawnedNativeObjects[2].oPosY == 200.0f &&
+           sSpawnedNativeObjects[2].oPosZ == 300.0f);
+    assert(mod_runtime_mod_enabled(3)); /* Setup failure is isolated to its object. */
+    assert(sLastCompatSoundBits == 0x1357);
+    assert(sLastCompatSoundPosition[0] == 12.0f && sLastCompatSoundPosition[1] == 34.0f &&
+           sLastCompatSoundPosition[2] == 56.0f);
+    assert(sLastGraphSoundBits == 0x2468);
+    assert(sLastGraphSoundPosition[0] == 12.0f && sLastGraphSoundPosition[1] == 34.0f &&
+           sLastGraphSoundPosition[2] == 56.0f);
+    assert((sMarioObject.header.gfx.node.flags & GRAPH_RENDER_ACTIVE) == 0);
+    assert(sMarioObject.header.gfx.cameraToObject[0] == 12.0f &&
+           sMarioObject.header.gfx.cameraToObject[1] == 34.0f &&
+           sMarioObject.header.gfx.cameraToObject[2] == 56.0f);
+    assert(mod_runtime_mod_enabled(7));
+    assert(gMarioState->numCoins == 178); /* Native-width bytecode runs; the alternate-width twin is skipped. */
+    assert(!mod_runtime_mod_enabled(4));
+    assert(mod_runtime_mod_enabled(2)); /* Missing API callback failure is isolated to that hook. */
+    assert(gMarioState->numCoins == 178); /* Relative modules, per-mod cache isolation, architecture skip, and coroutine budget. */
+    assert(gMarioState->numLives == 111); /* Module and callback-relative require plus isolated failure. */
+    assert(!mod_runtime_set_enabled(4, true)); /* Failed initialization was cleaned and remains disabled. */
+    assert(gMarioState->action & ACT_FLAG_CUSTOM_ACTION);
+    assert((gMarioState->action & ACT_GROUP_MASK) == ACT_GROUP_AIRBORNE);
+
+    mod_runtime_update();
+    assert(gMarioState->numCoins == 192);
+    assert(gMarioState->numLives == 111);
+
+    mod_runtime_after_mario_update(gMarioState);
+    assert(gMarioState->pos[0] == 1.0f);
+    assert(gMarioState->pos[2] == 5.0f);
+
+    int in_loop = 0;
+    assert(mod_runtime_mario_action(gMarioState, &in_loop));
+    assert(!in_loop && gMarioState->actionTimer == 1);
+    gMarioState->vel[1] = 10.0f;
+    assert(mod_runtime_mario_gravity(gMarioState));
+    assert(gMarioState->vel[1] == 8.0f);
+    assert(!mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x1234));
+    assert(mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x5678));
+    assert(mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x9abc));
+
+    uint32_t incoming = 0x12345678;
+    bool cancel = false;
+    mod_runtime_before_set_action(gMarioState, &incoming, 7, &cancel);
+    assert(!cancel && incoming == ACT_JUMP);
+
+    gCurrentObject = &sSpawnedObject;
+    mod_runtime_behavior_tick();
+    assert(sSpawnedObject.oPosX == 4.0f && sSpawnedObject.oPosY == 2.0f);
+    mod_runtime_behavior_tick();
+    assert(sSpawnedObject.oPosY == 4.0f);
+    mod_runtime_update();
+    assert(gMarioState->numStars == 4);
+    assert(gMarioState->numCoins == 206);
+
+    assert(mod_runtime_set_enabled(0, false));
+    assert(!mod_runtime_mod_enabled(0));
+    int coins_before = gMarioState->numCoins;
+    mod_runtime_update();
+    assert(gMarioState->numCoins == coins_before + 13);
+
+    assert(mod_runtime_set_enabled(3, false));
+    float old_y = sSpawnedObject.oPosY;
+    assert(sSpawnedObject.activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[0].activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[1].activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[2].activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    mod_runtime_behavior_tick();
+    assert(sSpawnedObject.oPosY == old_y);
+
+    assert(mod_runtime_set_enabled(0, true));
+    assert(mod_runtime_mod_enabled(0));
+    int32_t step_result = -1;
+    int coins_before_step_hook = gMarioState->numCoins;
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_AIR, 55, &step_result));
+    assert(step_result == AIR_STEP_LANDED);
+    assert(gMarioState->numCoins == coins_before_step_hook + 1); /* First output stops later physics hooks. */
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_GROUND, 0, &step_result));
+    assert(step_result == GROUND_STEP_NONE);
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_WATER, 0, &step_result));
+    assert(step_result == WATER_STEP_CANCELLED);
+    assert(mod_runtime_before_phys_step(gMarioState, MOD_RUNTIME_STEP_TYPE_HANG, 0, &step_result));
+    assert(step_result == 77);
+    assert(!mod_runtime_before_phys_step(gMarioState, 99, 0, &step_result));
+    assert(gMarioState->numCoins == coins_before_step_hook + 1);
+    gMarioState->health = 4660;
+    mod_runtime_update();
+    assert(gMarioState->health == GROUND_STEP_HIT_WALL);
+    gMarioState->health = 4661;
+    mod_runtime_update();
+    assert(gMarioState->health == 123);
+    gMarioState->health = 4662;
+    mod_runtime_update();
+    assert(gMarioState->health == WATER_STEP_CANCELLED);
+    mod_runtime_shutdown();
+    puts("mod runtime host regression checks passed");
+    return 0;
+}

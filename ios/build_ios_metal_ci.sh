@@ -10,7 +10,7 @@ cleanup() {
     rm -rf -- "$private_dir"
     if [[ ${GITHUB_ACTIONS:-} == true ]]; then
         rm -rf -- "$output_dir/SDL2"
-        if [[ "$mode" == full ]]; then
+        if [[ "$mode" == full || "$mode" == compile ]]; then
             rm -rf -- "$output_dir/ios-products" "$output_dir/DerivedData" "$sdl_stage/build"
         fi
     fi
@@ -258,6 +258,38 @@ build_full_game() {
     echo 'IPA was uploaded only to the configured private draft release; no game app, raw full-build log, or extracted asset is uploaded.'
 }
 
+compile_full_game() {
+    [[ -f "$product_dir/libSDL2.a" && -f "$sdl_stage/include/SDL2/SDL_config.h" ]] || {
+        echo 'Run asset-free validation first to build pinned SDL2' >&2
+        return 1
+    }
+    download_private_assets
+    unset SM64_PRIVATE_BUILD_GH_TOKEN
+    install_game_tools
+    local raw_log="$private_dir/ios-compile.log"
+    if ! SM64_SKIP_CODESIGN=1 NOEXTRACT=1 EXTERNAL_DATA=1 \
+        IOS_HYRULE_WORLD=0 IOS_HYRULE_GATE_DIAGNOSTICS=0 IOS_CONNECTED_WORLD_TEST=1 IOS_OBJCOPY="$ios_objcopy" \
+        IOS_HAT_MOVEMENT=0 IOS_CONNECTED_WORLD=0 \
+        xcodebuild -project sm64ios/sm64ios.xcodeproj -scheme sm64ios \
+        -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+        -derivedDataPath "$output_dir/DerivedData" \
+        SYMROOT="$output_dir/ios-products" CONFIGURATION_BUILD_DIR="$product_dir" \
+        SDL2_ROOT="$sdl_stage" SDL2_INCLUDE_DIR="$sdl_stage/include" \
+        IOS_HYRULE_WORLD=0 IOS_HYRULE_GATE_DIAGNOSTICS=0 IOS_CONNECTED_WORLD_TEST=1 \
+        IOS_HAT_MOVEMENT=0 IOS_CONNECTED_WORLD=0 \
+        CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build \
+        >"$raw_log" 2>&1; then
+        python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-compile-summary.txt"
+        cat "$safe_dir/ios-compile-summary.txt" >&2
+        return 1
+    fi
+    [[ -d "$product_dir/sm64ios.app" ]] || { echo 'Xcode did not create the app bundle' >&2; return 1; }
+    python3 ios/ci_summarize_build_log.py "$raw_log" >"$safe_dir/ios-compile-summary.txt"
+    printf 'Full iPhoneOS arm64 Metal game compilation: PASS\n' >>"$safe_dir/ios-compile-summary.txt"
+    cat "$safe_dir/ios-compile-summary.txt"
+    echo 'Compile-only validation passed. No IPA was packaged or uploaded.'
+}
+
 upload_private_ipa() {
     local ipa=$1 digest=$2 token=$3 release_label=$4 repository tag visibility checksum_file
     : "${SM64_IPA_PRIVATE_REPOSITORY:?Set the private owner/repo in the SM64_IPA_PRIVATE_REPOSITORY Actions variable}"
@@ -297,8 +329,8 @@ upload_private_ipa() {
 main() {
     set -euo pipefail
     mode=${1:-validate}
-    [[ "$mode" == validate || "$mode" == full ]] || {
-        echo 'usage: ios/build_ios_metal_ci.sh validate|full' >&2
+    [[ "$mode" == validate || "$mode" == compile || "$mode" == full ]] || {
+        echo 'usage: ios/build_ios_metal_ci.sh validate|compile|full' >&2
         exit 2
     }
 
@@ -315,6 +347,8 @@ main() {
 
     if [[ "$mode" == validate ]]; then
         validate_asset_free
+    elif [[ "$mode" == compile ]]; then
+        compile_full_game
     else
         build_full_game
     fi

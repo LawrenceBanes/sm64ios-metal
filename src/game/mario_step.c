@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "mario_step.h"
 #include "game/ios_reality.h"
+#include "pc/mods/mod_runtime.h"
 
 static s16 sMovingSandSpeeds[] = { 12, 8, 4, 0 };
 
@@ -332,7 +333,12 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
 s32 perform_ground_step(struct MarioState *m) {
     s32 i;
     u32 stepResult;
+    s32 stepResultOverride;
     Vec3f intendedPos;
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_GROUND, 0, &stepResultOverride)) {
+        return stepResultOverride;
+    }
 
     for (i = 0; i < 4; i++) {
         intendedPos[0] = m->pos[0] + m->floor->normal.y * (m->vel[0] / 4.0f);
@@ -553,6 +559,7 @@ void apply_gravity(struct MarioState *m) {
     const IOSRealityPolicy *policy = ios_reality_global_policy();
     f32 initialVelY = m->vel[1];
     if (policy->zero_gravity) return;
+    if (mod_runtime_mario_gravity(m)) return;
     if (policy->gravity_multiplier < 0.0f && !should_strengthen_gravity_for_jump_ascent(m)) {
         f32 strength = -policy->gravity_multiplier;
         f32 acceleration = 4.0f;
@@ -666,9 +673,14 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
     s32 i;
     s32 quarterStepResult;
     s32 stepResult = AIR_STEP_NONE;
+    s32 stepResultOverride;
 #ifdef IOS_HAT_MOVEMENT
     bool hatBounce = false;
 #endif
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_AIR, stepArg, &stepResultOverride)) {
+        return stepResultOverride;
+    }
 
     m->wall = NULL;
 

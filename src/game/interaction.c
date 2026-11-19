@@ -23,6 +23,7 @@
 #include "sm64.h"
 #include "sound_init.h"
 #include "thread6.h"
+#include "pc/mods/mod_runtime.h"
 
 #define INT_GROUND_POUND_OR_TWIRL (1 << 0) // 0x01
 #define INT_PUNCH                 (1 << 1) // 0x02
@@ -1751,7 +1752,12 @@ void mario_process_interactions(struct MarioState *m) {
                 m->collidedObjInteractTypes &= ~interactType;
 
                 if (!(object->oInteractStatus & INT_STATUS_INTERACTED)) {
-                    if (sInteractionHandlers[i].handler(m, interactType, object)) {
+                    bool handled = false;
+                    if (mod_runtime_allow_interact(m, object, interactType)) {
+                        handled = sInteractionHandlers[i].handler(m, interactType, object);
+                    }
+                    mod_runtime_on_interact(m, object, interactType, handled);
+                    if (handled) {
                         break;
                     }
                 }

@@ -21,6 +21,7 @@
 #include "segment2.h"
 #include "segment_symbols.h"
 #include "thread6.h"
+#include "pc/mods/mod_runtime.h"
 #include <prevent_bss_reordering.h>
 #ifdef BETTERCAMERA
 #include "bettercamera.h"
@@ -609,6 +610,7 @@ void game_loop_one_iteration(void) {
     config_gfx_pool();
     read_controller_inputs();
     levelCommandAddr = level_script_execute(levelCommandAddr);
+    mod_runtime_update();
     display_and_vsync();
     
 

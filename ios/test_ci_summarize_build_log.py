@@ -18,6 +18,17 @@ ld: error: private token ghp_please_do_not_print
     def test_reports_unclassified_failure_without_echoing_log(self):
         self.assertIn("No compiler diagnostic", "\n".join(summarize("private failure content")))
 
+    def test_reports_only_sanitized_linker_symbol_names(self):
+        log = '''Undefined symbols for architecture arm64:
+  "_mod_runtime_before_phys_step", referenced from:
+      _perform_ground_step in /private/build/secret/obj/mario_step.o
+ld: symbol(s) not found for architecture arm64
+'''
+        output = "\n".join(summarize(log))
+        self.assertIn("arm64 linker: undefined symbols", output)
+        self.assertIn("arm64 linker missing: _mod_runtime_before_phys_step", output)
+        self.assertNotIn("/private/build/secret", output)
+
 
 if __name__ == "__main__":
     unittest.main()

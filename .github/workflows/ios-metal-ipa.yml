@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ios, ci/ios-metal-m57-25c]
+    branches: [ios, ci/ios-metal-m57-25c, "metal-validation/**"]
   workflow_dispatch:
     inputs:
       full_game:
@@ -10,6 +10,11 @@ on:
         type: boolean
         required: true
         default: true
+      compile_only:
+        description: Compile the full iPhoneOS app without IPA packaging or upload (set full_game false)
+        type: boolean
+        required: false
+        default: false
       asset_bundle_release_tag:
         description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
@@ -45,7 +50,7 @@ jobs:
   linux-checks:
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]') || startsWith(github.ref, 'refs/heads/metal-validation/'))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +77,7 @@ jobs:
     needs: linux-checks
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]') || startsWith(github.ref, 'refs/heads/metal-validation/'))
     runs-on: xcode-27
     timeout-minutes: 90
     permissions:
@@ -92,8 +97,17 @@ jobs:
         shell: bash
         run: bash ios/build_ios_metal_ci.sh validate
 
+      - name: Compile full app for iPhoneOS arm64 without packaging
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.compile_only) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/metal-validation/')) }}
+        shell: bash
+        env:
+          SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
+          SM64_PRIVATE_BUILD_GH_TOKEN: ${{ secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
+          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag || vars.SM64_ASSET_BUNDLE_RELEASE_TAG }}
+        run: bash ios/build_ios_metal_ci.sh compile
+
       - name: Build complete app, package IPA, and upload only to private vault
-        if: ${{ inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/metal-validation/') && contains(github.event.head_commit.message, '[build-ipa]')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
