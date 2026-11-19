@@ -2,7 +2,7 @@
 """Convert a supported, authorized O2R scene into a local Documents import tree."""
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from fractions import Fraction
 from hashlib import sha256
 import json
@@ -112,23 +112,28 @@ def texture_binding(texture, resources, entries, pngs, filter_mode):
             raise ValueError(f"{path}: LOADBLOCK must cover the whole backing texture")
     else:
         image = load["image"]
-        texel_bytes = source["bits_per_pixel"] // 8
-        if (texel_bytes not in (1, 2) or image["size_bits"] != source["bits_per_pixel"]
+        bits_per_pixel = source["bits_per_pixel"]
+        if (bits_per_pixel not in (4, 8, 16) or image["size_bits"] != bits_per_pixel
                 or image["format"] != tile["format"] or image["offset"] or image["width"] != width
                 or any(value % 4 for value in load["bounds_10_2"])):
-            raise ValueError(f"{path}: LOADTILE requires aligned 8- or 16-bit source texels and matching source stride")
+            raise ValueError(f"{path}: LOADTILE requires packed 4-, 8-, or 16-bit source texels and matching source stride")
         uls, ult, _, _ = load["bounds_10_2"]
         left, top = uls // 4, ult // 4
         crop_width, crop_height = load["width"], load["height"]
-        row_bytes = crop_width * texel_bytes
+        row_bytes = (crop_width * bits_per_pixel + 7) // 8
         tmem_stride = ((row_bytes + 7) // 8) * 8
         if (left + crop_width > width or top + crop_height > height
                 or uv["tile_extent"] != [crop_width, crop_height]
                 or load["destination_stride_bytes"] != tmem_stride or tile["line_words"] * 8 != tmem_stride):
             raise ValueError(f"{path}: LOADTILE rectangle, TMEM stride, or render tile extent disagrees")
-        stride = width * texel_bytes
-        start = (top * width + left) * texel_bytes
-        payload = b"".join(payload[start + y * stride:start + y * stride + row_bytes] for y in range(crop_height))
+        stride = (width * bits_per_pixel + 7) // 8
+        if bits_per_pixel == 4:
+            payload = crop_ci4(payload, width, height, left, top, crop_width, crop_height)
+        else:
+            texel_bytes = bits_per_pixel // 8
+            start = (top * width + left) * texel_bytes
+            payload = b"".join(payload[start + y * stride:start + y * stride + row_bytes]
+                               for y in range(crop_height))
         width, height = crop_width, crop_height
         source.update(width=width, height=height, image_data_size=len(payload))
     binding = {"name": "scenes/placeholder.rgba16", "width": width, "height": height,
@@ -158,6 +163,26 @@ def texture_binding(texture, resources, entries, pngs, filter_mode):
     name = binding["name"] = f"scenes/o2r-{key}.rgba16"
     pngs.setdefault(name, (width, height, pixels))
     return binding
+
+
+def crop_ci4(payload, source_width, source_height, left, top, width, height):
+    """Crop high-nibble-first CI4 rows, including an odd source X origin."""
+    if len(payload) != (source_width * source_height + 1) // 2:
+        raise ValueError("CI4 payload size does not match its source dimensions")
+    if min(left, top) < 0 or width <= 0 or height <= 0 or left + width > source_width or top + height > source_height:
+        raise ValueError("CI4 crop is outside its source texture")
+    result = bytearray((width * height + 1) // 2)
+    for y in range(height):
+        for x in range(width):
+            source_index = (top + y) * source_width + left + x
+            packed = payload[source_index // 2]
+            value = (packed >> 4) & 15 if source_index % 2 == 0 else packed & 15
+            target_index = y * width + x
+            if target_index % 2 == 0:
+                result[target_index // 2] = value << 4
+            else:
+                result[target_index // 2] |= value
+    return bytes(result)
 
 
 def lower_material(draw, resources, entries, pngs):
@@ -232,10 +257,11 @@ class Conversion:
                 raise ValueError("; ".join(draw["missing"] + draw["approximations"]))
             material, shade_rgb, shade_alpha = lower_material(draw, self.resources, palettes, self.pngs)
             vertices = []
-            for path, index, scale, geometry in refs:
+            for path, index, scale, geometry, matrix in refs:
                 if geometry:
                     raise ValueError("lighting or texgen applied at vertex load; pre-bake vertex colors and UVs in the source")
                 position, source_uv, cn = self.vertex(path, index)
+                position = transform_position(position, matrix)
                 uv = [0, 0] if not material["textures"] else [
                     coordinate * factor >> 16 for coordinate, factor in zip(source_uv, scale)]
                 color = (list(cn[:3]) if shade_rgb else WHITE[:3]) + [cn[3] if shade_alpha else 255]
@@ -305,6 +331,7 @@ class Conversion:
                                         pass_preludes=preludes, room_segments=room_segments).run()
         self.report.update(candidate_draws=len(trace_report["draws"]), trace_issues=trace_report["issues"],
                            trace_coverage=trace_report["coverage"], texture_count=len(self.pngs))
+        self.converted_sources.update(trace_report["coverage"]["static_matrix_resources"])
         rooms = [{"id": i + 1, "batches": self.batches[path], "neighbors": []} for i, path in enumerate(room_paths)]
         summaries = [{"id": room["id"], "neighbors": room["neighbors"], "batches": len(room["batches"]),
                       "render_triangles": sum(len(batch["render_vertices"]) // 3 for batch in room["batches"]),
@@ -359,6 +386,54 @@ class Conversion:
         self.converted_sources.update({self.root, *room_paths})
         return {"version": 3, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
 
+    def compatibility_summary(self, package=None):
+        reasons = Counter(failure["reason"] for failure in self.failures)
+        trace_reasons = Counter(issue["reason"] for issue in self.report.get("trace_issues", []))
+        translated = max(0, self.report["candidate_draws"] - len(self.failures))
+        render_vertices = sum(len(batch["render_vertices"])
+                              for batches in self.batches.values() for batch in batches)
+        collision_vertices = (sum(len(room["collision_vertices"]) for room in package["rooms"])
+                              if package else None)
+        collision_triangles = sum(room.get("collision_triangles", 0) for room in self.report.get("rooms", []))
+        room_links = sum(len(room.get("neighbors", [])) for room in self.report.get("rooms", [])) // 2
+        texture_bytes = sum(width * height * 4 for width, height, _ in self.pngs.values())
+        return {
+            "schema_version": 1,
+            "draws": {"candidate": self.report["candidate_draws"], "translated": translated,
+                      "rejected": len(self.failures), "rejection_reasons": dict(sorted(reasons.items()))},
+            "geometry": {"rooms": len(self.report.get("rooms", [])), "materials": len({
+                json.dumps(batch["material"], sort_keys=True)
+                for batches in self.batches.values() for batch in batches}),
+                "batches": sum(len(batches) for batches in self.batches.values()),
+                "render_triangles": sum(len(batch["render_vertices"]) // 3
+                                         for batches in self.batches.values() for batch in batches),
+                "static_matrix_resources": self.report.get("trace_coverage", {}).get("static_matrix_resources", [])},
+            "textures": {"count": len(self.pngs), "decoded_rgba_bytes": texture_bytes,
+                         "formats": ["RGBA16", "RGBA32", "CI4", "CI8", "I4", "I8", "IA4", "IA8", "IA16"],
+                         "loadtile": ["4-bit packed crop", "8-bit byte crop", "16-bit byte crop"]},
+            "collision": {"vertices": collision_vertices, "triangles": collision_triangles,
+                          "coverage": "validated room collision; source water boxes and unsupported participation flags reject"},
+            "rooms": {"entrances": len(self.report.get("entrances", [])), "neighbor_links": room_links,
+                      "connected_rooms": sum(bool(room.get("neighbors")) for room in self.report.get("rooms", []))},
+            "memory_estimate": {"package_bytes": len(package["bytes"]) if package else None,
+                                "decoded_texture_rgba_bytes": texture_bytes,
+                                "render_vertex_payload_bytes": render_vertices * 14,
+                                "collision_vertex_payload_bytes": collision_vertices * 6 if collision_vertices is not None else None,
+                                "collision_triangle_payload_bytes": collision_triangles * 8,
+                                "method": "serialized WSC payload and decoded RGBA texture bytes; excludes allocator/GPU overhead"},
+            "unsupported_features": sorted(set(self.report.get("unmapped_metadata", [])) |
+                                            {failure["reason"] for failure in self.failures} |
+                                            {issue["reason"] for issue in self.report.get("trace_issues", [])}),
+            "trace_issue_reasons": dict(sorted(trace_reasons.items())),
+            "supported_subsets": {
+                "display_lists": ["bounded F3DEX2 triangle batches", "hashed display-list calls",
+                                   "explicit static segment bindings", "hashed/segmented static model-view matrices"],
+                "textures": ["whole-image loads", "validated 4/8/16-bit LOADTILE crops", "CI4/CI8 palette baking"],
+                "materials": ["validated dual-texture environment-alpha subset", "point/three-point filter",
+                              "per-axis repeat/clamp/mirror where WSC3 addressing is equivalent"],
+                "scene": ["room-local collision", "validated spawn floors", "room adjacency and safe re-entry"]},
+        }
+
     def entrances(self, source, rooms):
         actors = command_of(source, 0, self.root).get("entries", [])
         rows = command_of(source, 6, self.root).get("entrances", [])
@@ -382,6 +457,13 @@ class Conversion:
 def cross(a, b, c):
     u, v = [x - y for x, y in zip(b, a)], [x - y for x, y in zip(c, a)]
     return [u[(i + 1) % 3] * v[(i + 2) % 3] - u[(i + 2) % 3] * v[(i + 1) % 3] for i in range(3)]
+
+
+def transform_position(position, matrix):
+    if any(abs(matrix[row][3]) > 1e-9 for row in range(3)) or abs(matrix[3][3] - 1.0) > 1e-9:
+        raise ValueError("projective or non-affine model-view matrix cannot be baked into world coordinates")
+    return [sum(position[row] * matrix[row][column] for row in range(3)) + matrix[3][column]
+            for column in range(3)]
 
 
 def connect_rooms(rooms, transitions, links):
@@ -501,6 +583,9 @@ def convert_archive(archive_path, source, layout, scale, offset, expanded, segme
             if not audit:
                 raise
             conversion.report["scene_issues"].append({"stage": stage, "resource": source, "reason": str(error)})
+        conversion.report["compatibility"] = conversion.compatibility_summary(
+            {"rooms": scene["rooms"], "entrances": scene["entrances"], "bytes": package}
+            if package is not None else None)
         conversion.report["resources"] = {
             "archive_entries": len(resources.index),
             "observed": [{"path": path, **record} for path, record in sorted(resources.accessed.items())],

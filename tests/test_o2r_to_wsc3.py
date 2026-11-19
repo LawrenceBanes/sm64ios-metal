@@ -10,7 +10,8 @@ import unittest
 from zipfile import ZipFile
 
 from test_o2r_draw_trace import bounds, display_list, packet, ref, resource, scene, text, tile
-from tools.o2r_to_wsc3 import convert_archive
+from tools import o2r_draw_trace as trace
+from tools.o2r_to_wsc3 import convert_archive, crop_ci4, transform_position
 
 ROOT = "workshop/scene"
 ROOMS = ("workshop/west", "workshop/east")
@@ -18,6 +19,13 @@ ROOMS = ("workshop/west", "workshop/east")
 
 def texture(fmt, width, height, data):
     return resource("OTEX", struct.pack(">4I", fmt, width, height, len(data)) + data)
+
+
+def matrix_resource(values):
+    flat = [value for row in values for value in row]
+    fixed = [round(value * 65536) for value in flat]
+    return resource("OMTX", struct.pack(">16h16H", *(value >> 16 for value in fixed),
+                                       *(value & 0xFFFF for value in fixed)))
 
 
 def floor_points(a, b, y=0):
@@ -50,23 +58,38 @@ def header(shared):
     return scene(*commands)
 
 
-def fixture(path, *, shared=False, fog=False, format_error=False, crop=None):
+def fixture(path, *, shared=False, fog=False, format_error=False, crop=None, transform=False):
     # The outer image border is red. A byte-exact crop of the inner rows
     # has blue pixels and a green bottom row, making stride mistakes visible.
     pixels = b"".join(b"\x07\xc1" if 2 <= x < 6 and y == 4 else b"\x00\x3f"
                       if 2 <= x < 6 and 1 <= y < 4 else b"\xf8\x01"
                       for y in range(6) for x in range(8))
-    crop_upload = (ref(0x20, "workshop/inlay", (2 << 19) | 7),
-                   tile(7, 8, fmt=0, size=2, line=2 if crop == "wrong-line" else 1),
-                   packet(0xF4, (8 << 12) | 4, (7 << 24) | (20 << 12) | 16))
+    if crop == "ci4-odd":
+        crop_upload = (ref(0x20, "workshop/inlay", (2 << 21) | 7),
+                       tile(7, 8, fmt=2, size=0, line=1),
+                       packet(0xF4, (4 << 12) | 4, (7 << 24) | (16 << 12) | 16))
+    else:
+        crop_upload = (ref(0x20, "workshop/inlay", (2 << 19) | 7),
+                       tile(7, 8, fmt=0, size=2, line=2 if crop == "wrong-line" else 1),
+                       packet(0xF4, (8 << 12) | 4, (7 << 24) | (20 << 12) | 16))
     block_upload = (ref(0x20, "workshop/inlay", (2 << 19) | 3), tile(7, 8, fmt=0, size=2),
                     packet(0xF3, 0, (7 << 24) | (15 << 12) | 0x800))
     with ZipFile(path, "w") as archive:
         archive.writestr(ROOT, header(shared))
         archive.writestr("workshop/rug", texture(3, 4, 4, bytes.fromhex("0101010101010101")))
-        archive.writestr("workshop/palette", texture(2, 16, 1, bytes.fromhex("f80107c1") + bytes(28)))
+        palette = bytes.fromhex("f80107c1003fffff") + bytes(24)
+        archive.writestr("workshop/palette", texture(2, 16, 1, palette))
+        if transform:
+            archive.writestr("workshop/translate", matrix_resource(
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (100, 0, 0, 1))))
         if crop:
-            archive.writestr("workshop/inlay", texture(2, 8, 6, pixels))
+            if crop == "ci4-odd":
+                indices = [(x + 2 * y) % 4 for y in range(6) for x in range(8)]
+                packed = bytes((indices[i] << 4) | (indices[i + 1] if i + 1 < len(indices) else 0)
+                               for i in range(0, len(indices), 2))
+                archive.writestr("workshop/inlay", texture(3, 8, 6, packed))
+            else:
+                archive.writestr("workshop/inlay", texture(2, 8, 6, pixels))
         else:
             archive.writestr("workshop/inlay", texture(2 if not format_error else 9, 4, 4, bytes.fromhex("003f" * 16)))
         quads = []
@@ -82,6 +105,8 @@ def fixture(path, *, shared=False, fog=False, format_error=False, crop=None):
                 packet(0xEF, 0x188000, 0x30), packet(0xD7, 2, 0xFFFF8000),
                 packet(0xFB, 0, 0xFFFFFF80),
                 packet(0xFC, (2 << 20) | (12 << 15), (1 << 28) | (1 << 15)),
+                *(((packet(0xDA, 2, 0x08000001) if transform == "segmented"
+                    else ref(0x36, "workshop/translate", 2)),) if transform else ()),
                 ref(0x32, vtx, 0x4008),
                 ref(0x20, "workshop/palette", (2 << 19) | 15), tile(7, 256, fmt=0, size=2),
                 packet(0xF0, 0, (7 << 24) | (15 << 14)),
@@ -89,9 +114,11 @@ def fixture(path, *, shared=False, fog=False, format_error=False, crop=None):
                 packet(0xF3, 0, (7 << 24) | (3 << 12) | 0x800),
                 *(crop_upload if crop else block_upload),
                 tile(0, 0, line=1, s=(1, 2, 0), t=(2, 2, 0)), bounds(0, width=4),
-                tile(1, 8, fmt=0, size=2, line=1, s=(0, 2, 1), t=(0, 2, 0)),
+                tile(1, 8, fmt=2 if crop == "ci4-odd" else 0,
+                     size=0 if crop == "ci4-odd" else 2, line=1, s=(0, 2, 1), t=(0, 2, 0)),
                 bounds(1, uls=4, width=4),
-                packet(0x06, 0x000204, 0x000406)))
+                packet(0x06, 0x000204, 0x000406),
+                *((packet(0xD8, 0, 64),) if transform else ())))
             archive.writestr(xlu, display_list(
                 packet(0xD9, 0, 1), packet(0xEF, 0, 0x00504850),
                 packet(0xFC, 0, (4 << 15) | (4 << 9)), ref(0x32, vtx, 0x4008),
@@ -141,6 +168,12 @@ class ImportTest(unittest.TestCase):
             self.assertEqual({p[2][:8] for p in pngs.values()},
                              {bytes.fromhex("ff0000ff00ff00ff"), bytes.fromhex("0000ffff0000ffff")})
             self.assertEqual(len(list(output.glob("gfx/scenes/*.png"))), 2)
+            self.assertEqual(report["compatibility"]["draws"],
+                             {"candidate": 4, "translated": 4, "rejected": 0, "rejection_reasons": {}})
+            self.assertEqual(report["compatibility"]["geometry"]["render_triangles"], 6)
+            self.assertEqual(report["compatibility"]["collision"]["triangles"], 4)
+            self.assertEqual(report["compatibility"]["rooms"]["neighbor_links"], 1)
+            self.assertEqual(report["compatibility"]["memory_estimate"]["package_bytes"], len(package))
 
     def test_shared_collision_has_explicit_ownership_and_safe_spawns(self):
         with TemporaryDirectory() as temp:
@@ -167,6 +200,8 @@ class ImportTest(unittest.TestCase):
             self.assertIn("fog", report["draw_issues"][0]["reason"])
             self.assertEqual(report["draw_issues"][0]["display_list"], ROOMS[0] + "/opa")
             self.assertIsInstance(report["draw_issues"][0]["offset"], int)
+            self.assertGreater(report["compatibility"]["draws"]["rejected"], 0)
+            self.assertTrue(any("fog" in reason for reason in report["compatibility"]["unsupported_features"]))
             result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tools/o2r_to_wsc3.py"),
                                      str(path), ROOT, str(work / "no-output")], capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
@@ -218,6 +253,8 @@ class ImportTest(unittest.TestCase):
             self.assertEqual(first, self.dry_run(path))
             code, report = first
             self.assertEqual((code, report["status"], report["texture_count"]), (0, "compatible", 2))
+            self.assertEqual(report["compatibility"]["draws"]["translated"], 4)
+            self.assertIn("CI4", report["compatibility"]["textures"]["formats"])
             self.assertIn("workshop/palette", report["resources"]["converted"])
             self.assertIn("workshop/east/collision", report["resources"]["converted"])
             self.assertEqual(len(report["entrances"]), 2)
@@ -249,6 +286,58 @@ class ImportTest(unittest.TestCase):
             package, _, report = self.convert(path)
             self.assertIsNone(package)
             self.assertIn("TMEM stride", report["draw_issues"][0]["reason"])
+
+    def test_loadtile_bakes_ci4_crop_from_odd_nibble_origin(self):
+        source = bytes.fromhex("0123456789abcdef")
+        self.assertEqual(crop_ci4(source, 8, 2, 1, 0, 4, 2), bytes.fromhex("12349abc"))
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "ci4-crop.o2r"
+            fixture(path, crop="ci4-odd")
+            package, pngs, report = self.convert(path)
+            self.assertIsNotNone(package, report)
+            # Source crop is x=1..4, y=1..4 from an 8x6 packed CI4 image.
+            cropped_indices = [(x + 2 * y) % 4 for y in range(1, 5) for x in range(1, 5)]
+            expected = bytes.fromhex("f80107c1003fffff")
+            palette_rgba = []
+            for i in range(0, len(expected), 2):
+                packed = expected[i] << 8 | expected[i + 1]
+                rgb = [((packed >> shift) & 31) * 255 // 31 for shift in (11, 6, 1)]
+                palette_rgba.extend((*rgb, 255 if packed & 1 else 0))
+            expanded = bytes(channel for index in cropped_indices
+                             for channel in palette_rgba[index * 4:index * 4 + 4])
+            self.assertIn((4, 4, expanded), pngs.values())
+            self.assertEqual(report["status"], "converted")
+
+    def test_static_f3dex2_matrix_is_baked_and_reported(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "matrix.o2r"
+            fixture(path, transform=True)
+            package, _, report = self.convert(path)
+            self.assertIsNotNone(package, report)
+            self.assertIn("workshop/translate", report["resources"]["converted"])
+            self.assertEqual(report["trace_coverage"]["static_matrix_resources"], ["workshop/translate"])
+            traced = trace.trace_archive(path, ROOT)
+            expected_matrix = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+                               [0.0, 0.0, 1.0, 0.0], [100.0, 0.0, 0.0, 1.0]]
+            self.assertEqual(traced["draws"][0]["geometry"]["vertex_ranges"][0]
+                             ["modelview_at_vertex_load"], expected_matrix)
+            self.assertEqual(transform_position([2, 3, 4], expected_matrix), [102.0, 3.0, 4.0])
+            package_again, _, report_again = self.convert(path)
+            self.assertEqual(package_again, package)
+            self.assertEqual(report_again, report)
+            identity_path = Path(temp) / "identity.o2r"
+            fixture(identity_path)
+            identity_package, _, _ = self.convert(identity_path)
+            self.assertNotEqual(package, identity_package)
+
+    def test_static_segmented_matrix_uses_explicit_segment_binding(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "matrix-segment.o2r"
+            fixture(path, transform="segmented")
+            segment = {8: trace.Reference("workshop/translate")}
+            package, _, report = convert_archive(path, ROOT, {}, Fraction(1), (0, 0, 0), False, segment)
+            self.assertIsNotNone(package, report)
+            self.assertIn("workshop/translate", report["resources"]["converted"])
 
     def test_per_room_segment_bases_resolve_shared_address_and_validate_offset(self):
         with TemporaryDirectory() as temp:

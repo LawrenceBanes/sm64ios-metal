@@ -136,7 +136,11 @@ class TraceTests(unittest.TestCase):
         self.assertEqual([e["order"] for e in report["draws"]], [0, 1, 2])
         self.assertEqual(first["geometry"]["vertex_ranges"],
                          [{"resource": VTX, "first": 1, "last": 3, "referenced_count": 3,
-                           "uv_scale_u0_16_at_load": (65535, 32768), "geometry_at_vertex_load": 0}])
+                           "uv_scale_u0_16_at_load": (65535, 32768), "geometry_at_vertex_load": 0,
+                           "modelview_at_vertex_load": [[1.0, 0.0, 0.0, 0.0],
+                                                        [0.0, 1.0, 0.0, 0.0],
+                                                        [0.0, 0.0, 1.0, 0.0],
+                                                        [0.0, 0.0, 0.0, 1.0]]}])
         self.assertEqual(after_scroll["geometry"]["vertex_ranges"], first["geometry"]["vertex_ranges"])
         self.assertEqual(translucent["geometry"]["vertex_ranges"][0]["resource"], BAKED_VTX)
         self.assertEqual(after_scroll["primitive_count"], 2)
@@ -268,6 +272,29 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(draw["textures"][0]["uv"]["half_texel_bias"], 0.5)
         self.assertTrue(draw["render_state"]["depth_test"])
         self.assertFalse(draw["render_state"]["depth_write"])
+
+    def test_matrix_resource_alignment_and_pop_underflow_are_rejected(self):
+        fixed_identity = struct.pack(">16h16H", *([1, 0, 0, 0, 0, 1, 0, 0,
+                                                     0, 0, 1, 0, 0, 0, 0, 1]), *([0] * 16))
+        with TemporaryDirectory() as tmp:
+            archive_path = Path(tmp) / "matrix.o2r"
+            with ZipFile(archive_path, "w") as archive:
+                archive.writestr("studio/matrix", resource("OMTX", fixed_identity * 2))
+            with ZipFile(archive_path) as archive:
+                resources = trace.ArchiveResources(archive)
+                self.assertEqual(resources.matrix("studio/matrix", 64), trace.identity_matrix())
+                with self.assertRaisesRegex(trace.TraceError, "aligned to a 64-byte matrix"):
+                    resources.matrix("studio/matrix", 2)
+
+        result = self.run_trace({**fixture(), OPA: display_list(packet(0xD8, 0, 64))})
+        self.assertTrue(any("POPMTX count underflows" in issue["reason"] for issue in result["issues"]))
+
+    def test_projection_matrix_is_rejected_in_static_world_export(self):
+        entries = fixture()
+        entries["studio/projection"] = resource("OMTX", bytes(64))
+        entries[OPA] = display_list(ref(0x36, "studio/projection", 5))
+        result = self.run_trace(entries)
+        self.assertTrue(any("matrix projection" in issue["reason"] for issue in result["issues"]))
 
     def test_cli_cannot_overwrite_archive(self):
         with TemporaryDirectory() as tmp:

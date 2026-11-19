@@ -33,6 +33,7 @@ MAX_COMMANDS = 40_000
 MAX_DRAWS = 10_000
 MAX_CALL_DEPTH = 24
 MAX_ROOMS = 64
+MAX_MATRIX_DEPTH = 11
 MAX_VERTICES = 64  # Pinned Fast3D window, not WSC's final packed vertex limit.
 _VERTEX_TYPES = ("Vertex", "Array")
 
@@ -108,6 +109,18 @@ class ArchiveResources:
             raise TraceError("malformed", f"expected {'/'.join(expected)}, found {kind}: {path}")
         return kind, version, endian, body
 
+    def matrix(self, path, offset):
+        kind, _, endian, body = self.body(path)
+        if kind != "Matrix" or not body or len(body) % 64 or offset < 0 or offset % 64 or offset + 64 > len(body):
+            raise TraceError("malformed", f"matrix reference is not aligned to a 64-byte matrix: {path}+{offset}")
+        byteorder = "little" if endian == "<" else "big"
+        integers = [int.from_bytes(body[offset + i * 2:offset + i * 2 + 2], byteorder, signed=True)
+                    for i in range(16)]
+        fractions = [int.from_bytes(body[offset + 32 + i * 2:offset + 34 + i * 2], byteorder, signed=False)
+                     for i in range(16)]
+        return tuple(tuple(integers[row * 4 + col] + fractions[row * 4 + col] / 65536.0
+                           for col in range(4)) for row in range(4))
+
     def _read(self, path, expected):
         kind, version, endian, body = self.typed_body(path, expected)
         try:
@@ -140,6 +153,10 @@ class ArchiveResources:
                 if len(body) - reader.offset != count * 16:
                     raise TraceError("malformed", f"vertex count differs from byte size: {path}")
                 return count
+            if kind == "Matrix":
+                if not body or len(body) % 64:
+                    raise TraceError("malformed", f"matrix resource must contain complete 64-byte fixed-point matrices: {path}")
+                return len(body) // 64
             texture = o2r.parse_texture_descriptor(body, endian, version, path)
             for key in ("horizontal_byte_scale", "vertical_pixel_scale"):
                 if not math.isfinite(texture[key]) or texture[key] <= 0:
@@ -207,6 +224,16 @@ def axis_state(tile, axis, origin, limit, dimension):
     }
 
 
+def identity_matrix():
+    return ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+
+
+def multiply_matrix(a, b):
+    return tuple(tuple(sum(a[row][k] * b[k][col] for k in range(4)) for col in range(4))
+                 for row in range(4))
+
+
 class PassState:
     def __init__(self, segments):
         self.segments = dict(segments)
@@ -224,6 +251,7 @@ class PassState:
         self.primitive_depth = None
         self.tainted = set()
         self.approximations = set()
+        self.matrix_stack = [identity_matrix()]
 
     def address(self, address):
         segment = address >> 24
@@ -248,6 +276,7 @@ class DrawTracer:
         self.generated_uses = Counter()
         self.draws, self.issues = [], []
         self.decoded_lists, self.completed_lists, self.failed_lists = set(), set(), set()
+        self.matrix_resources = set()
         self.roots_seen = self.commands = 0
 
     def issue(self, room, pass_name, path, offset, opcode, error):
@@ -387,7 +416,9 @@ class DrawTracer:
             if rem or first + count > total:
                 raise TraceError("malformed", f"invalid vertex source window: {ref.path}+{ref.offset}")
             scale = (state.texture["s_scale"], state.texture["t_scale"]) if state.texture else None
-            state.vertices[end - count:end] = [(ref.path, first + i, scale, state.geometry & 0xE0000) for i in range(count)]
+            matrix = state.matrix_stack[-1]
+            state.vertices[end - count:end] = [(ref.path, first + i, scale, state.geometry & 0xE0000, matrix)
+                                               for i in range(count)]
         elif opcode in (0x20, 0xFD):
             state.image = None
             ref = self.resources.hashed(ins) if opcode == 0x20 else state.address(w1)
@@ -402,6 +433,28 @@ class DrawTracer:
                 raise TraceError("malformed", "invalid segment table destination")
             ref = state.address(w1)
             state.segments[segment] = ref
+        elif opcode == 0xD8:
+            count, remainder = divmod(w1, 64)
+            if remainder or count == 0 or count >= len(state.matrix_stack):
+                raise TraceError("malformed", "POPMTX count underflows or is not a multiple of 64 bytes")
+            del state.matrix_stack[-count:]
+        elif opcode in (0xDA, 0x36):
+            # Static F3DEX2 model-view matrices can be baked into world-space
+            # vertices. Projection matrices depend on the runtime camera.
+            parameters = (w0 & 0xFF) ^ 0x01  # Reverse gSPMatrix's F3DEX2 encoding.
+            if parameters & ~0x07 or parameters & 0x04:
+                raise TraceError("unsupported", "matrix projection or unknown F3DEX2 matrix flags cannot be baked into world geometry")
+            ref = self.resources.hashed(ins) if opcode == 0x36 else state.address(w1)
+            matrix = self.resources.matrix(ref.path, ref.offset)
+            self.matrix_resources.add(ref.path)
+            if parameters & 0x01:
+                if len(state.matrix_stack) >= MAX_MATRIX_DEPTH:
+                    raise TraceError("limit", "model-view matrix stack depth exceeded")
+                state.matrix_stack.append(state.matrix_stack[-1])
+            if parameters & 0x02:
+                state.matrix_stack[-1] = matrix
+            else:
+                state.matrix_stack[-1] = multiply_matrix(matrix, state.matrix_stack[-1])
         elif opcode == 0xD7:
             state.texture = ins["texture_state"]
         elif opcode == 0xD9:
@@ -482,10 +535,10 @@ class DrawTracer:
             load = {"kind": "tile", "source_stride_bytes": image_stride, "row_bytes": row,
                     "width": width, "height": height, "bounds_10_2": [uls, ult, lrs, lrt],
                     "destination_stride_bytes": tile["line_words"] * 8}
-            if texel_bits == 4:
-                load["approximation"] = "packed nibble span; no TMEM swizzle or half-byte offset simulation"
-                if (uls // 4) & 1 and width % 2 == 0:
-                    length += 1
+            if texel_bits == 4 and (uls // 4) & 1 and width % 2 == 0:
+                # An odd source X starts in the low nibble and the final
+                # texel extends one byte beyond the nominal packed row span.
+                length += 1
         descriptor = image["source"]
         if (descriptor["horizontal_byte_scale"], descriptor["vertical_pixel_scale"]) == (1.0, 1.0):
             if image["offset"] + start + length > descriptor["payload_size"]:
@@ -593,7 +646,7 @@ class DrawTracer:
             if not vertex:
                 missing.add(f"vertex slot {slot} unavailable")
             else:
-                source_ranges[vertex[0], vertex[2], vertex[3]].add(vertex[1])
+                source_ranges[vertex[0], vertex[2], vertex[3], vertex[4]].add(vertex[1])
 
         low, high = state.other
         if state.known[0] & 0xFFFF != 0xFFFF or state.known[1] & 0x30F000 != 0x30F000:
@@ -642,7 +695,7 @@ class DrawTracer:
             gaps.add("alpha compare, decal depth or primitive depth")
         textures = []
         if used:
-            if any(scale is None for _, scale, _ in source_ranges):
+            if any(scale is None for _, scale, _, _ in source_ranges):
                 missing.add("vertex UV scale not supplied at vertex load")
             if state.texture is None:
                 missing.add("texture command absent for selected combiner")
@@ -662,8 +715,9 @@ class DrawTracer:
                 "mode": state.geometry, "known_mask": state.geometry_known,
                 "vertex_ranges": [{"resource": source, "first": min(values), "last": max(values),
                                    "uv_scale_u0_16_at_load": scale, "geometry_at_vertex_load": geometry,
+                                   "modelview_at_vertex_load": [list(row) for row in matrix],
                                    "referenced_count": len(values)}
-                                  for (source, scale, geometry), values in sorted(source_ranges.items(),
+                                  for (source, scale, geometry, matrix), values in sorted(source_ranges.items(),
                                       key=lambda entry: (entry[0][0], entry[0][1] or (-1, -1), entry[0][2]))]},
             "textures": textures, "combiner": {"cycle_type": cycle_type, "selectors": state.combine,
                                                "colors": dict(state.colors), "mux_texture_inputs": syntactic,
@@ -741,6 +795,7 @@ class DrawTracer:
                          "draws": dict(sorted(Counter(draw["status"] for draw in self.draws).items())),
                          "interpreted_state_resolved": sum(not draw["missing"] for draw in self.draws),
                          "generated_segment_calls_resolved": sum(self.generated_uses.values()),
+                         "static_matrix_resources": sorted(self.matrix_resources),
                          "issues": dict(sorted(Counter(issue["status"] for issue in self.issues).items())),
                          "wsc2_gaps": dict(sorted(Counter(gap for d in self.draws for gap in d["wsc2_gaps"]).items())),
                          "budget_error": budget_error},
