@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ios, ci/ios-metal-m57-25c]
+    branches: [ios, ci/ios-metal-m57-25c, "metal-validation/**"]
   workflow_dispatch:
     inputs:
       full_game:
@@ -45,7 +45,7 @@ jobs:
   linux-checks:
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]') || startsWith(github.ref, 'refs/heads/metal-validation/'))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +72,7 @@ jobs:
     needs: linux-checks
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]') || startsWith(github.ref, 'refs/heads/metal-validation/'))
     runs-on: xcode-27
     timeout-minutes: 90
     permissions:
@@ -93,7 +93,7 @@ jobs:
         run: bash ios/build_ios_metal_ci.sh validate
 
       - name: Compile full app for iPhoneOS arm64 without packaging
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.compile_only }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.compile_only) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/metal-validation/')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
@@ -102,7 +102,7 @@ jobs:
         run: bash ios/build_ios_metal_ci.sh compile
 
       - name: Build complete app, package IPA, and upload only to private vault
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/metal-validation/') && contains(github.event.head_commit.message, '[build-ipa]')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}

@@ -1467,11 +1467,11 @@ static int load_mod_file(Mod *mod, const char *relative, bool return_module) {
 
 /* CoopDX archives can ship alternate PUC Lua 5.3 chunks in the same mod,
  * commonly with -32.lua and -64.lua suffixes. Upstream validates each chunk
- * against the current process and skips a chunk built for the other pointer
+ * against the current process and skips a chunk built for a different size_t
  * width while continuing to load the rest of that mod. Detect only the exact
  * Lua 5.3 header here; other malformed or incompatible bytecode still reaches
  * luaL_loadbufferx and is reported as a script failure. */
-static bool mod_script_targets_other_pointer_width(const char *path, unsigned *target_width) {
+static bool mod_script_targets_other_size_t_width(const char *path, unsigned *target_width) {
     static const unsigned char lua53_header_prefix[] = {
         0x1b, 'L', 'u', 'a', 0x53, 0x00, 0x19, 0x93, 0x0d, 0x0a, 0x1a, 0x0a
     };
@@ -1482,8 +1482,8 @@ static bool mod_script_targets_other_pointer_width(const char *path, unsigned *t
     fclose(file);
     if (count != sizeof(header) || memcmp(header, lua53_header_prefix, sizeof(lua53_header_prefix)) != 0)
         return false;
-    unsigned width = header[13]; /* sizeof(void *) in the Lua 5.3 bytecode header */
-    if ((width != 4 && width != 8) || width == sizeof(void *)) return false;
+    unsigned width = header[13]; /* sizeof(size_t) in the Lua 5.3 bytecode header */
+    if ((width != 4 && width != 8) || width == sizeof(size_t)) return false;
     if (target_width) *target_width = width;
     return true;
 }
@@ -1674,10 +1674,10 @@ static bool load_mod(Mod *mod) {
         unsigned target_width = 0;
         int script_path_length = snprintf(script_path, sizeof(script_path), "%s/%s", mod->path, relative);
         if (script_path_length > 0 && (size_t)script_path_length < sizeof(script_path) &&
-            mod_script_targets_other_pointer_width(script_path, &target_width)) {
+            mod_script_targets_other_size_t_width(script_path, &target_width)) {
             mod_logf("warning", mod->name,
-                     "skipping %s: Lua 5.3 bytecode targets %u-bit pointers; this runtime uses %u-bit pointers",
-                     relative, target_width * 8, (unsigned)sizeof(void *) * 8);
+                     "skipping %s: Lua 5.3 bytecode targets %u-bit size_t; this runtime uses %u-bit size_t",
+                     relative, target_width * 8, (unsigned)sizeof(size_t) * 8);
             continue;
         }
         if (!load_mod_file(mod, relative, false)) {

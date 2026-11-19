@@ -17,9 +17,9 @@ Sources: [Possess anything 1.1](https://mods.sm64coopdx.com/mods/possess-anythin
 
 ## OMM source/package shape
 
-The public OMM source snapshot at commit `536b5ed0bc88fd777250d3701cb876029582a2a1` contains 193 files: 89 `.lua`, 13 `.bin`, one `.bhv`, 80 `.tex`, and 10 `.ogg`. It includes actors, data, sound, and textures directories. The Lua set contains paired `-32.lua` and `-64.lua` chunks. The chunk headers are PUC Lua 5.3; for example, the pointer-size header byte is `4` in `cappy-events-32.lua` and `8` in `cappy-events-64.lua`. The corresponding Mario hook files have the same split.
+The public OMM source snapshot at commit `536b5ed0bc88fd777250d3701cb876029582a2a1` contains 193 files: 89 `.lua`, 13 `.bin`, one `.bhv`, 80 `.tex`, and 10 `.ogg`. It includes actors, data, sound, and textures directories. The Lua set contains paired `-32.lua` and `-64.lua` chunks. The chunks are PUC Lua 5.3; header byte 13 stores `sizeof(size_t)` and is `4` in `cappy-events-32.lua` and `8` in `cappy-events-64.lua`. The corresponding Mario hook files have the same split.
 
-Upstream sorts mod files by relative path, runs root Lua files in that order, and checks each bytecode header against the current process. A chunk with a different pointer width fails that script load, while the loop continues to subsequent scripts. Mission 68's loader instead treated every root script failure as a fatal mod startup failure. That made a valid pair of 32-bit and 64-bit files incompatible on 64-bit iOS even if the native-width script was present. The new loader preflight skips only exact Lua 5.3 chunks whose pointer width is 4 or 8 and differs from the current process, then emits a diagnostic and continues. Other malformed chunks still fail normally.
+Upstream sorts mod files by relative path, runs root Lua files in that order, and checks each bytecode header against the current Lua ABI. A chunk with a different `size_t` width fails that script load, while the loop continues to subsequent scripts. Mission 68's loader instead treated every root script failure as a fatal mod startup failure. That made a valid pair of 32-bit and 64-bit files incompatible on 64-bit iOS even if the native-width script was present. The new loader preflight skips only exact Lua 5.3 chunks whose `size_t` width is 4 or 8 and differs from the current process, then emits a diagnostic and continues. Other malformed chunks still fail normally.
 
 References: upstream [`mod.c`](https://github.com/coop-deluxe/sm64coopdx/blob/8cd6e5977d9f920d51ca71f2c61801d019ed79c6/src/pc/mods/mod.c), [`smlua.c`](https://github.com/coop-deluxe/sm64coopdx/blob/8cd6e5977d9f920d51ca71f2c61801d019ed79c6/src/pc/lua/smlua.c), and the [Lua hook reference](https://github.com/coop-deluxe/sm64coopdx/blob/main/docs/lua/guides/hooks.md).
 
@@ -50,7 +50,7 @@ Mission 68's unmodified MIT-licensed **SM64 Coop Achievements 2.1.0** ZIP remain
 I used the unmodified `main.lua` metadata and four pairs of root bytecode scripts from the public OMM source snapshot. Those nine files were placed only in `/tmp` and are not committed. The host runtime:
 
 1. Discovered the mod folder.
-2. Skipped `a-bunch-of-constants-32.lua` on the 64-bit host with a pointer-width diagnostic.
+2. Skipped `a-bunch-of-constants-32.lua` on the 64-bit host with a `size_t`-width diagnostic.
 3. Started the native-width `a-bunch-of-constants-64.lua` and failed on `unsupported CoopDX API 'audio_sample_load'`.
 4. Disabled the mod under the current startup-failure policy.
 
@@ -60,12 +60,13 @@ The possession archive has not been tested: the download listing is visible, but
 
 ## M69 changes in this checkpoint
 
-- Skip only PUC Lua 5.3 bytecode with an opposite 4-byte/8-byte pointer width during root-script startup; report the skipped file and widths.
+- Skip only PUC Lua 5.3 bytecode with an opposite 4-byte/8-byte `size_t` width during root-script startup; report the skipped file and widths.
 - Add a regression that generates matching and opposite-width bytecode and verifies only the native-width script changes Mario state while the mod remains enabled.
 - Add optional `MOD_EXTERNAL_ROOT` support to `tests/mods/run_host_tests.sh` for inspecting private, already-extracted mods without storing their packages in the repository.
 - Implement upstream `HOOK_BEFORE_PHYS_STEP` output semantics for ground, air, water, and hanging physics. The hook receives Mario state, `STEP_TYPE_*`, and the step argument; the first valid integer return skips native stepping and becomes its result. The matching step/result constants are exposed to Lua. Host coverage verifies each step kind, the air step argument, and first-output short circuit.
 - Bind `perform_ground_step`, `perform_air_step`, and `perform_water_step` to the existing engine functions with upstream Lua argument and result shapes. The host fixture calls all three through Lua and checks the returned native step results and airborne step argument.
 - Bind upstream `play_sound(soundBits, Vec3f)` to the existing native sound engine, and expose mutable engine-owned `gGlobalSoundSource` and `gDefaultSoundArgs` vectors. The host fixture verifies the sound ID and all three position coordinates received by the native function; the unmodified Achievements ZIP no longer reports `play_sound` as unsupported.
+- Extend the existing iOS workflow for `metal-validation/*` pushes so it runs a full iPhoneOS arm64 compile-only job; its IPA packaging/upload step explicitly excludes those branches.
 
 The original sandbox, ZIP validation, Lua API boundaries, existing native gameplay, and DynOS inactive status remain unchanged.
 
@@ -75,8 +76,8 @@ The original sandbox, ZIP validation, Lua API boundaries, existing native gamepl
 - `bash tests/mods/run_zip_import_tests.sh`: pass.
 - `ASAN_OPTIONS=detect_leaks=0 CC=clang MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' bash tests/mods/run_host_tests.sh`: pass with AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer had to be disabled because the sandbox reports that ptrace-based leak detection is unavailable; leak detection is therefore not verified.
 - `MOD_EXTERNAL_ROOT=/tmp/mission69-omm-probe bash tests/mods/run_host_tests.sh`: existing host tests pass; the OMM source probe is discovered, skips its 32-bit chunk, and fails on the missing `audio_sample_load` binding as described above.
-- GitHub Actions `Metal Apple SDK validation` run 44445703187 passed both Linux checks and its `ios-metal-compile` job on the `xcode-27` runner. This validates the Metal backend/MSL toolchain but does not compile the full SM64 iOS app for arm64.
-- Full iOS app arm64 compilation and device behavior have not been run for this checkpoint.
+- GitHub Actions `Metal Apple SDK validation` run 44446368613 passed both Linux checks and its `ios-metal-compile` job on the `xcode-27` runner. This validates the Metal backend/MSL toolchain but does not compile the full SM64 iOS app for arm64.
+- The new full-app arm64 compile-only branch path has not completed yet. Physical iPhone behavior has not been tested.
 
 ## M1 gaps and next work
 

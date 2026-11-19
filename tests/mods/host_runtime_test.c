@@ -227,7 +227,7 @@ static void create_bytecode_fixture(const char *fixture_root) {
     lua_close(compiler);
 }
 
-static void write_bytecode_script(const char *path, const char *source, unsigned other_pointer_width) {
+static void write_bytecode_script(const char *path, const char *source, unsigned other_size_t_width) {
     lua_State *compiler = luaL_newstate();
     assert(compiler);
     assert(luaL_loadstring(compiler, source) == LUA_OK);
@@ -236,11 +236,11 @@ static void write_bytecode_script(const char *path, const char *source, unsigned
     assert(lua_dump(compiler, bytecode_writer, file, 0) == 0);
     assert(fclose(file) == 0);
     lua_close(compiler);
-    if (other_pointer_width) {
+    if (other_size_t_width) {
         file = fopen(path, "r+b");
         assert(file);
         assert(fseek(file, 13, SEEK_SET) == 0);
-        assert(fputc((int)other_pointer_width, file) != EOF);
+        assert(fputc((int)other_size_t_width, file) != EOF);
         assert(fclose(file) == 0);
     }
 }
@@ -255,7 +255,7 @@ static void create_architecture_variant_fixture(const char *fixture_root) {
     assert(fputs("-- paired Lua 5.3 bytecode architecture fixture\n", file) >= 0);
     assert(fclose(file) == 0);
 
-    bool is_64_bit = sizeof(void *) == 8;
+    bool is_64_bit = sizeof(size_t) == 8;
     snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "00-64.lua" : "00-32.lua");
     write_bytecode_script(path, "gMarioState.numCoins = gMarioState.numCoins + 64", 0);
     snprintf(path, sizeof(path), "%s/%s", directory, is_64_bit ? "01-32.lua" : "01-64.lua");
