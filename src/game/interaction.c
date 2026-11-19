@@ -1752,7 +1752,10 @@ void mario_process_interactions(struct MarioState *m) {
                 m->collidedObjInteractTypes &= ~interactType;
 
                 if (!(object->oInteractStatus & INT_STATUS_INTERACTED)) {
-                    bool handled = sInteractionHandlers[i].handler(m, interactType, object);
+                    bool handled = false;
+                    if (mod_runtime_allow_interact(m, object, interactType)) {
+                        handled = sInteractionHandlers[i].handler(m, interactType, object);
+                    }
                     mod_runtime_on_interact(m, object, interactType, handled);
                     if (handled) {
                         break;

@@ -32,6 +32,14 @@ hook_event(HOOK_BEFORE_SET_MARIO_ACTION, function(m, action, actionArg)
     end
 end)
 
+hook_event(HOOK_ALLOW_INTERACT, function(m, obj, interactType)
+    if interactType == 0x1234 then
+        return false
+    elseif interactType == 0x5678 then
+        return true
+    end
+end)
+
 hook_event(HOOK_BEFORE_PHYS_STEP, function(m, stepType, stepArg)
     if stepType == STEP_TYPE_AIR and stepArg == 55 then
         gMarioState.numCoins = gMarioState.numCoins + 1000

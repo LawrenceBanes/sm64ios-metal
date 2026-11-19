@@ -752,6 +752,7 @@ static int l_hook_event(lua_State *L) {
     if (event < 0 || event >= MOD_EVENT_COUNT) return luaL_error(L, "unknown CoopDX hook event id %d", event);
     if (event != HOOK_UPDATE && event != HOOK_MARIO_UPDATE && event != HOOK_BEFORE_MARIO_UPDATE
         && event != HOOK_ON_SET_MARIO_ACTION && event != HOOK_BEFORE_PHYS_STEP && event != HOOK_ON_HUD_RENDER
+        && event != HOOK_ALLOW_INTERACT
         && event != HOOK_ON_INTERACT && event != HOOK_ON_LEVEL_INIT && event != 30 && event != HOOK_ON_EXIT)
         return luaL_error(L, "CoopDX hook event %d is not supported by the current engine adapter", event);
     if (!sCurrentMod) return luaL_error(L, "hook_event must be called while loading a mod");
@@ -2032,6 +2033,32 @@ void mod_runtime_on_interact(struct MarioState *m, struct Object *obj, uint32_t 
             hook->enabled = false; release_ref(&hook->function_ref);
         }
     }
+}
+
+bool mod_runtime_allow_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type) {
+    bool allow_interact = true;
+    if (!sLua || !m || !obj) return allow_interact;
+    for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
+        if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_ALLOW_INTERACT) continue;
+        push_mario(sLua);
+        push_object(sLua, obj);
+        lua_pushinteger(sLua, (lua_Integer)interact_type);
+        if (!call_ref(hook->owner, hook->file, hook->function_ref, "HOOK_ALLOW_INTERACT", 3, 1)) {
+            hook->enabled = false;
+            release_ref(&hook->function_ref);
+            continue;
+        }
+        if (lua_isboolean(sLua, -1)) {
+            allow_interact = lua_toboolean(sLua, -1) != 0;
+        } else if (!lua_isnil(sLua, -1) && !hook->invalid_output_reported) {
+            mod_logf("warning", hook->owner->name,
+                     "HOOK_ALLOW_INTERACT must return a boolean or nil; ignoring output from %s",
+                     hook->file);
+            hook->invalid_output_reported = true;
+        }
+        lua_pop(sLua, 1);
+    }
+    return allow_interact;
 }
 
 bool mod_runtime_mario_action(struct MarioState *m, int *in_loop) {

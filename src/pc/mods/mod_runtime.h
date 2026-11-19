@@ -26,6 +26,7 @@ bool mod_runtime_before_phys_step(struct MarioState *m, int step_type, uint32_t 
 void mod_runtime_before_set_action(struct MarioState *m, uint32_t *action, uint32_t action_arg, bool *cancel);
 void mod_runtime_after_set_action(struct MarioState *m);
 void mod_runtime_on_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type, bool interacted);
+bool mod_runtime_allow_interact(struct MarioState *m, struct Object *obj, uint32_t interact_type);
 bool mod_runtime_mario_action(struct MarioState *m, int *in_loop);
 bool mod_runtime_mario_gravity(struct MarioState *m);
 void mod_runtime_hud_render(void);

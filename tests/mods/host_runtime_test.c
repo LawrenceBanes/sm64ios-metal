@@ -359,6 +359,9 @@ int main(int argc, char **argv) {
     gMarioState->vel[1] = 10.0f;
     assert(mod_runtime_mario_gravity(gMarioState));
     assert(gMarioState->vel[1] == 8.0f);
+    assert(!mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x1234));
+    assert(mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x5678));
+    assert(mod_runtime_allow_interact(gMarioState, &sSpawnedObject, 0x9abc));
 
     uint32_t incoming = 0x12345678;
     bool cancel = false;
