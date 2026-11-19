@@ -13,6 +13,7 @@ Implementation commit: `27f201214973bf579b1619976a135f550876720e`
 - `tools/o2r_draw_trace.py` reads and validates bounded 64-byte O2R N64 fixed 16.16 matrices. It interprets hashed `MTX_OTR` and segmented `G_MTX` model-view operations (load, multiply, push, pop), rejects projection/non-affine use, snapshots the matrix at vertex-load time, and records it in deterministic draw traces.
 - `tools/o2r_to_wsc3.py` bakes supported static affine transforms into WSC3 vertex positions. `LOADTILE` now lowers supported 4-, 8-, and 16-bit crops when source and TMEM strides agree; CI4 handles odd-nibble origins and packs the crop before palette expansion. Invalid alignment, bounds, or layout remains a conversion error.
 - The dry-run and conversion reports include draw acceptance/rejection reasons, geometry/material/texture counts, collision and room/link coverage, used matrix resources, and bounded package/payload estimates.
+- The tracer now decodes F3DEX2 `MOVEWORD G_MW_FOG` and `G_MW_NUMLIGHT`, preserving coefficients, fog color, provenance, and per-vertex-load timing. Fogged geometry remains rejected for WSC3 export because fog depends on runtime clip-space depth; lit geometry remains rejected because light records, normal transforms, and vertex-light evaluation are not lowered.
 - No WSC binary version, native Metal shader, gameplay, or runtime loader was changed. WSC1/WSC2/WSC3 package layouts remain untouched.
 
 ## Fixture evidence
@@ -30,11 +31,11 @@ This is host-side authored-fixture evidence, not an authentic Nintendo scene con
 
 **PASS:** `tests/run_linux_checks.sh` completed with exit code 0 after the final implementation and tests. This includes the repository Linux regression suite and host syntax builds for existing iOS/Metal C interfaces. Existing warnings remain in `src/pc/platform.c` and `src/game/mario_actions_airborne.c`.
 
-**PASS:** `tests/test_o2r_draw_trace.py` (11 tests), `tests/test_o2r_to_wsc3.py` (12 tests), and both focused suites under `PYTHONMALLOC=debug`.
+**PASS:** `tests/test_o2r_draw_trace.py` (13 tests), `tests/test_o2r_to_wsc3.py` (12 tests), and both focused suites under `PYTHONMALLOC=debug`.
 
 **PASS:** `git diff --check`; worktree is clean after commit.
 
-**NOT RUN:** ASan/UBSan Fast3D reference harnesses require pinned Shipwright/libultraship and OoT source checkouts, which are not present in the local workspace. The modified importer is Python; the Linux suite compiled the existing C runtime, but that is not sanitizer coverage of this parser.
+**PASS:** Pinned Fast3D tile/TLUT parity and pinned OoT pass-setup parity harnesses passed under ASan/UBSan using `/tmp/mission67h-upstream-audit`. Leak detection had to be disabled (`ASAN_OPTIONS=detect_leaks=0`) because LeakSanitizer aborts under this host's ptrace policy. The modified importer is Python; this is reference-harness sanitizer coverage, not sanitizer coverage of the Python parser.
 
 **BLOCKED:** `xcodebuild` is not installed. GitHub API access currently fails with DNS resolution for `api.github.com`; `gh workflow list` cannot retrieve workflows. No Actions run, private upload, IPA, or physical-device test was performed.
 

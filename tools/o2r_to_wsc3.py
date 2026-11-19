@@ -257,9 +257,15 @@ class Conversion:
                 raise ValueError("; ".join(draw["missing"] + draw["approximations"]))
             material, shade_rgb, shade_alpha = lower_material(draw, self.resources, palettes, self.pngs)
             vertices = []
-            for path, index, scale, geometry, matrix in refs:
+            for path, index, scale, geometry, matrix, fog_factor, num_lights in refs:
+                if geometry & trace.G_FOG:
+                    raise ValueError("fogged vertices need camera-space clip-depth evaluation, which static WSC3 geometry cannot preserve")
+                if geometry & trace.G_LIGHTING:
+                    raise ValueError("lit vertices need RSP light records and normal-based vertex-color evaluation, which are not lowered")
+                if geometry & (trace.G_TEXTURE_GEN | trace.G_TEXTURE_GEN_LINEAR):
+                    raise ValueError("generated texture coordinates need transformed normals and texgen state, which are not lowered")
                 if geometry:
-                    raise ValueError("lighting or texgen applied at vertex load; pre-bake vertex colors and UVs in the source")
+                    raise ValueError(f"unsupported vertex geometry mode bits 0x{geometry:05x}")
                 position, source_uv, cn = self.vertex(path, index)
                 position = transform_position(position, matrix)
                 uv = [0, 0] if not material["textures"] else [

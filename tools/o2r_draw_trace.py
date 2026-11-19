@@ -10,6 +10,7 @@ from functools import lru_cache
 import json
 import math
 from pathlib import Path
+import struct
 import sys
 from zipfile import BadZipFile, ZipFile
 
@@ -35,6 +36,10 @@ MAX_CALL_DEPTH = 24
 MAX_ROOMS = 64
 MAX_MATRIX_DEPTH = 11
 MAX_VERTICES = 64  # Pinned Fast3D window, not WSC's final packed vertex limit.
+G_FOG = 0x00010000
+G_LIGHTING = 0x00020000
+G_TEXTURE_GEN = 0x00040000
+G_TEXTURE_GEN_LINEAR = 0x00080000
 _VERTEX_TYPES = ("Vertex", "Array")
 
 
@@ -249,6 +254,8 @@ class PassState:
         self.combine = None
         self.colors = {}
         self.primitive_depth = None
+        self.fog_factor = None
+        self.num_directional_lights = None
         self.tainted = set()
         self.approximations = set()
         self.matrix_stack = [identity_matrix()]
@@ -417,8 +424,11 @@ class DrawTracer:
                 raise TraceError("malformed", f"invalid vertex source window: {ref.path}+{ref.offset}")
             scale = (state.texture["s_scale"], state.texture["t_scale"]) if state.texture else None
             matrix = state.matrix_stack[-1]
-            state.vertices[end - count:end] = [(ref.path, first + i, scale, state.geometry & 0xE0000, matrix)
-                                               for i in range(count)]
+            state.vertices[end - count:end] = [
+                (ref.path, first + i, scale, state.geometry & 0xF0000, matrix,
+                 json.dumps(state.fog_factor, sort_keys=True) if state.fog_factor is not None else None,
+                 json.dumps(state.num_directional_lights, sort_keys=True)
+                 if state.num_directional_lights is not None else None) for i in range(count)]
         elif opcode in (0x20, 0xFD):
             state.image = None
             ref = self.resources.hashed(ins) if opcode == 0x20 else state.address(w1)
@@ -427,12 +437,27 @@ class DrawTracer:
                 raise TraceError("malformed", "texture image reference is outside its payload")
             state.image = {"path": ref.path, "offset": ref.offset, "source": desc, "format": bits(w0, 21, 3),
                            "size_bits": 4 << bits(w0, 19, 2), "width": bits(w0, 0, 12) + 1}
-        elif opcode == 0xDB and bits(w0, 16, 8) == 6:
-            segment, remainder = divmod(bits(w0, 0, 16), 4)
-            if remainder or segment >= 16:
-                raise TraceError("malformed", "invalid segment table destination")
-            ref = state.address(w1)
-            state.segments[segment] = ref
+        elif opcode == 0xDB:
+            index, offset = bits(w0, 16, 8), bits(w0, 0, 16)
+            if index == 6:
+                segment, remainder = divmod(offset, 4)
+                if remainder or segment >= 16:
+                    raise TraceError("malformed", "invalid segment table destination")
+                ref = state.address(w1)
+                state.segments[segment] = ref
+            elif index == 8:
+                if offset != 0:
+                    raise TraceError("unsupported", f"MOVEWORD fog offset 0x{offset:04x} is not supported")
+                state.fog_factor = {"multiplier": struct.unpack(">h", struct.pack(">H", w1 >> 16))[0],
+                                    "offset_coefficient": struct.unpack(">h", struct.pack(">H", w1 & 0xFFFF))[0],
+                                    **self.command_source(path, ins["offset"])}
+            elif index == 2:
+                if offset != 0 or w1 % 24:
+                    raise TraceError("malformed", "MOVEWORD NUMLIGHT must be 24-byte aligned at offset zero")
+                state.num_directional_lights = {"count": w1 // 24,
+                                                **self.command_source(path, ins["offset"])}
+            else:
+                raise TraceError("unsupported", f"MOVEWORD index 0x{index:02x} offset 0x{offset:04x} is not interpreted")
         elif opcode == 0xD8:
             count, remainder = divmod(w1, 64)
             if remainder or count == 0 or count >= len(state.matrix_stack):
@@ -646,7 +671,7 @@ class DrawTracer:
             if not vertex:
                 missing.add(f"vertex slot {slot} unavailable")
             else:
-                source_ranges[vertex[0], vertex[2], vertex[3], vertex[4]].add(vertex[1])
+                source_ranges[vertex[0], vertex[2], vertex[3], vertex[4], vertex[5], vertex[6]].add(vertex[1])
 
         low, high = state.other
         if state.known[0] & 0xFFFF != 0xFFFF or state.known[1] & 0x30F000 != 0x30F000:
@@ -693,9 +718,32 @@ class DrawTracer:
                 missing.add("primitive depth value absent")
         if low & 3 or low & 4 or bits(low, 10, 2) == 3:
             gaps.add("alpha compare, decal depth or primitive depth")
+        fog_enabled = any(geometry & G_FOG for _, _, geometry, *_ in source_ranges)
+        vertex_fog_factors = sorted({factor if factor is not None else "null"
+                                     for _, _, geometry, _, factor, _ in source_ranges if geometry & G_FOG})
+        fog = {"enabled": fog_enabled,
+               "vertex_factors": [json.loads(factor) for factor in vertex_fog_factors],
+               "color": state.colors.get("fog") if fog_enabled else None,
+               "depth_source": "runtime clip-space z/w" if fog_enabled else None}
+        if fog_enabled:
+            gaps.add("camera-dependent fog")
+            if "null" in vertex_fog_factors:
+                missing.add("fog geometry mode is active but MOVEWORD fog coefficients are absent")
+            if "fog" not in state.colors:
+                missing.add("fog geometry mode is active but fog color is absent")
+            approximations.add("fog coefficients and color traced; per-vertex factor requires runtime camera-space depth and is not lowered to WSC3")
+        vertex_light_counts = sorted({count if count is not None else "null"
+                                      for _, _, geometry, _, _, count in source_ranges if geometry & G_LIGHTING})
+        lighting = {"enabled": bool(vertex_light_counts),
+                    "directional_light_counts": [json.loads(count) for count in vertex_light_counts]}
+        if lighting["enabled"]:
+            gaps.add("vertex lighting")
+            if "null" in vertex_light_counts:
+                missing.add("lighting mode is active but MOVEWORD NUMLIGHT is absent")
+            approximations.add("lighting mode and light count traced; MOVEMEM light records and vertex normals are not lowered")
         textures = []
         if used:
-            if any(scale is None for _, scale, _, _ in source_ranges):
+            if any(scale is None for _, scale, _, _, _, _ in source_ranges):
                 missing.add("vertex UV scale not supplied at vertex load")
             if state.texture is None:
                 missing.add("texture command absent for selected combiner")
@@ -716,12 +764,15 @@ class DrawTracer:
                 "vertex_ranges": [{"resource": source, "first": min(values), "last": max(values),
                                    "uv_scale_u0_16_at_load": scale, "geometry_at_vertex_load": geometry,
                                    "modelview_at_vertex_load": [list(row) for row in matrix],
+                                   "fog_factor_at_vertex_load": json.loads(fog_factor) if fog_factor else None,
+                                   "num_directional_lights_at_vertex_load": json.loads(num_lights) if num_lights else None,
                                    "referenced_count": len(values)}
-                                  for (source, scale, geometry, matrix), values in sorted(source_ranges.items(),
+                                  for (source, scale, geometry, matrix, fog_factor, num_lights), values in sorted(source_ranges.items(),
                                       key=lambda entry: (entry[0][0], entry[0][1] or (-1, -1), entry[0][2]))]},
             "textures": textures, "combiner": {"cycle_type": cycle_type, "selectors": state.combine,
                                                "colors": dict(state.colors), "mux_texture_inputs": syntactic,
                                                "effective": material},
+            "fog": fog, "lighting": lighting,
             "render_state": {"other_mode_low": low, "other_mode_high": high, "known_masks": list(state.known),
                              "depth_test": bool((state.geometry & 1 or low & 4) and low & 0x10)
                              if state.known[0] & 0x14 == 0x14 and state.geometry_known & 1 else None,
