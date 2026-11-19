@@ -355,6 +355,7 @@ static bool sInitialized;
 static bool sModsLoaded;
 static bool sActionSlots[MOD_ACTION_SLOT_COUNT];
 static ModBehavior *find_behavior(uint32_t id);
+static ModAnimation *find_custom_animation(const char *name);
 static const BehaviorScript *native_behavior_from_id(lua_Integer id);
 static int behavior_id_error(lua_State *L, lua_Integer id, const char *api);
 static void remove_native_behavior_states(Mod *owner, struct Object *object);
@@ -2274,6 +2275,8 @@ static int controller_index(lua_State *L) {
     else if (!strcmp(key, "buttonPressed")) lua_pushinteger(L, m->controller->buttonPressed);
     else if (!strcmp(key, "rawStickX")) lua_pushinteger(L, m->controller->rawStickX);
     else if (!strcmp(key, "rawStickY")) lua_pushinteger(L, m->controller->rawStickY);
+    else if (!strcmp(key, "extStickX")) lua_pushinteger(L, m->controller->extStickX);
+    else if (!strcmp(key, "extStickY")) lua_pushinteger(L, m->controller->extStickY);
     else if (!strcmp(key, "stickX")) lua_pushnumber(L, m->controller->stickX);
     else if (!strcmp(key, "stickY")) lua_pushnumber(L, m->controller->stickY);
     else if (!strcmp(key, "stickMag")) lua_pushnumber(L, m->controller->stickMag);
@@ -2281,7 +2284,45 @@ static int controller_index(lua_State *L) {
     return 1;
 }
 
-static int controller_newindex(lua_State *L) { return luaL_error(L, "Controller state is read-only"); }
+static int controller_newindex(lua_State *L) {
+    (void)luaL_checkudata(L, 1, "sm64.mod.Controller");
+    struct MarioState *m = current_mario();
+    const char *key = luaL_checkstring(L, 2);
+    if (!m || !m->controller) return luaL_error(L, "Controller is unavailable for the active Mario state");
+    /* CoopDX mods consume or synthesize local controller input by changing
+     * these fields. Keep the surface bounded to data fields; controller
+     * pointers, port identity, and OS status remain owned by the engine. */
+    if (!strcmp(key, "buttonDown") || !strcmp(key, "buttonPressed")) {
+        u16 value = (u16)check_body_integer(L, 3, 0, UINT16_MAX, key);
+        if (!strcmp(key, "buttonDown")) m->controller->buttonDown = value;
+        else m->controller->buttonPressed = value;
+        return 0;
+    }
+    if (!strcmp(key, "rawStickX") || !strcmp(key, "rawStickY") ||
+        !strcmp(key, "extStickX") || !strcmp(key, "extStickY")) {
+        s16 value = (s16)check_body_integer(L, 3, INT16_MIN, INT16_MAX, key);
+        if (!strcmp(key, "rawStickX")) m->controller->rawStickX = value;
+        else if (!strcmp(key, "rawStickY")) m->controller->rawStickY = value;
+        else if (!strcmp(key, "extStickX")) m->controller->extStickX = value;
+        else m->controller->extStickY = value;
+        return 0;
+    }
+    if (!strcmp(key, "stickX") || !strcmp(key, "stickY") || !strcmp(key, "stickMag")) {
+        lua_Number number = luaL_checknumber(L, 3);
+        if (!isfinite((double)number)) return luaL_error(L, "Controller.%s must be finite", key);
+        float value = (float)number;
+        if (!strcmp(key, "stickMag")) {
+            if (value < 0.0f || value > 64.0f) return luaL_error(L, "Controller.stickMag must be in [0, 64]");
+            m->controller->stickMag = value;
+        } else {
+            if (value < -64.0f || value > 64.0f) return luaL_error(L, "Controller.%s must be in [-64, 64]", key);
+            if (!strcmp(key, "stickX")) m->controller->stickX = value;
+            else m->controller->stickY = value;
+        }
+        return 0;
+    }
+    return luaL_error(L, "Controller field '%s' is unsupported by this adapter", key);
+}
 
 static bool sCameraConfigUnavailableWarned;
 static int push_camera_config_flag(lua_State *L, bool value) {
@@ -3552,6 +3593,44 @@ bool mod_runtime_host_set_object_model(struct Object *object, int extended_id,
         return false;
     }
     lua_settop(sLua, 0);
+    return true;
+}
+
+bool mod_runtime_host_set_animation(struct Object *object, const char *name) {
+    if (!sLua || !object || !name || !name[0]) return false;
+    int base = lua_gettop(sLua);
+    lua_getglobal(sLua, "smlua_anim_util_set_animation");
+    if (!lua_isfunction(sLua, -1)) {
+        lua_settop(sLua, base);
+        return false;
+    }
+    push_object(sLua, object);
+    lua_pushstring(sLua, name);
+    int status = lua_pcall(sLua, 2, 0, 0);
+    lua_settop(sLua, base);
+    if (status != LUA_OK) return false;
+    ModAnimation *animation = find_custom_animation(name);
+    return animation && object->header.gfx.unk38.curAnim == animation->animation;
+}
+
+bool mod_runtime_host_get_lua_integer(const char *name, int64_t *value) {
+    if (!sLua || !name || !name[0] || !value) return false;
+    int base = lua_gettop(sLua);
+    /* Script globals live in a per-mod environment, not Lua's base global
+     * table. Read the first loaded environment directly so absent names remain
+     * a non-throwing probe even with the sandbox's strict __index handler. */
+    Mod *mod = sMods;
+    while (mod && (mod->env_ref == LUA_NOREF || !mod->enabled)) mod = mod->next;
+    if (!mod) { lua_settop(sLua, base); return false; }
+    lua_rawgeti(sLua, LUA_REGISTRYINDEX, mod->env_ref);
+    lua_pushstring(sLua, name);
+    lua_rawget(sLua, -2);
+    lua_remove(sLua, -2);
+    int is_integer = 0;
+    lua_Integer result = lua_tointegerx(sLua, -1, &is_integer);
+    lua_settop(sLua, base);
+    if (!is_integer) return false;
+    *value = (int64_t)result;
     return true;
 }
 #endif

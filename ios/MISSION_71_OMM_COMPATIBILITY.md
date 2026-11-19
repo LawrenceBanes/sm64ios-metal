@@ -1,0 +1,56 @@
+# Mission 71 — OMM Rebirth v1.4 compatibility audit
+
+## Target identity and archive contents
+
+The local target archive identifies itself in `omm-coop/main.lua` as **OMM Rebirth 1.4**, by PeachyPeach. Its original public source is [PeachyPeachSM64/coopdx-mods-omm-rebirth](https://github.com/PeachyPeachSM64/coopdx-mods-omm-rebirth), and the matching upstream release is [OMM Rebirth v1.4](https://github.com/PeachyPeachSM64/coopdx-mods-omm-rebirth/releases/tag/v1.4). This is the CoopDX Rebirth package, not the `sm64ex-omm` distribution or a later mod release.
+
+The archive has 198 entries (2.5 MB compressed, 3.0 MB uncompressed): 89 Lua files, 13 DynOS `.bin` actor bundles, one `.bhv` behavior, 80 `.tex` textures, and 10 OGG samples. Lua scripts are shipped as paired 32-bit and 64-bit Lua 5.3 bytecode; this app correctly executes the 64-bit files and reports/skips the 32-bit copies. The package header describes Odyssey/Cappy moves, custom star/death sequences, improved power-ups, an Odyssey HUD, star/settings menus, non-stop mode, and a custom camera. The archive contains no license or README file, so the original package and assets remain local and are not redistributed.
+
+The upstream mod page describes unique Odyssey/Cappy moves, custom animations and star/death dances, improved power-ups, non-stop mode, an Odyssey HUD with level-star display and radar, and a custom camera. These are audit targets, not claims of compatibility.
+
+## Feature matrix at checkpoint `340b14ae` plus current Mission 71 work
+
+| Subsystem | Status | Evidence and remaining gap |
+|---|---|---|
+| ZIP import and 64-bit Lua startup | Implemented and host verified | Production ZIP importer installs the unmodified archive; the 64-bit Lua 5.3.5 scripts load. 32-bit bytecode is skipped on this 64-bit runtime. Startup remains host-only evidence. |
+| Event hooks and OMM Lua initialization | Implemented; partially verified | Startup registers callbacks and the local test dispatches update/Mario/HUD events. The first HUD-behind callback currently errors on a nil value in the host game-state setup; normal device HUD behavior is unverified. |
+| Custom actions and moveset | Partially supported; host callback verified | The host test reads OMM's `ACT_OMM_CAPPY_THROW_GROUND` from its per-mod environment, seeds controller input, and dispatches the real registered action callback. It consumes the input and transitions Mario's action state (`0x03000880` in this fixture run). This validates a real Lua-to-native action callback and controller write, but not a complete Cappy launch, bounce/vault transitions, or full moveset gameplay. Multiplayer synchronization callbacks are inactive offline. |
+| Peach model | Host verified through production path | `omm_peachy_geo` loads, registers as a dynamic extended model, attaches to the local Mario object, traverses production `geo_process_object()` and produces display-list submissions. Host traversal is not a Metal pixel or iPhone result. |
+| Other OMM actor models | Partially supported | Six sparkle actor graphs register. Lookups for the four Tiara variants and opaque/translucent OMM star models fail GeoLayout validation with `unbalanced geolayout end`; calls resolve to the native error-model ID. |
+| OMM custom Lua animations | Registered and host traversal verified | Ten original animation tables load. The Mission 71 host test applies the original `anim_mario_omm_cappy_throw` record, advances it through Peach's production GeoLayout animated parts, confirms animated transform values change, and confirms native display-list submissions. This does not yet verify action-to-animation selection, all animation transitions, or device output. |
+| DynOS `.bhv` | Partially supported | `bhvOmmCappy` is recognized as an active bounded behavior using the supported command subset. Unsupported opcodes deactivate the affected behavior; full Cappy object lifecycle and interactions still need gameplay tests. |
+| Textures and materials | Partially supported | PNG-backed actor textures and standalone `.tex` resources are decoded and owned by the OMM mod. The 16 MiB decoded per-mod cap rejects five textures (`omm_tex_cap_w/m/v`, `omm_tex_key`, `omm_tex_hud_slash`) in the current run. Exact Metal material appearance has not been verified on iPhone. |
+| HUD and menus | Partially supported; real HUD callback failing in host test | HUD APIs queue/render text and texture commands, and menu/settings bindings exist. Original `HOOK_ON_HUD_RENDER_BEHIND` currently reports `attempt to index a nil value` in host dispatch; the OMM texture HUD, radar, pause/star lists, and controls have not been proven functional. `showStarNumber` and extended pause display have no native renderer. |
+| Audio | API present; OMM playback unverified | `audio_sample_load` / `audio_sample_play` bindings and owned sample cleanup exist; the archive contains ten OGG samples. The current test does not assert sample decode, playback, or cleanup against these ten files. |
+| Camera | Partially supported | Lua camera-state and mode bindings exist. The build lacks CoopDX `BETTERCAMERA`; OMM's camera configuration queries warn that the options are unavailable. |
+| Settings and storage | Partially supported | Mod-local persistent storage and settings/menu callbacks exist. CoopDX sync tables are local-only; values do not synchronize with other players. |
+| Character selection / Peach-specific abilities | Missing or unverified | This archive uses Mario-action and model-selection behavior, not the separate Character Select plugin. No independent Peach ability implementation has been inferred from this package. |
+| Multiplayer | Explicit architectural limitation | Packet receive is inactive and sync tables are mod-local. Single-player behavior can proceed without this; networked OMM behavior is not supported. |
+
+## Reproducible host checks
+
+The authentic package and extracted data stay under `/home/larry/Downloads` and `/tmp`; neither is tracked. The test executes the production ZIP loader, Lua runtime, model registry, and production GeoLayout traversal:
+
+```sh
+MOD_EXTERNAL_ZIP=/home/larry/Downloads/omm-coop.zip \
+MOD_TEST_EXPECT_OMM_MODELS=1 \
+MOD_TEST_DYNOS_ACTOR_ZIP=/home/larry/Downloads/omm-coop.zip \
+MOD_TEST_DYNOS_ACTOR_ENTRY=omm-coop/actors/omm_peachy_geo.bin \
+MOD_TEST_DYNOS_ACTOR_NAME=omm_peachy_geo \
+MOD_TEST_DYNOS_GRAPH_RENDER=1 \
+MOD_TEST_OMM_ANIMATION=1 \
+MOD_TEST_OMM_ACTIONS=1 \
+MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+ASAN_OPTIONS=detect_leaks=0 CC=clang bash tests/mods/run_host_tests.sh
+```
+
+The current targeted run passes host ASan/UBSan, executes authentic Peach GeoLayout traversal (23 display-list appends, 15 callbacks, 41 transform nodes), verifies changing transforms from OMM's original Cappy-throw animation data, and dispatches the original OMM ground-throw action callback. The callback consumes test controller input and changes Mario action state. This remains host-runtime evidence: it does not verify a complete Cappy launch, Metal pixels, or physical iPhone operation. The full Linux suite and iPhoneOS compile have not yet been rerun on a Mission 71 commit. No physical iPhone result is claimed.
+
+## Next compatibility targets
+
+1. Exercise original OMM action callbacks with deterministic local controller input and assert Mario-state transitions, including Cappy throw and bounce/vault paths.
+2. Resolve the exact source of the host OMM HUD nil dereference and make OMM HUD texture lookup/render work with its unmodified resources.
+3. Make all 80 textures fit a bounded, measured per-mod budget or identify which assets OMM actually requires before raising the budget.
+4. Extend GeoLayout interpretation for the authentic Tiara/star actor graphs without bypassing validation.
+5. Verify original sample decode/playback and complete owned-resource cleanup.
+6. Validate the integrated candidate in Apple CI, then have the user verify controls, visuals, and sound on iPhone.

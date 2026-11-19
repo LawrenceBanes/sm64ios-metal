@@ -1188,6 +1188,77 @@ int main(int argc, char **argv) {
             memset(model_error, 0, sizeof(model_error));
             assert(mod_runtime_host_load_dynos_model(0, "omm_peachy_geo", &peach_id,
                                                      model_error, sizeof(model_error)));
+            if (getenv("MOD_TEST_OMM_ANIMATION")) {
+                int peach_slot = -1;
+                for (int slot = 0; slot < 0x100; ++slot)
+                    if (gLoadedGraphNodes[slot] && mod_runtime_extended_model_id(slot) == peach_id)
+                        peach_slot = slot;
+                assert(peach_slot >= 0);
+                gMarioState->marioObj = &sMarioObject;
+                assert(mod_runtime_request_player_dynos_model("omm_peachy_geo"));
+                mod_runtime_host_process_requests();
+                sMarioObject.header.gfx.node.flags = GRAPH_RENDER_ACTIVE | GRAPH_RENDER_HAS_ANIMATION;
+                sMarioObject.header.gfx.unk18 = 1;
+                sMarioObject.header.gfx.pos[2] = -1000.0f;
+                vec3f_set(sMarioObject.header.gfx.scale, 1.0f, 1.0f, 1.0f);
+                assert(mod_runtime_host_set_animation(&sMarioObject, "anim_mario_omm_cappy_throw"));
+                assert(sMarioObject.header.gfx.unk38.curAnim->values != NULL);
+                assert(sMarioObject.header.gfx.unk38.curAnim->index != NULL);
+
+                struct GraphNodeRoot anim_root = {0};
+                struct GraphNodePerspective anim_frustum = {0};
+                struct GraphNodeCamera anim_camera = {0};
+                struct GraphNodeMasterList anim_master = {0};
+                struct AllocOnlyPool anim_pool = {0};
+                uint8_t anim_pool_storage[65536];
+                uint8_t anim_gfx_scratch[4096];
+                anim_root.areaIndex = 1;
+                anim_frustum.fov = 45.0f;
+                anim_frustum.near = 1;
+                anim_frustum.far = 20000;
+                anim_pool.totalSpace = sizeof(anim_pool_storage);
+                anim_pool.startPtr = anim_pool_storage;
+                anim_pool.freePtr = anim_pool_storage;
+                unsigned long long first_transform = 0;
+                bool animation_changed_transform = false;
+                for (int frame = 0; frame < 63; ++frame) {
+                    ++gAreaUpdateCounter;
+                    anim_pool.freePtr = anim_pool_storage;
+                    anim_pool.usedSpace = 0;
+                    assert(rendering_graph_host_process_object(&sMarioObject, &anim_root,
+                        &anim_frustum, &anim_camera, &anim_master, &anim_pool,
+                        anim_gfx_scratch, sizeof(anim_gfx_scratch)));
+                    assert(rendering_graph_host_display_list_submissions() > 0);
+                    assert(rendering_graph_host_animated_part_visits() > 0);
+                    unsigned long long transform = rendering_graph_host_animation_transform_hash();
+                    if (frame == 0) first_transform = transform;
+                    else if (transform != first_transform) animation_changed_transform = true;
+                }
+                assert(animation_changed_transform);
+                printf("OMM animation: original Cappy throw data advanced through Peach GeoLayout animated parts and changed native transforms\n");
+            }
+            if (getenv("MOD_TEST_OMM_ACTIONS")) {
+                int64_t cappy_throw_action = 0;
+                bool got_cappy_throw_action = mod_runtime_host_get_lua_integer(
+                    "ACT_OMM_CAPPY_THROW_GROUND", &cappy_throw_action);
+                fprintf(stderr, "OMM action probe: action constant %s (value=%lld)\n",
+                        got_cappy_throw_action ? "available" : "missing",
+                        (long long)cappy_throw_action);
+                assert(got_cappy_throw_action);
+                gMarioState->health = 0x880;
+                gMarioState->marioObj = &sMarioObject;
+                gMarioState->action = (uint32_t)cappy_throw_action;
+                gMarioState->actionArg = 0;
+                gMarioState->actionState = 0;
+                gMarioState->actionTimer = 0;
+                sController.buttonPressed = UINT16_MAX;
+                sController.buttonDown = 0;
+                int in_loop = 0;
+                bool handled = mod_runtime_mario_action(gMarioState, &in_loop);
+                printf("OMM Cappy ground-throw action callback dispatch: %s (inLoop=%d, action=0x%08x)\n",
+                       handled ? "handled" : "not handled", in_loop, gMarioState->action);
+                assert(handled && sController.buttonPressed != UINT16_MAX);
+            }
             assert(peach_id >= 0x10000);
             printf("original OMM: six startup graphs and Peach model registered across disable/re-enable\n");
         }

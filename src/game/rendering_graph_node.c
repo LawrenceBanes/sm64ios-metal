@@ -52,6 +52,8 @@ Mtx *gMatStackFixed[32];
 static unsigned int sHostDisplayListSubmissions;
 static unsigned int sHostGeoCallbacks;
 static unsigned int sHostTransformNodes;
+static unsigned int sHostAnimatedPartVisits;
+static unsigned long long sHostAnimationTransformHash;
 #define GEO_HOST_NOTE_TRANSFORM() (++sHostTransformNodes)
 #else
 #define GEO_HOST_NOTE_TRANSFORM() ((void)0)
@@ -635,6 +637,15 @@ static void geo_process_animated_part(struct GraphNodeAnimatedPart *node) {
         rotation[2] = gCurAnimData[retrieve_animation_index(gCurrAnimFrame, &gCurrAnimAttribute)];
     }
     mtxf_rotate_xyz_and_translate(matrix, translation, rotation);
+#ifdef MOD_RUNTIME_HOST_TEST
+    ++sHostAnimatedPartVisits;
+    const u8 *bytes = (const u8 *)translation;
+    for (size_t i = 0; i < sizeof(translation); ++i)
+        sHostAnimationTransformHash = (sHostAnimationTransformHash ^ bytes[i]) * 1099511628211ull;
+    bytes = (const u8 *)rotation;
+    for (size_t i = 0; i < sizeof(rotation); ++i)
+        sHostAnimationTransformHash = (sHostAnimationTransformHash ^ bytes[i]) * 1099511628211ull;
+#endif
     mtxf_mul(gMatStack[gMatStackIndex + 1], matrix, gMatStack[gMatStackIndex]);
     gMatStackIndex++;
     mtxf_to_mtx(matrixPtr, gMatStack[gMatStackIndex]);
@@ -950,6 +961,8 @@ bool rendering_graph_host_process_object(struct Object *object,
     sHostDisplayListSubmissions = 0;
     sHostGeoCallbacks = 0;
     sHostTransformNodes = 0;
+    sHostAnimatedPartVisits = 0;
+    sHostAnimationTransformHash = 1469598103934665603ull;
 #endif
     if (!object || !root || !frustum || !camera || !master || !display_list_pool ||
         !gfx_scratch || gfx_scratch_size < sizeof(Mtx) * 2 || !object->header.gfx.sharedChild)
@@ -1032,6 +1045,14 @@ unsigned int rendering_graph_host_geo_callbacks(void) {
 
 unsigned int rendering_graph_host_transform_nodes(void) {
     return sHostTransformNodes;
+}
+
+unsigned int rendering_graph_host_animated_part_visits(void) {
+    return sHostAnimatedPartVisits;
+}
+
+unsigned long long rendering_graph_host_animation_transform_hash(void) {
+    return sHostAnimationTransformHash;
 }
 #endif
 

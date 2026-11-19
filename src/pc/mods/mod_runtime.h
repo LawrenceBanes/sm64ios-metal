@@ -103,6 +103,8 @@ bool mod_runtime_host_load_dynos_model(size_t mod_index, const char *name,
 void mod_runtime_host_process_requests(void);
 bool mod_runtime_host_set_object_model(struct Object *object, int extended_id,
                                       char *error, size_t error_size);
+bool mod_runtime_host_set_animation(struct Object *object, const char *name);
+bool mod_runtime_host_get_lua_integer(const char *name, int64_t *value);
 #endif
 
 /* ZIP importing uses this after a platform document picker has copied the ZIP

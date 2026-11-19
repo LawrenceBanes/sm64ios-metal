@@ -46,6 +46,8 @@ bool rendering_graph_host_process_object(struct Object *object,
 unsigned int rendering_graph_host_display_list_submissions(void);
 unsigned int rendering_graph_host_geo_callbacks(void);
 unsigned int rendering_graph_host_transform_nodes(void);
+unsigned int rendering_graph_host_animated_part_visits(void);
+unsigned long long rendering_graph_host_animation_transform_hash(void);
 #endif
 
 #endif // RENDERING_GRAPH_NODE_H
