@@ -1,4 +1,5 @@
 #include "mod_runtime.h"
+#include "mod_audio.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -31,6 +32,7 @@
 #include "behavior_data.h"
 #include "mod_behavior_weak.inc"
 #include "game/area.h"
+#include "game/camera.h"
 #include "game/level_update.h"
 #include "game/mario.h"
 #include "game/mario_step.h"
@@ -50,8 +52,9 @@
 #define MOD_INSTRUCTION_QUANTUM 1000
 #define MOD_EVENT_COUNT 69
 #define MOD_DYNAMIC_ID_BASE 0x70000000u
-#define MOD_ACTION_ID_BASE 0x000001c0u
-#define MOD_ACTION_ID_CAPACITY 64u
+#define MOD_ACTION_INDEX_MASK (ACT_ID_MASK & ~ACT_GROUP_MASK)
+#define MOD_ACTIONS_PER_GROUP (MOD_ACTION_INDEX_MASK + 1u)
+#define MOD_ACTION_SLOT_COUNT (ACT_ID_MASK + 1u)
 #define MOD_STORAGE_MAX_KEYS 4096u
 #define MOD_STORAGE_MAX_ENTRY 1024u
 #define MOD_STORAGE_MAX_BYTES (1024u * 1024u)
@@ -166,7 +169,7 @@ static unsigned sCallbackDepth;
 static int sInstructionBudget;
 static bool sInitialized;
 static bool sModsLoaded;
-static bool sActionSlots[MOD_ACTION_ID_CAPACITY];
+static bool sActionSlots[MOD_ACTION_SLOT_COUNT];
 static ModPopup sPopups[MOD_MAX_POPUPS];
 static pthread_mutex_t sRequestMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t sModListMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -930,15 +933,17 @@ static int l_hook_event(lua_State *L) {
 static int l_allocate_mario_action(lua_State *L) {
     uint32_t flags = (uint32_t)luaL_optinteger(L, 1, 0);
     if (!sCurrentMod) return luaL_error(L, "allocate_mario_action must be called while loading a mod");
-    unsigned slot;
-    for (slot = 0; slot < MOD_ACTION_ID_CAPACITY && sActionSlots[slot]; ++slot) {}
-    if (slot == MOD_ACTION_ID_CAPACITY) return luaL_error(L, "custom Mario action id capacity exhausted");
+    unsigned group = flags & ACT_GROUP_MASK;
+    unsigned slot = group;
+    while (slot < group + MOD_ACTIONS_PER_GROUP && sActionSlots[slot]) ++slot;
+    if (slot == group + MOD_ACTIONS_PER_GROUP)
+        return luaL_error(L, "custom Mario action capacity exhausted for group %d", (int)group);
     ModCustomActionId *allocated = calloc(1, sizeof(*allocated));
     if (!allocated) return luaL_error(L, "out of memory allocating a custom Mario action");
     sActionSlots[slot] = true;
     allocated->owner = sCurrentMod;
     allocated->slot = slot;
-    allocated->id = (flags & ~ACT_ID_MASK) | MOD_ACTION_ID_BASE | slot;
+    allocated->id = (flags & ~ACT_ID_MASK) | ACT_FLAG_CUSTOM_ACTION | slot;
     allocated->next_owned = sCurrentMod->custom_action_ids;
     sCurrentMod->custom_action_ids = allocated;
     uint32_t id = allocated->id;
@@ -1571,6 +1576,85 @@ static int l_perform_water_step(lua_State *L) {
     return 1;
 }
 
+static int l_audio_sample_load(lua_State *L) {
+    size_t length;
+    const char *path = luaL_checklstring(L, 1, &length);
+    if (!sCurrentMod) return luaL_error(L, "audio_sample_load requires an active mod");
+    if (length > 240 || memchr(path, 0, length) || !safe_relative_path(path))
+        return luaL_argerror(L, 1, "expected a mod-relative sample path of at most 240 bytes");
+
+    const char *error;
+    uint32_t id = mod_audio_load(sCurrentMod, sCurrentMod->path, path, &error);
+    if (!id) {
+        mod_logf("error", sCurrentMod->name, "audio_sample_load('%s'): %s", path, error);
+        lua_pushnil(L);
+        return 1;
+    }
+    uint32_t *handle = lua_newuserdata(L, sizeof(*handle));
+    *handle = id;
+    luaL_getmetatable(L, "sm64.mod.AudioSample");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+static int l_audio_sample_play(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioSample");
+    float position[3];
+    LuaUserdata *vector = luaL_testudata(L, 2, "sm64.mod.Vec3f");
+    if (vector) {
+        float *coords = vec_f_pointer(vector);
+        if (!coords) return luaL_argerror(L, 2, "stale sound position");
+        memcpy(position, coords, sizeof(position));
+    } else {
+        luaL_checktype(L, 2, LUA_TTABLE);
+        for (int axis = 0; axis < 3; ++axis) {
+            char key[2] = { "xyz"[axis], 0 };
+            lua_getfield(L, 2, key);
+            position[axis] = checked_lua_finite_float(L, -1, key);
+            lua_pop(L, 1);
+        }
+    }
+    for (int axis = 0; axis < 3; ++axis)
+        if (!isfinite(position[axis])) return luaL_argerror(L, 2, "sound position must be finite");
+    float gain = checked_lua_finite_float(L, 3, "sample volume");
+    if (gain < 0 || gain > 4) return luaL_argerror(L, 3, "sample volume must be in 0..4");
+    float pan = 0;
+    if (gCamera) {
+        /* The stock camera has no stored CoopDX view matrix. Derive the
+         * horizontal basis from the native camera's position and focus. */
+        double dx = (double)position[0] - gCamera->pos[0];
+        double dy = (double)position[1] - gCamera->pos[1];
+        double dz = (double)position[2] - gCamera->pos[2];
+        double fx = (double)gCamera->focus[0] - gCamera->pos[0];
+        double fz = (double)gCamera->focus[2] - gCamera->pos[2];
+        double facing = hypot(fx, fz);
+        if (facing > 0)
+            pan = 2 * get_sound_pan((float)((-fz * dx + fx * dz) / facing * 10),
+                                     (float)((fx * dx + fz * dz) / facing * 10)) - 1;
+        if (!isfinite(pan)) pan = 0;
+        pan = fmaxf(-1, fminf(pan, 1));
+        gain *= (float)fmax(0, 1 - sqrt(dx * dx + dy * dy + dz * dz) / 32000);
+    }
+    const char *error;
+    if (!mod_audio_play(sCurrentMod, *handle, gain, pan, &error))
+        return luaL_error(L, "audio_sample_play: %s", error);
+    return 0;
+}
+
+static int l_audio_sample_stop(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioSample");
+    if (!mod_audio_stop(sCurrentMod, *handle))
+        return luaL_error(L, "audio_sample_stop: sample is stale or belongs to another mod");
+    return 0;
+}
+
+static int l_audio_sample_destroy(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioSample");
+    if (!mod_audio_destroy(sCurrentMod, *handle))
+        return luaL_error(L, "audio_sample_destroy: sample is stale or belongs to another mod");
+    return 0;
+}
+
 static int l_play_sound(lua_State *L) {
     s32 sound_bits = (s32)luaL_checkinteger(L, 1);
     LuaUserdata *position = luaL_checkudata(L, 2, "sm64.mod.Vec3f");
@@ -2198,6 +2282,14 @@ static void register_api(void) {
     register_api_function("perform_ground_step", l_perform_ground_step);
     register_api_function("perform_air_step", l_perform_air_step);
     register_api_function("perform_water_step", l_perform_water_step);
+    luaL_newmetatable(sLua, "sm64.mod.AudioSample");
+    lua_pushliteral(sLua, "AudioSample");
+    lua_setfield(sLua, -2, "__metatable");
+    lua_pop(sLua, 1);
+    register_api_function("audio_sample_load", l_audio_sample_load);
+    register_api_function("audio_sample_play", l_audio_sample_play);
+    register_api_function("audio_sample_stop", l_audio_sample_stop);
+    register_api_function("audio_sample_destroy", l_audio_sample_destroy);
     register_api_function("play_sound", l_play_sound);
     register_api_function("djui_popup_create", l_djui_popup_create);
     register_api_function("djui_hud_set_resolution", l_djui_hud_set_resolution);
@@ -2301,6 +2393,9 @@ static void register_api(void) {
     expose_int("OBJ_LIST_POLELIKE", OBJ_LIST_POLELIKE); expose_int("OBJ_LIST_SPAWNER", OBJ_LIST_SPAWNER);
     expose_int("OBJ_LIST_UNIMPORTANT", OBJ_LIST_UNIMPORTANT);
 
+    expose_int("ACT_FLAG_CUSTOM_ACTION", ACT_FLAG_CUSTOM_ACTION);
+    expose_int("ACT_INDEX_MASK", MOD_ACTION_INDEX_MASK);
+    expose_int("ACT_NUM_ACTIONS_PER_GROUP", MOD_ACTIONS_PER_GROUP);
     expose_int("ACT_FLAG_AIR", ACT_FLAG_AIR); expose_int("ACT_FLAG_MOVING", ACT_FLAG_MOVING);
     expose_int("ACT_FLAG_STATIONARY", ACT_FLAG_STATIONARY); expose_int("ACT_FLAG_INTANGIBLE", ACT_FLAG_INTANGIBLE);
     expose_int("INPUT_A_PRESSED", INPUT_A_PRESSED); expose_int("INPUT_A_DOWN", INPUT_A_DOWN);
@@ -2435,6 +2530,7 @@ static void unload_mod(Mod *mod) {
     if (!mod) return;
     remove_mod_popups(mod);
     restore_mod_visibility(mod);
+    mod_audio_unload(mod);
 
     /* Stop scripted objects before freeing the callbacks they reference. */
     ModObject **object_link = &sObjects;

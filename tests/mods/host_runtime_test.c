@@ -14,6 +14,8 @@
 #include "sm64.h"
 #include "audio_defines.h"
 #include "game/area.h"
+#include "game/camera.h"
+#include "pc/mods/mod_audio.h"
 #include "game/save_file.h"
 #include "game/level_update.h"
 #include "game/object_helpers.h"
@@ -28,6 +30,8 @@ char fs_writepath[SYS_MAX_PATH] = "";
 struct MarioState gMarioStates[1];
 struct MarioState *gMarioState = &gMarioStates[0];
 struct Object *gCurrentObject;
+struct Camera *gCamera;
+f32 get_sound_pan(f32 x, f32 z) { (void)x; (void)z; return 0.5f; }
 struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
 struct ObjectNode *gObjectLists = gObjectListArray;
 static struct GraphNode *sLoadedGraphNodeStorage[0x100];
@@ -512,12 +516,26 @@ int main(int argc, char **argv) {
     assert(gModHudTestColor[0] == 255 && gModHudTestColor[1] == 255 &&
            gModHudTestColor[2] == 255 && gModHudTestColor[3] == 255);
     assert(sLastSoundBits == SOUND_MENU_PINCH_MARIO_FACE); /* Upstream popup notification sound. */
+    int16_t pcm[256] = {0};
+    mod_audio_mix(pcm, 128, 1);
+    bool heard = false;
+    for (size_t i = 0; i < 256; i += 2) {
+        assert(pcm[i] == pcm[i + 1]);
+        heard |= pcm[i] != 0;
+    }
+    assert(heard);
     assert(mod_runtime_set_enabled(8, false));
+    memset(pcm, 0, sizeof(pcm));
+    mod_audio_mix(pcm, 128, 1);
+    for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
     mod_runtime_hud_render();
     assert(gModHudTestRectCount == 0 && gModHudTestTextCount == 0); /* Unload clears owner popups. */
     assert(mod_runtime_set_enabled(8, true));
     mod_runtime_hud_render();
     assert(gModHudTestRectCount == 2 && gModHudTestTextCount == 2);
+    assert(mod_runtime_menu_set_value(8, 0, 0));
+    mod_audio_mix(pcm, 128, 1);
+    for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
     assert(sSpawnedNativeObjectCount == 3);
     assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);
     assert(sSpawnedNativeModels[2] == MODEL_NONE);
@@ -550,8 +568,8 @@ int main(int argc, char **argv) {
     assert(gMarioState->numCoins == 178); /* Relative modules, per-mod cache isolation, architecture skip, and coroutine budget. */
     assert(gMarioState->numLives == 111); /* Module and callback-relative require plus isolated failure. */
     assert(!mod_runtime_set_enabled(4, true)); /* Failed initialization was cleaned and remains disabled. */
-    assert((gMarioState->action & ACT_ID_MASK) >= 0x1c0u);
-    assert((gMarioState->action & ACT_ID_MASK) <= 0x1ffu);
+    assert(gMarioState->action & ACT_FLAG_CUSTOM_ACTION);
+    assert((gMarioState->action & ACT_GROUP_MASK) == ACT_GROUP_AIRBORNE);
 
     mod_runtime_update();
     assert(gMarioState->numCoins == 192);

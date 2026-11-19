@@ -3274,6 +3274,12 @@ s32 execute_mario_action(UNUSED struct Object *o) {
 #endif
             if (mod_runtime_mario_action(gMarioState, &inLoop)) {
                 /* The registered Lua action owns this action frame. */
+            } else if (gMarioState->action & ACT_FLAG_CUSTOM_ACTION) {
+                /* A disabled mod or failed hook must not leave an action in
+                 * the native group dispatcher without a case to execute. */
+                u32 recovery = gMarioState->action & ACT_FLAG_AIR ? ACT_FREEFALL : ACT_IDLE;
+                set_mario_action(gMarioState, recovery, 0);
+                inLoop = FALSE;
             } else switch (gMarioState->action & ACT_GROUP_MASK) {
                 case ACT_GROUP_STATIONARY:
                     inLoop = mario_execute_stationary_action(gMarioState);

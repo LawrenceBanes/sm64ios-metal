@@ -1,4 +1,6 @@
-TEST_ACTION = allocate_mario_action(ACT_FLAG_AIR)
+TEST_ACTION = allocate_mario_action(ACT_FLAG_AIR | ACT_GROUP_AIRBORNE)
+assert((TEST_ACTION & ACT_GROUP_MASK) == ACT_GROUP_AIRBORNE)
+assert((TEST_ACTION & ACT_FLAG_CUSTOM_ACTION) ~= 0)
 
 hook_mario_action(TEST_ACTION, {
     every_frame = function(m)

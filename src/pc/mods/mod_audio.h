@@ -1,0 +1,16 @@
+#ifndef SM64IOS_MOD_AUDIO_H
+#define SM64IOS_MOD_AUDIO_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/* All operations run on the game thread, before SDL copies the mixed buffer. */
+uint32_t mod_audio_load(const void *owner, const char *root, const char *path, const char **error);
+bool mod_audio_play(const void *owner, uint32_t id, float volume, float pan, const char **error);
+bool mod_audio_stop(const void *owner, uint32_t id);
+bool mod_audio_destroy(const void *owner, uint32_t id);
+void mod_audio_unload(const void *owner);
+void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain);
+
+#endif

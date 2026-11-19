@@ -1,3 +1,8 @@
+-- Original synthetic sine tone, generated with FFmpeg's sine source.
+local sample = assert(audio_sample_load("sound/test-tone.ogg"))
+assert(not pcall(audio_sample_load, "../outside.ogg"))
+assert(audio_sample_load("sound/missing.ogg") == nil)
+local function sample_position() return { x = 0, y = 0, z = 0 } end
 local popupCreated = false
 hook_event(HOOK_ON_HUD_RENDER, function()
     djui_hud_set_resolution(RESOLUTION_N64)
@@ -18,6 +23,14 @@ hook_event(HOOK_ON_HUD_RENDER, function()
 
     if not popupCreated then
         popupCreated = true
+        audio_sample_play(sample, sample_position(), 1)
+        audio_sample_play(sample, gGlobalSoundSource, 0.5)
         djui_popup_create("Possession ready\nPress A to capture", 2)
     end
+end)
+
+hook_mod_menu_button("Destroy sample", function()
+    audio_sample_stop(sample)
+    audio_sample_destroy(sample)
+    assert(not pcall(audio_sample_play, sample, sample_position(), 1))
 end)
