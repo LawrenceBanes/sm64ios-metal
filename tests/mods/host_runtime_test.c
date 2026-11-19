@@ -26,9 +26,13 @@ char fs_writepath[SYS_MAX_PATH] = "";
 struct MarioState gMarioStates[1];
 struct MarioState *gMarioState = &gMarioStates[0];
 struct Object *gCurrentObject;
+f32 gGlobalSoundSource[3];
+f32 gDefaultSoundArgs[3];
 s16 gCurrSaveFileNum = 1;
 s16 gCurrLevelNum;
 s16 gCurrAreaIndex;
+static s32 sLastSoundBits;
+static f32 sLastSoundPosition[3];
 
 u32 save_file_get_flags(void) { return 0; }
 u32 save_file_get_star_flags(s32 file_index, s32 course_index) {
@@ -184,11 +188,20 @@ struct Object *spawn_object_abs_with_rot(struct Object *parent, s16 spawn_type, 
 
 void print_text(s32 x, s32 y, const char *text) { (void)x; (void)y; (void)text; ++sPrintedText; }
 
+void play_sound(s32 sound_bits, f32 *position) {
+    sLastSoundBits = sound_bits;
+    memcpy(sLastSoundPosition, position, sizeof(sLastSoundPosition));
+}
+
 static void reset_game_state(void) {
     memset(gMarioStates, 0, sizeof(gMarioStates));
     memset(&sMarioObject, 0, sizeof(sMarioObject));
     memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
     memset(&sController, 0, sizeof(sController));
+    memset(gGlobalSoundSource, 0, sizeof(gGlobalSoundSource));
+    memset(gDefaultSoundArgs, 0, sizeof(gDefaultSoundArgs));
+    sLastSoundBits = 0;
+    memset(sLastSoundPosition, 0, sizeof(sLastSoundPosition));
     gMarioState = &gMarioStates[0];
     gMarioState->marioObj = &sMarioObject;
     gMarioState->controller = &sController;
@@ -320,6 +333,8 @@ int main(int argc, char **argv) {
     assert(mod_runtime_mod_enabled(0));
 
     mod_runtime_update();
+    assert(sLastSoundBits == 0x1357);
+    assert(sLastSoundPosition[0] == 12.0f && sLastSoundPosition[1] == 34.0f && sLastSoundPosition[2] == 56.0f);
     assert(mod_runtime_mod_enabled(7));
     assert(gMarioState->numCoins == 178); /* Native-width bytecode runs; the alternate-width twin is skipped. */
     assert(!mod_runtime_mod_enabled(4));

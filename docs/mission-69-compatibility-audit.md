@@ -43,7 +43,7 @@ The symbol scan of the 39 64-bit OMM Lua bytecode files found examples spanning 
 
 ### Original community ZIP already present in Mission 68
 
-Mission 68's unmodified MIT-licensed **SM64 Coop Achievements 2.1.0** ZIP remains the only full original ZIP tested in this runtime. It imports, starts, registers its menu, executes a Mario update callback, and persists its first-star achievement in the host harness. Unsupported sound/HUD callbacks are diagnosed and isolated. This is host evidence, not iPhone gameplay evidence.
+Mission 68's unmodified MIT-licensed **SM64 Coop Achievements 2.1.0** ZIP remains the only full original ZIP tested in this runtime. It imports, starts, registers its menu, executes a Mario update callback, and persists its first-star achievement in the host harness. Calls to `play_sound(soundBits, gGlobalSoundSource)` now reach the native sound engine; the remaining `djui_hud_set_resolution` call is diagnosed and isolated. This is host evidence, not iPhone gameplay evidence.
 
 ### OMM source probe (not a ZIP import)
 
@@ -65,6 +65,7 @@ The possession archive has not been tested: the download listing is visible, but
 - Add optional `MOD_EXTERNAL_ROOT` support to `tests/mods/run_host_tests.sh` for inspecting private, already-extracted mods without storing their packages in the repository.
 - Implement upstream `HOOK_BEFORE_PHYS_STEP` output semantics for ground, air, water, and hanging physics. The hook receives Mario state, `STEP_TYPE_*`, and the step argument; the first valid integer return skips native stepping and becomes its result. The matching step/result constants are exposed to Lua. Host coverage verifies each step kind, the air step argument, and first-output short circuit.
 - Bind `perform_ground_step`, `perform_air_step`, and `perform_water_step` to the existing engine functions with upstream Lua argument and result shapes. The host fixture calls all three through Lua and checks the returned native step results and airborne step argument.
+- Bind upstream `play_sound(soundBits, Vec3f)` to the existing native sound engine, and expose mutable engine-owned `gGlobalSoundSource` and `gDefaultSoundArgs` vectors. The host fixture verifies the sound ID and all three position coordinates received by the native function; the unmodified Achievements ZIP no longer reports `play_sound` as unsupported.
 
 The original sandbox, ZIP validation, Lua API boundaries, existing native gameplay, and DynOS inactive status remain unchanged.
 
@@ -74,7 +75,8 @@ The original sandbox, ZIP validation, Lua API boundaries, existing native gamepl
 - `bash tests/mods/run_zip_import_tests.sh`: pass.
 - `ASAN_OPTIONS=detect_leaks=0 CC=clang MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' bash tests/mods/run_host_tests.sh`: pass with AddressSanitizer and UndefinedBehaviorSanitizer. LeakSanitizer had to be disabled because the sandbox reports that ptrace-based leak detection is unavailable; leak detection is therefore not verified.
 - `MOD_EXTERNAL_ROOT=/tmp/mission69-omm-probe bash tests/mods/run_host_tests.sh`: existing host tests pass; the OMM source probe is discovered, skips its 32-bit chunk, and fails on the missing `audio_sample_load` binding as described above.
-- iOS arm64 compilation and device behavior have not been run for this checkpoint.
+- GitHub Actions `Metal Apple SDK validation` run 44445703187 passed both Linux checks and its `ios-metal-compile` job on the `xcode-27` runner. This validates the Metal backend/MSL toolchain but does not compile the full SM64 iOS app for arm64.
+- Full iOS app arm64 compilation and device behavior have not been run for this checkpoint.
 
 ## M1 gaps and next work
 

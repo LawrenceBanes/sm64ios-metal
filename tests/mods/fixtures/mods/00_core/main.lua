@@ -13,6 +13,10 @@ hook_mario_action(TEST_ACTION, {
 hook_event(HOOK_UPDATE, function()
     gMarioState.numCoins = gMarioState.numCoins + 1
     gMarioState.action = TEST_ACTION
+    gGlobalSoundSource.x = 12
+    gGlobalSoundSource.y = 34
+    gGlobalSoundSource.z = 56
+    play_sound(0x1357, gGlobalSoundSource)
 end)
 
 hook_event(HOOK_MARIO_UPDATE, function(m)

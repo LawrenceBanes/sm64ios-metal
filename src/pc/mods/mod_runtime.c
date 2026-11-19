@@ -17,6 +17,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#include "audio/external.h"
 #include "macros.h"
 #include "sm64.h"
 #include "level_table.h"
@@ -118,7 +119,8 @@ typedef struct { size_t bytes; } LuaAllocator;
 typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT, LUA_UD_SURFACE } LuaUserdataKind;
 typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; struct Surface surface; } LuaUserdata;
 
-enum { VEC_MARIO_POS, VEC_MARIO_VEL, VEC_MARIO_FACE_ANGLE, VEC_MARIO_ANGLE_VEL };
+enum { VEC_MARIO_POS, VEC_MARIO_VEL, VEC_MARIO_FACE_ANGLE, VEC_MARIO_ANGLE_VEL,
+       VEC_GLOBAL_SOUND_SOURCE, VEC_DEFAULT_SOUND_ARGS };
 enum { HOOK_FN_INIT, HOOK_FN_LOOP, HOOK_FN_ACTION, HOOK_FN_GRAVITY };
 
 static lua_State *sLua;
@@ -520,6 +522,11 @@ static void push_vector(lua_State *L, LuaUserdataKind kind, int field) {
 static struct MarioState *current_mario(void) { return gMarioState; }
 
 static float *vec_f_pointer(LuaUserdata *ud) {
+    switch (ud->field) {
+        case VEC_GLOBAL_SOUND_SOURCE: return gGlobalSoundSource;
+        case VEC_DEFAULT_SOUND_ARGS: return gDefaultSoundArgs;
+        default: break;
+    }
     struct MarioState *m = current_mario();
     if (!m) return NULL;
     switch (ud->field) {
@@ -900,6 +907,16 @@ static int l_perform_water_step(lua_State *L) {
     struct MarioState *m = checked_mario_argument(L, 1);
     lua_pushinteger(L, perform_water_step(m));
     return 1;
+}
+
+static int l_play_sound(lua_State *L) {
+    s32 sound_bits = (s32)luaL_checkinteger(L, 1);
+    LuaUserdata *position = luaL_checkudata(L, 2, "sm64.mod.Vec3f");
+    if (position->kind != LUA_UD_VEC_F) return luaL_argerror(L, 2, "expected a Vec3f position");
+    float *position_values = vec_f_pointer(position);
+    if (!position_values) return luaL_error(L, "sound position is unavailable");
+    play_sound(sound_bits, position_values);
+    return 0;
 }
 
 static int l_mario_set_forward_vel(lua_State *L) {
@@ -1503,6 +1520,7 @@ static void register_api(void) {
     register_api_function("perform_ground_step", l_perform_ground_step);
     register_api_function("perform_air_step", l_perform_air_step);
     register_api_function("perform_water_step", l_perform_water_step);
+    register_api_function("play_sound", l_play_sound);
     register_api_function("mario_set_forward_vel", l_mario_set_forward_vel);
     register_api_function("set_mario_animation", l_set_mario_animation);
     register_api_function("require", l_mod_require);
@@ -1527,6 +1545,11 @@ static void register_api(void) {
     expose_int("HOOK_ON_INTERACT", HOOK_ON_INTERACT);
     expose_int("HOOK_ON_LEVEL_INIT", HOOK_ON_LEVEL_INIT);
     expose_int("HOOK_ON_EXIT", HOOK_ON_EXIT);
+
+    push_vector(sLua, LUA_UD_VEC_F, VEC_GLOBAL_SOUND_SOURCE);
+    lua_setglobal(sLua, "gGlobalSoundSource");
+    push_vector(sLua, LUA_UD_VEC_F, VEC_DEFAULT_SOUND_ARGS);
+    lua_setglobal(sLua, "gDefaultSoundArgs");
 
     expose_int("STEP_TYPE_GROUND", MOD_RUNTIME_STEP_TYPE_GROUND);
     expose_int("STEP_TYPE_AIR", MOD_RUNTIME_STEP_TYPE_AIR);
