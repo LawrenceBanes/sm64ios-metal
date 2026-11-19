@@ -1,6 +1,24 @@
 /* Run the production display-list interpreter up to the graphics API boundary.
  * The test mounts the generated base pack and records draws and texture uploads. */
 #include "src/pc/gfx/gfx_pc.c"
+
+static const uint8_t sDynamicModTextureRgba[] = {
+    255, 32, 16, 255, 16, 32, 255, 192,
+};
+static unsigned sDynamicModTextureUploads;
+
+// This replay harness does not link the mod runtime. Provide one bounded
+// decoded texture at its renderer boundary to exercise the production upload
+// branch independently from Lua/mod ownership.
+bool mod_runtime_dynamic_texture_lookup(const char *key, const uint8_t **rgba,
+                                        uint32_t *width, uint32_t *height) {
+    if (!key || strcmp(key, "m69tex:host-fixture") != 0 || !rgba || !width || !height)
+        return false;
+    *rgba = sDynamicModTextureRgba;
+    *width = 2;
+    *height = 1;
+    return true;
+}
 #include "hyrule_field_runtime.inc.c"
 #include "sm64.h"
 #include "geo_commands.h"
@@ -41,6 +59,13 @@ static void record_draw(float *stream, size_t floats, size_t triangles) {
 
 static void record_upload(const uint8_t *rgba, int width, int height) {
     assert(rgba != missing_texture && width > 0 && height > 0);
+    if (rgba == sDynamicModTextureRgba) {
+        static const uint8_t expected[] = {255, 32, 16, 255, 16, 32, 255, 192};
+        assert(width == 2 && height == 1 && !memcmp(rgba, expected, sizeof(expected)));
+        ++sDynamicModTextureUploads;
+        ++uploads;
+        return;
+    }
     if (rgba == missing_hyrule_texture) {
         assert(getenv("REPLAY_EXPECT_MISSING_HYRULE_TEXTURE"));
         assert(width == 2 && height == 2);
@@ -99,6 +124,16 @@ static struct GfxRenderingAPI recorder = {
     .set_zmode_decal = toggle, .set_use_alpha = toggle, .set_viewport = rect, .set_scissor = rect,
     .draw_triangles = record_draw,
 };
+
+static void test_dynamic_mod_texture_upload(void) {
+    static const uint8_t texture_key[] = "m69tex:host-fixture";
+    rdp.texture_tile.fmt = G_IM_FMT_RGBA;
+    rdp.texture_tile.siz = G_IM_SIZ_32b;
+    rdp.loaded_texture[0].addr = texture_key;
+    rdp.loaded_texture[0].size_bytes = sizeof(sDynamicModTextureRgba);
+    import_texture(0);
+    assert(sDynamicModTextureUploads == 1);
+}
 
 static void replay_passes(bool connected) {
     const Gfx *passes[] = { hyrule_field_opaque_dl, hyrule_field_translucent_dl };
@@ -165,6 +200,7 @@ int main(int argc, char **argv) {
         assert(missing_hyrule_uploads > 0);
     else
         assert(missing_hyrule_uploads == 0);
+    test_dynamic_mod_texture_upload();
     printf("Hyrule host replay: %u triangles submitted, %u texture uploads\n", draws, uploads);
     return 0;
 }

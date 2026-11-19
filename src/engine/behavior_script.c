@@ -13,6 +13,7 @@
 #include "game/object_list_processor.h"
 #include "graph_node.h"
 #include "surface_collision.h"
+#include "pc/mods/mod_runtime.h"
 
 // Macros for retrieving arguments from behavior scripts.
 #define BHV_CMD_GET_1ST_U8(index)  (u8)((gCurBhvCommand[index] >> 24) & 0xFF) // unused
@@ -847,6 +848,27 @@ static s32 bhv_cmd_animate_texture(void) {
     return BHV_PROC_CONTINUE;
 }
 
+// CoopDX command 0x39 labels a behavior script for synchronization. The label
+// has no single-player effect, but consuming it preserves the command stream.
+static s32 bhv_cmd_id(void) {
+    gCurBhvCommand++;
+    return BHV_PROC_CONTINUE;
+}
+
+// CoopDX command 0x3C dispatches a length-checked Lua token owned by the
+// current DynOS behavior. The runtime rejects unresolved tokens and isolates
+// callback failures by deactivating only the affected object.
+static s32 bhv_cmd_call_native_ext(void) {
+    if (!mod_runtime_behavior_call_lua(BHV_CMD_GET_U32(1))) return BHV_PROC_BREAK;
+    gCurBhvCommand += 2;
+    return BHV_PROC_CONTINUE;
+}
+
+static s32 bhv_cmd_unsupported_dynos_ext(void) {
+    mod_runtime_behavior_unsupported_command((unsigned)(*gCurBhvCommand >> 24));
+    return BHV_PROC_BREAK;
+}
+
 void stub_behavior_script_2(void) {
 }
 
@@ -908,7 +930,11 @@ static BhvCommandProc BehaviorCmdTable[] = {
     bhv_cmd_disable_rendering, //35
     bhv_cmd_set_int_unused, //36
     bhv_cmd_spawn_water_droplet, //37
-    bhv_cmd_cylboard //38
+    bhv_cmd_cylboard, //38
+    bhv_cmd_id, //39
+    bhv_cmd_unsupported_dynos_ext, //3A: CALL_EXT requires cross-behavior token resolution
+    bhv_cmd_unsupported_dynos_ext, //3B: GOTO_EXT requires cross-behavior token resolution
+    bhv_cmd_call_native_ext //3C
 };
 
 // Execute the behavior script of the current object, process the object flags, and other miscellaneous code for updating objects.
@@ -939,13 +965,26 @@ void cur_obj_update(void) {
                 gCurrentObject->oPrevAction = gCurrentObject->oAction);
     }
 
-    // Execute the behavior script.
+    // Run Lua callbacks registered for this native behavior. A replacement
+    // suppresses only the behavior bytecode; the engine's regular object
+    // bookkeeping below still runs.
+    bool replaceNativeBehavior = mod_runtime_native_behavior_tick();
+
+    // Execute the behavior script unless a Lua behavior hook replaces it.
     gCurBhvCommand = gCurrentObject->curBhvCommand;
 
-    do {
-        bhvCmdProc = BehaviorCmdTable[*gCurBhvCommand >> 24];
-        bhvProcResult = bhvCmdProc();
-    } while (bhvProcResult == BHV_PROC_CONTINUE);
+    if (!replaceNativeBehavior) {
+        do {
+            unsigned opcode = (unsigned)(*gCurBhvCommand >> 24);
+            if (opcode >= sizeof(BehaviorCmdTable) / sizeof(BehaviorCmdTable[0])) {
+                mod_runtime_behavior_unsupported_command(opcode);
+                bhvProcResult = BHV_PROC_BREAK;
+            } else {
+                bhvCmdProc = BehaviorCmdTable[opcode];
+                bhvProcResult = bhvCmdProc();
+            }
+        } while (bhvProcResult == BHV_PROC_CONTINUE);
+    }
 
     gCurrentObject->curBhvCommand = gCurBhvCommand;
 

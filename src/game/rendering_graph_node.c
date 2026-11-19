@@ -15,6 +15,7 @@
 #include "mario.h"
 #include "level_update.h"
 #include "object_list_processor.h"
+#include "pc/mods/mod_runtime.h"
 #include "actors/group12.h"
 #endif
 
@@ -654,7 +655,13 @@ static void geo_process_shadow(struct GraphNodeShadow *node) {
                                        *gCurGraphNodeCamera->matrixPtr);
             shadowScale = node->shadowScale;
         } else {
+#ifdef IOS_BUILD
+            if (!mod_runtime_graph_node_shadow_position(gCurGraphNodeObject, shadowPos)) {
+                vec3f_copy(shadowPos, gCurGraphNodeObject->pos);
+            }
+#else
             vec3f_copy(shadowPos, gCurGraphNodeObject->pos);
+#endif
             shadowScale = node->shadowScale * gCurGraphNodeObject->scale[0];
         }
 
@@ -823,6 +830,9 @@ static void geo_process_object(struct Object *node) {
 #endif
 
     if (node->header.gfx.unk18 == gCurGraphNodeRoot->areaIndex) {
+#ifdef IOS_BUILD
+        mod_runtime_object_render(node);
+#endif
         if (node->header.gfx.throwMatrix != NULL) {
             mtxf_mul(gMatStack[gMatStackIndex + 1], *node->header.gfx.throwMatrix,
                      gMatStack[gMatStackIndex]);

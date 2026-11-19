@@ -21,6 +21,10 @@ level = read("levels/castle_grounds/script.c")
 ui = read("src/pc/gfx/gfx_uikit.m")
 actor = read("actors/group0.c")
 model = read("actors/mario/model.inc.c")
+interaction = read("src/game/interaction.c")
+touch_controller = read("src/ios/ios/TouchControlsViewController.m")
+touch_layout = read("src/pc/controller/controller_touchscreen_layouts.inc")
+touchscreen_runtime = read("src/pc/controller/controller_touchscreen.m")
 
 # The two private action IDs must belong to the expected action groups, and each
 # must be dispatched by the stock SM64 group-specific action loop.
@@ -58,5 +62,21 @@ assert "static Lights1 mario_red_lights_group" in model
 assert "mario_set_temporary_luigi_palette" in actor
 assert "sTemporaryLuigiPaletteEnabled = !sTemporaryLuigiPaletteEnabled" in mario
 assert "mario_set_temporary_luigi_palette(sTemporaryLuigiPaletteEnabled)" in mario
+
+# Real CoopDX N64 D-pad input is distinct from C-button camera input on both
+# iOS touch controls and SDL hardware controllers.
+assert "D-pad Down" in touch_layout and "buttonID = D_JPAD" in touch_layout
+assert "dpadDownButton.buttonTag = D_JPAD" in touch_controller
+assert "[imageViews addObject:dpadDownButton]" in touch_controller
+assert "pad->button |= ControlElements[i].buttonID" in touchscreen_runtime
+assert "controller_sdl_dpad_mask" in read("src/pc/controller/controller_sdl2.c")
+assert "mod_runtime_stay_in_level_after_star()" in interaction
+assert "gCurrLevelNum != LEVEL_BOWSER_1" in interaction
+assert "MOD_LEVEL_VALUE_STAR_HEAL" in interaction
+assert "MOD_LEVEL_VALUE_MUSHROOM_1UP_HEAL" in read("src/game/behaviors/mushroom_1up.inc.c")
+assert "MOD_LEVEL_VALUE_PREVIEW_BLUE_COINS" in read("src/game/behaviors/blue_coin.inc.c")
+assert "MOD_LEVEL_VALUE_RESPAWN_BLUE_COINS_SWITCH" in read("src/game/behaviors/blue_coin.inc.c")
+assert "MOD_LEVEL_VALUE_VISIBLE_SECRETS" in read("src/game/behaviors/hidden_star.inc.c")
+assert "MOD_LEVEL_VALUE_PAUSE_EXIT_ANYWHERE" in read("src/game/ingame_menu.c")
 
 print("iOS character switch, mount/dismount, action dispatch, and fallback source checks passed")

@@ -1,5 +1,7 @@
 // hidden_star.c.inc
 
+#include "pc/mods/mod_runtime.h"
+
 void bhv_hidden_star_init(void) {
     s16 sp36;
     struct Object *sp30;
@@ -53,6 +55,11 @@ void bhv_hidden_star_trigger_loop(void) {
         }
 
         o->activeFlags = ACTIVE_FLAG_DEACTIVATED;
+    }
+
+    if (mod_runtime_level_value(MOD_LEVEL_VALUE_VISIBLE_SECRETS)) {
+        cur_obj_set_model(MODEL_PURPLE_MARBLE);
+        obj_set_billboard(o);
     }
 }
 

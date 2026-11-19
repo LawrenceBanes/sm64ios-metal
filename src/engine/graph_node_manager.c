@@ -49,9 +49,11 @@ s16 *read_vec3s(Vec3s dst, s16 *src) {
  * range.
  */
 s16 *read_vec3s_angle(Vec3s dst, s16 *src) {
-    dst[0] = (next_s16_in_geo_script(&src) << 15) / 180;
-    dst[1] = (next_s16_in_geo_script(&src) << 15) / 180;
-    dst[2] = (next_s16_in_geo_script(&src) << 15) / 180;
+    /* A GeoLayout angle is signed degrees. Multiplying in s32 preserves the
+     * intended fixed-point conversion without left-shifting a negative value. */
+    dst[0] = (s16)(((s32)next_s16_in_geo_script(&src) * 32768) / 180);
+    dst[1] = (s16)(((s32)next_s16_in_geo_script(&src) * 32768) / 180);
+    dst[2] = (s16)(((s32)next_s16_in_geo_script(&src) * 32768) / 180);
     return src;
 }
 

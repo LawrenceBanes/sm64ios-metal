@@ -34,10 +34,15 @@ s16 sTextLabelsCount = 0;
 #define MOD_HUD_TEXT_CAPACITY 256
 #define MOD_HUD_GLYPH_CAPACITY 512
 
-enum ModHudCommandType { MOD_HUD_COMMAND_RECT, MOD_HUD_COMMAND_TEXT };
+enum ModHudCommandType { MOD_HUD_COMMAND_RECT, MOD_HUD_COMMAND_TEXT, MOD_HUD_COMMAND_TEXTURE };
 struct ModHudCommand {
     enum ModHudCommandType type;
     f32 x, y, width, height, scale_x, scale_y;
+    const void *texture;
+    int texture_width, texture_height;
+    int texture_format, texture_size;
+    u16 rotation;
+    f32 pivot_x, pivot_y;
     u8 r, g, b, a;
     char text[MOD_HUD_TEXT_CAPACITY];
 };
@@ -48,6 +53,8 @@ static unsigned sModHudGlyphCount;
 static int sModHudResolution;
 static int sModHudFont;
 static u8 sModHudColor[4] = { 255, 255, 255, 255 };
+static u16 sModHudRotation;
+static f32 sModHudPivotX, sModHudPivotY;
 
 /* render_generic_char is the engine's normal IA font glyph loader. */
 extern void render_generic_char(u8 c);
@@ -97,9 +104,15 @@ static u8 mod_hud_glyph_width(int code, unsigned char original) {
 void mod_hud_reset_frame(void) {
     sModHudCommandCount = 0;
     sModHudGlyphCount = 0;
+    mod_hud_reset_state();
+}
+
+void mod_hud_reset_state(void) {
     sModHudResolution = 0;
     sModHudFont = 0;
     sModHudColor[0] = sModHudColor[1] = sModHudColor[2] = sModHudColor[3] = 255;
+    sModHudRotation = 0;
+    sModHudPivotX = sModHudPivotY = 0.0f;
 }
 
 bool mod_hud_set_resolution(int resolution) {
@@ -109,10 +122,11 @@ bool mod_hud_set_resolution(int resolution) {
 }
 
 bool mod_hud_set_font(int font) {
-    /* The native SM64 IA font is the only font currently decoded by this
-     * renderer adapter. FONT_NORMAL uses that real engine font. */
-    if (font != 0) return false;
-    sModHudFont = font;
+    /* CoopDX's DJUI font assets are not bundled with the native port. Keep
+     * valid upstream font IDs callable while routing text through the real
+     * SM64 glyph renderer; the Lua binding emits a once-per-mod fallback log. */
+    if (font < -1 || font > 6) return false;
+    sModHudFont = 0;
     return true;
 }
 
@@ -125,6 +139,12 @@ void mod_hud_set_color(u8 r, u8 g, u8 b, u8 a) {
 
 void mod_hud_reset_color(void) {
     mod_hud_set_color(255, 255, 255, 255);
+}
+
+void mod_hud_set_rotation(u16 rotation, float pivot_x, float pivot_y) {
+    sModHudRotation = rotation;
+    sModHudPivotX = pivot_x;
+    sModHudPivotY = pivot_y;
 }
 
 int mod_hud_get_screen_width(void) {
@@ -175,6 +195,14 @@ static bool mod_hud_queue_text(const char *text, f32 x, f32 y, f32 scale_x, f32 
     command->y = y * resolution_scale;
     command->scale_x = scale_x * resolution_scale;
     command->scale_y = scale_y * resolution_scale;
+    float measured_width = 0.0f, measured_height = 0.0f;
+    if (mod_hud_measure_text(text, &measured_width, &measured_height)) {
+        command->width = measured_width * command->scale_x;
+        command->height = measured_height * command->scale_y;
+    }
+    command->rotation = sModHudRotation;
+    command->pivot_x = sModHudPivotX;
+    command->pivot_y = sModHudPivotY;
     memcpy(command->text, text, length + 1);
     memcpy(&command->r, sModHudColor, sizeof(sModHudColor));
     sModHudGlyphCount += (unsigned)length;
@@ -193,6 +221,41 @@ bool mod_hud_render_rect(float x, float y, float width, float height) {
     command->y = y * resolution_scale;
     command->width = width * resolution_scale;
     command->height = height * resolution_scale;
+    command->rotation = sModHudRotation;
+    command->pivot_x = sModHudPivotX;
+    command->pivot_y = sModHudPivotY;
+    memcpy(&command->r, sModHudColor, sizeof(sModHudColor));
+    return true;
+}
+
+bool mod_hud_render_texture(const void *texture, int texture_width, int texture_height,
+                            int format, int size, float x, float y, float scale_x, float scale_y) {
+    if (!texture || texture_width <= 0 || texture_height <= 0 || texture_width > 512 ||
+        texture_height > 512 || !isfinite(x) || !isfinite(y) || !isfinite(scale_x) ||
+        !isfinite(scale_y) || scale_x <= 0.0f || scale_y <= 0.0f ||
+        (format != G_IM_FMT_RGBA && format != G_IM_FMT_IA) ||
+        (size != G_IM_SIZ_16b && !(format == G_IM_FMT_RGBA && size == G_IM_SIZ_32b)) ||
+        sModHudCommandCount >= MOD_HUD_COMMAND_CAPACITY) return false;
+    f32 resolution_scale = mod_hud_resolution_scale();
+    f32 width = (f32)texture_width * scale_x * resolution_scale;
+    f32 height = (f32)texture_height * scale_y * resolution_scale;
+    if (!isfinite(width) || !isfinite(height) || width <= 0.0f || height <= 0.0f ||
+        width > 8192.0f || height > 8192.0f) return false;
+    struct ModHudCommand *command = &sModHudCommands[sModHudCommandCount++];
+    memset(command, 0, sizeof(*command));
+    command->type = MOD_HUD_COMMAND_TEXTURE;
+    command->x = GFX_DIMENSIONS_FROM_LEFT_EDGE(0) + x * resolution_scale;
+    command->y = y * resolution_scale;
+    command->width = width;
+    command->height = height;
+    command->texture = texture;
+    command->texture_width = texture_width;
+    command->texture_height = texture_height;
+    command->texture_format = format;
+    command->texture_size = size;
+    command->rotation = sModHudRotation;
+    command->pivot_x = sModHudPivotX;
+    command->pivot_y = sModHudPivotY;
     memcpy(&command->r, sModHudColor, sizeof(sModHudColor));
     return true;
 }
@@ -556,6 +619,28 @@ static s16 mod_hud_s16(f32 value) {
     return (s16)lrintf(value);
 }
 
+static bool mod_hud_push_rotation(const struct ModHudCommand *command, f32 width, f32 height) {
+    if (command->rotation == 0) return true;
+    Mtx *to_pivot = alloc_display_list(sizeof(*to_pivot));
+    Mtx *rotate = alloc_display_list(sizeof(*rotate));
+    Mtx *from_pivot = alloc_display_list(sizeof(*from_pivot));
+    if (!to_pivot || !rotate || !from_pivot) return false;
+
+    f32 pivot_x = command->x + width * command->pivot_x;
+    f32 pivot_y = SCREEN_HEIGHT - command->y - height * command->pivot_y;
+    f32 degrees = (f32)command->rotation * (360.0f / 65536.0f);
+    guTranslate(to_pivot, pivot_x, pivot_y, 0.0f);
+    guRotate(rotate, degrees, 0.0f, 0.0f, 1.0f);
+    guTranslate(from_pivot, -pivot_x, -pivot_y, 0.0f);
+    gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(to_pivot),
+              G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_PUSH);
+    gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(rotate),
+              G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
+    gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(from_pivot),
+              G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
+    return true;
+}
+
 static void mod_hud_render_rect_command(const struct ModHudCommand *command) {
     Vtx *vertices = alloc_display_list(4 * sizeof(*vertices));
     if (!vertices) return;
@@ -568,9 +653,15 @@ static void mod_hud_render_rect_command(const struct ModHudCommand *command) {
 
     const s16 x[4] = { left, right, right, left };
     const s16 y[4] = { bottom, bottom, top, top };
+    f32 radians = (f32)command->rotation * (6.2831853071795864769f / 65536.0f);
+    f32 sine = sinf(radians), cosine = cosf(radians);
+    f32 pivot_x = command->x + command->width * command->pivot_x;
+    f32 pivot_y = SCREEN_HEIGHT - command->y - command->height * command->pivot_y;
     for (int i = 0; i < 4; ++i) {
-        vertices[i].v.ob[0] = x[i];
-        vertices[i].v.ob[1] = y[i];
+        f32 dx = (f32)x[i] - pivot_x;
+        f32 dy = (f32)y[i] - pivot_y;
+        vertices[i].v.ob[0] = mod_hud_s16(pivot_x + dx * cosine - dy * sine);
+        vertices[i].v.ob[1] = mod_hud_s16(pivot_y + dx * sine + dy * cosine);
         vertices[i].v.ob[2] = 0;
         vertices[i].v.flag = 0;
         vertices[i].v.tc[0] = vertices[i].v.tc[1] = 0;
@@ -596,6 +687,9 @@ static void mod_hud_render_text_line(const struct ModHudCommand *command, size_t
     Mtx *translate = alloc_display_list(sizeof(*translate));
     if (!scale || !translate) return;
 
+    bool rotated = command->rotation != 0;
+    if (!mod_hud_push_rotation(command, command->width, command->height)) return;
+
     f32 y = command->y + (16.0f * command->scale_y * line_index);
     guScale(scale, command->scale_x, command->scale_y, 1.0f);
     guTranslate(translate, command->x / command->scale_x,
@@ -619,6 +713,7 @@ static void mod_hud_render_text_line(const struct ModHudCommand *command, size_t
         }
     }
     gSPPopMatrix(gDisplayListHead++, G_MTX_MODELVIEW);
+    if (rotated) gSPPopMatrix(gDisplayListHead++, G_MTX_MODELVIEW);
 }
 
 static void mod_hud_render_text_command(const struct ModHudCommand *command) {
@@ -638,7 +733,66 @@ static void mod_hud_render_text_command(const struct ModHudCommand *command) {
     gSPDisplayList(gDisplayListHead++, dl_ia_text_end);
 }
 
-static void mod_hud_flush_commands(void) {
+static void mod_hud_render_texture_command(const struct ModHudCommand *command) {
+    Vtx *vertices = alloc_display_list(4 * sizeof(*vertices));
+    if (!vertices) return;
+    s16 left = mod_hud_s16(command->x);
+    s16 right = mod_hud_s16(command->x + command->width);
+    s16 bottom = mod_hud_s16(SCREEN_HEIGHT - command->y - command->height);
+    s16 top = mod_hud_s16(SCREEN_HEIGHT - command->y);
+    if (right <= left || top <= bottom) return;
+    const s16 x[4] = { left, right, right, left };
+    const s16 y[4] = { bottom, bottom, top, top };
+    const s16 u[4] = { 0, (s16)((command->texture_width - 1) << 5),
+                       (s16)((command->texture_width - 1) << 5), 0 };
+    const s16 v[4] = { (s16)((command->texture_height - 1) << 5),
+                       (s16)((command->texture_height - 1) << 5), 0, 0 };
+    f32 radians = (f32)command->rotation * (6.2831853071795864769f / 65536.0f);
+    f32 sine = sinf(radians), cosine = cosf(radians);
+    f32 pivot_x = command->x + command->width * command->pivot_x;
+    f32 pivot_y = SCREEN_HEIGHT - command->y - command->height * command->pivot_y;
+    for (int i = 0; i < 4; ++i) {
+        f32 dx = (f32)x[i] - pivot_x;
+        f32 dy = (f32)y[i] - pivot_y;
+        vertices[i].v.ob[0] = mod_hud_s16(pivot_x + dx * cosine - dy * sine);
+        vertices[i].v.ob[1] = mod_hud_s16(pivot_y + dx * sine + dy * cosine);
+        vertices[i].v.ob[2] = 0;
+        vertices[i].v.flag = 0;
+        vertices[i].v.tc[0] = u[i];
+        vertices[i].v.tc[1] = v[i];
+        vertices[i].v.cn[0] = 255;
+        vertices[i].v.cn[1] = 255;
+        vertices[i].v.cn[2] = 255;
+        vertices[i].v.cn[3] = 255;
+    }
+    u32 load_right = ((u32)command->texture_width - 1u) << G_TEXTURE_IMAGE_FRAC;
+    u32 load_bottom = ((u32)command->texture_height - 1u) << G_TEXTURE_IMAGE_FRAC;
+    u32 line = (((u32)command->texture_width * (command->texture_size == G_IM_SIZ_32b
+                    ? G_IM_SIZ_32b_LINE_BYTES : G_IM_SIZ_16b_LINE_BYTES)) + 7u) >> 3;
+
+    gDPPipeSync(gDisplayListHead++);
+    gSPDisplayList(gDisplayListHead++, dl_hud_img_begin);
+    gDPSetCycleType(gDisplayListHead++, G_CYC_1CYCLE);
+    gDPSetCombineMode(gDisplayListHead++, G_CC_MODULATERGBA_PRIM, G_CC_MODULATERGBA_PRIM);
+    gDPSetPrimColor(gDisplayListHead++, 0, 0, command->r, command->g, command->b, command->a);
+    gSPClearGeometryMode(gDisplayListHead++, G_LIGHTING | G_CULL_BACK | G_CULL_FRONT);
+    gDPSetTextureImage(gDisplayListHead++, command->texture_format, command->texture_size, 1, command->texture);
+    gDPSetTile(gDisplayListHead++, command->texture_format, command->texture_size, 0, 0, G_TX_LOADTILE,
+               0, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD,
+               G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD);
+    gDPLoadSync(gDisplayListHead++);
+    gDPLoadTile(gDisplayListHead++, G_TX_LOADTILE, 0, 0, load_right, load_bottom);
+    gDPPipeSync(gDisplayListHead++);
+    gDPSetTile(gDisplayListHead++, command->texture_format, command->texture_size, line, 0, G_TX_RENDERTILE,
+               0, G_TX_CLAMP, 0, G_TX_NOLOD, G_TX_CLAMP, 0, G_TX_NOLOD);
+    gDPSetTileSize(gDisplayListHead++, G_TX_RENDERTILE, 0, 0, load_right, load_bottom);
+    gSPTexture(gDisplayListHead++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
+    gSPVertex(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(vertices), 4, 0);
+    gSP2Triangles(gDisplayListHead++, 0, 1, 2, 0x0, 0, 2, 3, 0x0);
+    gSPDisplayList(gDisplayListHead++, dl_hud_img_end);
+}
+
+void mod_hud_flush_commands(void) {
     if (sModHudCommandCount == 0) return;
     Mtx *identity = alloc_display_list(sizeof(*identity));
     if (!identity) {
@@ -652,6 +806,7 @@ static void mod_hud_flush_commands(void) {
         const struct ModHudCommand *command = &sModHudCommands[i];
         if (command->type == MOD_HUD_COMMAND_RECT) mod_hud_render_rect_command(command);
         else if (command->type == MOD_HUD_COMMAND_TEXT) mod_hud_render_text_command(command);
+        else if (command->type == MOD_HUD_COMMAND_TEXTURE) mod_hud_render_texture_command(command);
     }
     sModHudCommandCount = 0;
 }

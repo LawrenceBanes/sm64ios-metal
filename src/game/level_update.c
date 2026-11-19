@@ -36,6 +36,7 @@
 #include "pc/pc_main.h"
 #include "pc/cliopts.h"
 #include "pc/configfile.h"
+#include "pc/mods/mod_runtime.h"
 #ifdef IOS_BUILD
 #include "pc/gfx/gfx_ios_diagnostics.h"
 #endif
@@ -670,6 +671,9 @@ void initiate_warp(s16 destLevel, s16 destArea, s16 destWarpNode, s32 arg3) {
     sWarpDest.areaIdx = destArea;
     sWarpDest.nodeId = destWarpNode;
     sWarpDest.arg = arg3;
+    mod_runtime_on_warp((uint8_t)sWarpDest.type, sWarpDest.levelNum,
+                        (uint8_t)sWarpDest.areaIdx, (uint8_t)sWarpDest.nodeId,
+                        (uint32_t)sWarpDest.arg);
 }
 
 // From Surface 0xD3 to 0xFC
@@ -739,6 +743,8 @@ void initiate_painting_warp(void) {
  */
 s16 level_trigger_warp(struct MarioState *m, s32 warpOp) {
     s32 val04 = TRUE;
+
+    if (warpOp == WARP_OP_DEATH && !mod_runtime_on_death(m)) return 0;
 
     if (sDelayedWarpOp == WARP_OP_NONE) {
 #ifdef IOS_HAT_MOVEMENT
@@ -1062,6 +1068,11 @@ s32 play_mode_paused(void) {
         set_play_mode(PLAY_MODE_NORMAL);
     } else if (gPauseScreenMode == 2) {
         // Exit level
+        if (!mod_runtime_on_pause_exit(!gDebugLevelSelect)) {
+            /* Keep the pause screen open when a mod vetoes its exit. */
+            gPauseScreenMode = 0;
+            return 0;
+        }
         if (gDebugLevelSelect) {
             fade_into_special_warp(-9, 1);
         } else {
@@ -1357,7 +1368,10 @@ s32 lvl_set_current_level(UNUSED s16 arg0, s32 levelNum) {
     gCurrLevelNum = levelNum;
     gCurrCourseNum = gLevelToCourseNumTable[levelNum - 1];
 
-    if (gCurrDemoInput != NULL || gCurrCreditsEntry != NULL || gCurrCourseNum == COURSE_NONE) {
+    bool hook_use_act_select = false;
+    bool has_act_select_hook = mod_runtime_use_act_select(levelNum, &hook_use_act_select);
+    if ((!has_act_select_hook || !hook_use_act_select) &&
+        (gCurrDemoInput != NULL || gCurrCreditsEntry != NULL || gCurrCourseNum == COURSE_NONE)) {
         return 0;
     }
 
@@ -1373,6 +1387,10 @@ s32 lvl_set_current_level(UNUSED s16 arg0, s32 levelNum) {
         nop_change_course();
         disable_warp_checkpoint();
     }
+
+    /* CoopDX treats an explicit boolean result as the complete act-select
+     * decision. Preserve the engine's original gates when no mod supplies it. */
+    if (has_act_select_hook) return hook_use_act_select ? 1 : 0;
 
     if (gCurrCourseNum > COURSE_STAGES_MAX || val4 != 0) {
         return 0;

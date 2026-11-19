@@ -38,6 +38,16 @@
 #define INTERACT_IGLOO_BARRIER  /* 0x40000000 */ (1 << 30)
 #define INTERACT_UNKNOWN_31     /* 0x80000000 */ (1u << 31)
 
+/* Interaction flags selected by a Mario action when contacting objects. */
+#define INT_GROUND_POUND_OR_TWIRL (1u << 0)
+#define INT_PUNCH                 (1u << 1)
+#define INT_KICK                  (1u << 2)
+#define INT_TRIP                  (1u << 3)
+#define INT_SLIDE_KICK            (1u << 4)
+#define INT_FAST_ATTACK_OR_SHELL  (1u << 5)
+#define INT_HIT_FROM_ABOVE        (1u << 6)
+#define INT_HIT_FROM_BELOW        (1u << 7)
+
 
 // INTERACT_WARP
 #define INT_SUBTYPE_FADING_WARP 0x00000001
@@ -99,6 +109,9 @@
 
 
 s16 mario_obj_angle_to_object(struct MarioState *m, struct Object *o);
+u32 interact_coin(struct MarioState *m, u32 interactType, struct Object *o);
+u32 process_interaction(struct MarioState *m, u32 interactType, struct Object *o,
+                        u32 (*interact_function)(struct MarioState *, u32, struct Object *));
 void mario_stop_riding_object(struct MarioState *m);
 void mario_grab_used_object(struct MarioState *m);
 void mario_drop_held_object(struct MarioState *m);

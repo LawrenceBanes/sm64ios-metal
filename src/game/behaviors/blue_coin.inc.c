@@ -4,6 +4,8 @@
  * you press a blue coin switch (a.k.a. bhvBlueCoinSwitch).
  */
 
+#include "pc/mods/mod_runtime.h"
+
 /**
  * Update function for bhvHiddenBlueCoin.
  */
@@ -28,8 +30,15 @@ void bhv_hidden_blue_coin_loop(void) {
             // Wait until the blue coin switch starts ticking to activate.
             blueCoinSwitch = o->oHiddenBlueCoinSwitch;
 
-            if (blueCoinSwitch->oAction == BLUE_COIN_SWITCH_ACT_TICKING) {
+            if (blueCoinSwitch && blueCoinSwitch->oAction == BLUE_COIN_SWITCH_ACT_TICKING) {
                 o->oAction++; // Set to HIDDEN_BLUE_COIN_ACT_ACTIVE
+            }
+
+            /* CoopDX previews hidden coins while Mario stands on their switch. */
+            cur_obj_disable_rendering();
+            if (mod_runtime_level_value(MOD_LEVEL_VALUE_PREVIEW_BLUE_COINS) &&
+                blueCoinSwitch && gMarioObject && gMarioObject->platform == blueCoinSwitch) {
+                cur_obj_enable_rendering();
             }
 
             break;
@@ -47,7 +56,12 @@ void bhv_hidden_blue_coin_loop(void) {
             // After 200 frames of waiting and 20 2-frame blinks (for 240 frames total),
             // delete the object.
             if (cur_obj_wait_then_blink(200, 20)) {
-                obj_mark_for_deletion(o);
+                if (mod_runtime_level_value(MOD_LEVEL_VALUE_RESPAWN_BLUE_COINS_SWITCH)) {
+                    o->oAction = HIDDEN_BLUE_COIN_ACT_INACTIVE;
+                    cur_obj_unhide();
+                } else {
+                    obj_mark_for_deletion(o);
+                }
             }
 
             break;
@@ -118,10 +132,30 @@ void bhv_blue_coin_switch_loop(void) {
 
             // Delete the switch (which stops the sound) after the last coin is collected,
             // or after the coins unload after the 240-frame timer expires.
-            if (cur_obj_nearest_object_with_behavior(bhvHiddenBlueCoin) == NULL || o->oTimer > 240) {
-                obj_mark_for_deletion(o);
+            {
+                bool noBlueCoin = cur_obj_nearest_object_with_behavior(bhvHiddenBlueCoin) == NULL;
+                if (noBlueCoin || o->oTimer > 240) {
+                    if (!noBlueCoin && mod_runtime_level_value(MOD_LEVEL_VALUE_RESPAWN_BLUE_COINS_SWITCH)) {
+                        o->oAction = BLUE_COIN_SWITCH_ACT_RESPAWNING;
+                        o->oPosY = o->oHomeY - 120.0f;
+                        o->oVelY = 20.0f;
+                        o->oGravity = 0.0f;
+                        cur_obj_play_sound_2(SOUND_GENERAL_SWITCH_DOOR_OPEN);
+                    } else {
+                        obj_mark_for_deletion(o);
+                    }
+                }
             }
 
+            break;
+        case BLUE_COIN_SWITCH_ACT_RESPAWNING:
+            cur_obj_move_using_fvel_and_gravity();
+            if (o->oPosY >= o->oHomeY) {
+                o->oPosY = o->oHomeY;
+                o->oAction = BLUE_COIN_SWITCH_ACT_IDLE;
+            }
+            load_object_collision_model();
+            cur_obj_unhide();
             break;
     }
 }

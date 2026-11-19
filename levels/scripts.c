@@ -160,6 +160,18 @@ static const LevelScript script_exec_level_table[] = {
 };
 #undef DEFINE_LEVEL
 
+const LevelScript *level_script_for_mod_api(s16 levelNum) {
+    switch (levelNum) {
+#define STUB_LEVEL(_0, levelenum, _2, _3, _4, _5, _6, _7, _8)
+#define DEFINE_LEVEL(_0, levelenum, _2, folder, _4, _5, _6, _7, _8, _9, _10) \
+        case levelenum: return level_ ## folder ## _entry;
+#include "levels/level_defines.h"
+#undef DEFINE_LEVEL
+#undef STUB_LEVEL
+        default: return NULL;
+    }
+}
+
 #define DEFINE_LEVEL(_0, _1, _2, folder, _4, _5, _6, _7, _8, _9, _10) \
 static const LevelScript script_exec_ ## folder [] = { \
     EXECUTE(0x0E, _ ## folder ## SegmentRomStart, _ ## folder ## SegmentRomEnd, level_ ## folder ## _entry), \

@@ -25,15 +25,6 @@
 #include "thread6.h"
 #include "pc/mods/mod_runtime.h"
 
-#define INT_GROUND_POUND_OR_TWIRL (1 << 0) // 0x01
-#define INT_PUNCH                 (1 << 1) // 0x02
-#define INT_KICK                  (1 << 2) // 0x04
-#define INT_TRIP                  (1 << 3) // 0x08
-#define INT_SLIDE_KICK            (1 << 4) // 0x10
-#define INT_FAST_ATTACK_OR_SHELL  (1 << 5) // 0x20
-#define INT_HIT_FROM_ABOVE        (1 << 6) // 0x40
-#define INT_HIT_FROM_BELOW        (1 << 7) // 0x80
-
 #define INT_ATTACK_NOT_FROM_BELOW                                                 \
     (INT_GROUND_POUND_OR_TWIRL | INT_PUNCH | INT_KICK | INT_TRIP | INT_SLIDE_KICK \
      | INT_FAST_ATTACK_OR_SHELL | INT_HIT_FROM_ABOVE)
@@ -182,6 +173,10 @@ s16 mario_obj_angle_to_object(struct MarioState *m, struct Object *o) {
 u32 determine_interaction(struct MarioState *m, struct Object *o) {
     u32 interaction = 0;
     u32 action = m->action;
+
+    /* CoopDX custom-action interaction flags override inferred attack types. */
+    interaction = mod_runtime_mario_action_interaction_type(m);
+    if (interaction != 0) return interaction;
 
     if (action & ACT_FLAG_ATTACKING) {
         if (action == ACT_PUNCHING || action == ACT_MOVE_PUNCHING || action == ACT_JUMP_KICK) {
@@ -743,8 +738,9 @@ u32 interact_coin(struct MarioState *m, UNUSED u32 interactType, struct Object *
 
     o->oInteractStatus = INT_STATUS_INTERACTED;
 
-    if (COURSE_IS_MAIN_COURSE(gCurrCourseNum) && m->numCoins - o->oDamageOrCoinValue < 100
-        && m->numCoins >= 100) {
+    s32 coin_star_threshold = mod_runtime_level_value(MOD_LEVEL_VALUE_COINS_REQUIRED_FOR_COIN_STAR);
+    if (COURSE_IS_MAIN_COURSE(gCurrCourseNum) &&
+        m->numCoins - o->oDamageOrCoinValue < coin_star_threshold && m->numCoins >= coin_star_threshold) {
         bhv_spawn_star_no_level_exit(6);
     }
    
@@ -753,6 +749,15 @@ u32 interact_coin(struct MarioState *m, UNUSED u32 interactType, struct Object *
     }
 
     return FALSE;
+}
+
+u32 process_interaction(struct MarioState *m, u32 interactType, struct Object *o,
+                        u32 (*interact_function)(struct MarioState *, u32, struct Object *)) {
+    if (!m || !o || !interact_function) return FALSE;
+    if (!mod_runtime_allow_interact(m, o, interactType)) return FALSE;
+    bool interacted = interact_function(m, interactType, o) != 0;
+    mod_runtime_on_interact(m, o, interactType, interacted);
+    return interacted;
 }
 
 u32 interact_water_ring(struct MarioState *m, UNUSED u32 interactType, struct Object *o) {
@@ -766,6 +771,10 @@ u32 interact_star_or_key(struct MarioState *m, UNUSED u32 interactType, struct O
     u32 starGrabAction = ACT_STAR_DANCE_EXIT;
     u32 noExit = (o->oInteractionSubtype & INT_SUBTYPE_NO_EXIT) != 0;
     u32 grandStar = (o->oInteractionSubtype & INT_SUBTYPE_GRAND_STAR) != 0;
+    if (gCurrLevelNum != LEVEL_BOWSER_1 && gCurrLevelNum != LEVEL_BOWSER_2 &&
+        gCurrLevelNum != LEVEL_BOWSER_3 && mod_runtime_stay_in_level_after_star()) {
+        noExit = TRUE;
+    }
 
     if (m->health >= 0x100) {
         mario_stop_riding_and_holding(m);
@@ -777,6 +786,11 @@ u32 interact_star_or_key(struct MarioState *m, UNUSED u32 interactType, struct O
             if (m->capTimer > 1) {
                 m->capTimer = 1;
             }
+        }
+
+        if (mod_runtime_level_value(MOD_LEVEL_VALUE_STAR_HEAL)) {
+            m->healCounter = 31;
+            m->hurtCounter = 0;
         }
 
         if (noExit) {
@@ -1791,6 +1805,8 @@ void check_death_barrier(struct MarioState *m) {
 }
 
 void check_lava_boost(struct MarioState *m) {
+    /* CoopDX hazard type values are ordered as in its HazardType enum. */
+    if (!mod_runtime_allow_hazard_surface(m, 0 /* HAZARD_TYPE_LAVA_FLOOR */)) return;
     if (!(m->action & ACT_FLAG_RIDING_SHELL) && m->pos[1] < m->floorHeight + 10.0f) {
         if (!(m->flags & MARIO_METAL_CAP)) {
             m->hurtCounter += (m->flags & MARIO_CAP_ON_HEAD) ? 12 : 18;

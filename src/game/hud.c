@@ -140,7 +140,7 @@ void render_dl_power_meter(s16 numHealthWedges) {
  */
 void animate_power_meter_emphasized(void) {
     s16 hudDisplayFlags;
-    hudDisplayFlags = gHudDisplay.flags;
+    hudDisplayFlags = mod_runtime_hud_hidden() ? HUD_DISPLAY_NONE : gHudDisplay.flags;
 
     if (!(hudDisplayFlags & HUD_DISPLAY_FLAG_EMPHASIZE_POWER)) {
         if (sPowerMeterVisibleTimer == 45.0) {
@@ -373,6 +373,10 @@ void set_hud_camera_status(s16 status) {
     sCameraHUD.status = status;
 }
 
+s16 get_hud_camera_status(void) {
+    return sCameraHUD.status;
+}
+
 /**
  * Renders camera HUD glyphs using a table list, depending of
  * the camera status called, a defined glyph is rendered.
@@ -434,6 +438,9 @@ void render_hud(void) {
         sPowerMeterStoredHealth = 8;
         sPowerMeterVisibleTimer = 0;
         create_dl_ortho_matrix();
+        mod_runtime_hud_render_behind();
+        mod_hud_flush_commands();
+        mod_hud_reset_frame();
         mod_runtime_hud_render();
     } else {
 #ifdef VERSION_EU
@@ -451,6 +458,11 @@ void render_hud(void) {
 #else
         create_dl_ortho_matrix();
 #endif
+
+        /* Flush this layer before native HUD commands are appended. */
+        mod_runtime_hud_render_behind();
+        mod_hud_flush_commands();
+        mod_hud_reset_frame();
 
         if (gCurrentArea != NULL && gCurrentArea->camera->mode == CAMERA_MODE_INSIDE_CANNON) {
             render_hud_cannon_reticle();

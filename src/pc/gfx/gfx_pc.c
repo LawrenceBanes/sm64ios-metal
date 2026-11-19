@@ -27,6 +27,7 @@
 #include "gfx_screen_config.h"
 #include "gfx_texture_cache_util.h"
 #include "gfx_texture_override.h"
+#include "pc/mods/mod_runtime.h"
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
 #include "gfx_metal.h"
 #endif
@@ -461,9 +462,18 @@ static void import_texture_rgba32(int tile) {
 }
 
 static void import_texture_rgba16(int tile) {
-    uint8_t rgba32_buf[8192];
-    
-    for (uint32_t i = 0; i < rdp.loaded_texture[tile].size_bytes / 2; i++) {
+    uint32_t pixel_count = rdp.loaded_texture[tile].size_bytes / 2;
+    if (pixel_count == 0 || pixel_count > (16u * 1024u * 1024u) / 4u) {
+        fprintf(stderr, "RGBA16 texture exceeds decoder limit: %u pixels\n", pixel_count);
+        return;
+    }
+    uint8_t *rgba32_buf = malloc((size_t)pixel_count * 4u);
+    if (!rgba32_buf) {
+        fprintf(stderr, "RGBA16 texture decode allocation failed: %u pixels\n", pixel_count);
+        return;
+    }
+
+    for (uint32_t i = 0; i < pixel_count; i++) {
         uint16_t col16 = (rdp.loaded_texture[tile].addr[2 * i] << 8) | rdp.loaded_texture[tile].addr[2 * i + 1];
         uint8_t a = col16 & 1;
         uint8_t r = col16 >> 11;
@@ -479,6 +489,7 @@ static void import_texture_rgba16(int tile) {
     uint32_t height = rdp.loaded_texture[tile].size_bytes / rdp.texture_tile.line_size_bytes;
     
     gfx_rapi->upload_texture(rgba32_buf, width, height);
+    free(rgba32_buf);
 }
 
 static void import_texture_ia4(int tile) {
@@ -870,6 +881,18 @@ static void import_texture(int tile) {
     // use its canonical asset path as the stable override identity
     char texname[SYS_MAX_PATH];
     const char *asset_name = (const char *)rdp.loaded_texture[tile].addr;
+    if (!strncmp(asset_name, "m69tex:", 7)) {
+        const uint8_t *rgba = NULL;
+        uint32_t width = 0, height = 0;
+        if (mod_runtime_dynamic_texture_lookup(asset_name, &rgba, &width, &height) &&
+            rgba && width > 0 && height > 0) {
+            gfx_rapi->upload_texture(rgba, (int)width, (int)height);
+            return;
+        }
+        fprintf(stderr, "dynamic mod texture is no longer active: `%s`\n", asset_name);
+        gfx_rapi->upload_texture(missing_texture, MISSING_W, MISSING_H);
+        return;
+    }
     snprintf(texname, sizeof(texname), FS_TEXTUREDIR "/%s.png", asset_name);
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     struct TextureHashmapNode *texture_node = rendering_state.textures[tile];

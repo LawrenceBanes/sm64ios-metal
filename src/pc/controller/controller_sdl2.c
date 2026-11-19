@@ -14,6 +14,7 @@
 
 #include "controller_api.h"
 #include "controller_sdl.h"
+#include "controller_dpad.h"
 #include "../configfile.h"
 #include "../platform.h"
 #include "../fs/fs.h"
@@ -239,6 +240,18 @@ static void controller_sdl_read(OSContPad *pad) {
             buttons_down |= joy_binds[i][1];
             set_current_input(SDL2);
         }
+    }
+
+    /* CoopDX scripts read D_JPAD/U_JPAD/L_JPAD/R_JPAD directly. Keep the
+     * physical GameController d-pad separate from the configurable C buttons. */
+    const u32 dpad = controller_sdl_dpad_mask(
+        joy_buttons[SDL_CONTROLLER_BUTTON_DPAD_UP],
+        joy_buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN],
+        joy_buttons[SDL_CONTROLLER_BUTTON_DPAD_LEFT],
+        joy_buttons[SDL_CONTROLLER_BUTTON_DPAD_RIGHT]);
+    if (dpad) {
+        buttons_down |= dpad;
+        set_current_input(SDL2);
     }
 
 #ifdef IOS_HAT_MOVEMENT

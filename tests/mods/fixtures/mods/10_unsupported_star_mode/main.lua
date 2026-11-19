@@ -1,0 +1,1 @@
+gServerSettings.stayInLevelAfterStar = STAR_NON_STOP

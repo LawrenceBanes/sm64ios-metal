@@ -1,11 +1,17 @@
 // mushroom_1up.c.inc
 
+#include "pc/mods/mod_runtime.h"
+
 void bhv_1up_interact(void) {
     UNUSED s32 sp1C;
 
     if (obj_check_if_collided_with_object(o, gMarioObject) == 1) {
         play_sound(SOUND_GENERAL_COLLECT_1UP, gDefaultSoundArgs);
         gMarioState->numLives++;
+        if (mod_runtime_level_value(MOD_LEVEL_VALUE_MUSHROOM_1UP_HEAL)) {
+            gMarioState->healCounter = 31;
+            gMarioState->hurtCounter = 0;
+        }
         o->activeFlags = ACTIVE_FLAG_DEACTIVATED;
     }
 }

@@ -9,6 +9,15 @@
 #include "engine/surface_collision.h"
 #include "game/object_list_processor.h"
 #include "surface_terrains.h"
+#include "pc/mods/mod_runtime.h"
+
+bool mod_runtime_stay_in_level_after_star(void) { return false; }
+
+int32_t mod_runtime_level_value(ModRuntimeLevelValue value) {
+    if (value == MOD_LEVEL_VALUE_FIX_VANISH_FLOORS) return 1;
+    if (value == MOD_LEVEL_VALUE_CELL_HEIGHT_LIMIT) return 20000;
+    return 0;
+}
 
 /* Actual collision query code reads these same partition heads. */
 SpatialPartitionCell gStaticSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];

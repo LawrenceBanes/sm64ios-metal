@@ -112,6 +112,19 @@ void mario_bonk_reflection(struct MarioState *m, u32 negateSpeed) {
 }
 
 u32 mario_update_quicksand(struct MarioState *m, f32 sinkingSpeed) {
+    if (m->floor != NULL) {
+        s32 floorType = m->floor->type;
+        bool quicksand = floorType == SURFACE_SHALLOW_QUICKSAND
+            || floorType == SURFACE_DEEP_QUICKSAND || floorType == SURFACE_INSTANT_QUICKSAND
+            || floorType == SURFACE_DEEP_MOVING_QUICKSAND
+            || floorType == SURFACE_SHALLOW_MOVING_QUICKSAND
+            || floorType == SURFACE_QUICKSAND || floorType == SURFACE_MOVING_QUICKSAND
+            || floorType == SURFACE_INSTANT_MOVING_QUICKSAND;
+        if (quicksand && !mod_runtime_allow_hazard_surface(m, 2 /* HAZARD_TYPE_QUICKSAND */)) {
+            m->quicksandDepth = 0.0f;
+            return 0;
+        }
+    }
     if (m->action & ACT_FLAG_RIDING_SHELL) {
         m->quicksandDepth = 0.0f;
     } else {
@@ -197,7 +210,8 @@ u32 mario_update_moving_sand(struct MarioState *m) {
 u32 mario_update_windy_ground(struct MarioState *m) {
     struct Surface *floor = m->floor;
 
-    if (floor->type == SURFACE_HORIZONTAL_WIND) {
+    if (floor->type == SURFACE_HORIZONTAL_WIND
+        && mod_runtime_allow_hazard_surface(m, 3 /* HAZARD_TYPE_HORIZONTAL_WIND */)) {
         f32 pushSpeed;
         s16 pushAngle = floor->force << 8;
 
@@ -510,7 +524,8 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
         m->wall = upperWall != NULL ? upperWall : lowerWall;
         wallDYaw = atan2s(m->wall->normal.z, m->wall->normal.x) - m->faceAngle[1];
 
-        if (m->wall->type == SURFACE_BURNING) {
+        if (m->wall->type == SURFACE_BURNING
+            && mod_runtime_allow_hazard_surface(m, 1 /* HAZARD_TYPE_LAVA_WALL */)) {
             return AIR_STEP_HIT_LAVA_WALL;
         }
 
@@ -648,7 +663,9 @@ void apply_vertical_wind(struct MarioState *m) {
     if (m->action != ACT_GROUND_POUND) {
         offsetY = m->pos[1] - -1500.0f;
 
-        if (m->floor->type == SURFACE_VERTICAL_WIND && -3000.0f < offsetY && offsetY < 2000.0f) {
+        if (m->floor->type == SURFACE_VERTICAL_WIND
+            && -3000.0f < offsetY && offsetY < 2000.0f
+            && mod_runtime_allow_hazard_surface(m, 4 /* HAZARD_TYPE_VERTICAL_WIND */)) {
             if (offsetY >= 0.0f) {
                 maxVelY = 10000.0f / (offsetY + 200.0f);
             } else {
