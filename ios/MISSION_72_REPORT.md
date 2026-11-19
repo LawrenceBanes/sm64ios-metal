@@ -42,7 +42,7 @@ A raw trace of `scenes/shared/spot04_scene/spot04_scene` found 3 rooms, 40 decod
 - **BLOCKED:** No Apple validation workflow was run. The local checkout has no `xcodebuild`, and the established workflow does not provide a usable local substitute for Apple's SDK/Metal compiler.
 - No IPA, private upload, or physical-device test was produced.
 
-The initial local HEAD and full reachable Git history were preserved before implementation in `/tmp/sm64ios-mission72-b9ee36f.bundle` (verified with `git bundle verify`). The final local branch will be preserved separately at `/tmp/sm64ios-mission72-recovery-final.bundle`; the initial bundle remains untouched.
+The initial local HEAD and full reachable Git history were preserved before implementation in `/tmp/sm64ios-mission72-b9ee36f.bundle` (verified with `git bundle verify`). The complete recovered branch is also preserved at `/tmp/sm64ios-mission72-recovery-final.bundle` (verified with `git bundle verify`; SHA-256 `27382d6c4fa1970f0ffc4712c8bda28eef801cd178c81eed47b7274e315b9e1a`). The initial pre-recovery bundle remains untouched.
 
 ## Remaining compatibility limits
 

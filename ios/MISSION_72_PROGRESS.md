@@ -10,4 +10,4 @@
 - Apple build status: unavailable here (`xcodebuild` missing); no IPA or device validation.
 - Network status: GitHub hostname resolution failed; do not claim push or Actions execution.
 - Private archive: `/home/larry/Downloads/oot.o2r`, local only; raw Kokiri trace sees 1,054 incomplete draws and 6 unresolved calls without pass/runtime context; no conversion claim.
-- Next steps: create and verify `/tmp/sm64ios-mission72-recovery-final.bundle`; run bounded read-only DNS/connectivity checks, then one normal push retry if GitHub resolves; verify remote SHA and use the established Apple validation workflow if reachable. No automatic retry.
+- Next steps: the complete-history bundle `/tmp/sm64ios-mission72-recovery-final.bundle` is verified. DNS and normal push were retried; GitHub still does not resolve, and the remote branch is absent. If connectivity returns, publish without force, verify remote HEAD, then run the manual Apple validation workflow. No automatic retry.
