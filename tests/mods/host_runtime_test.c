@@ -28,6 +28,8 @@ struct MarioState *gMarioState = &gMarioStates[0];
 struct Object *gCurrentObject;
 struct ObjectNode gObjectListArray[NUM_OBJ_LISTS];
 struct ObjectNode *gObjectLists = gObjectListArray;
+static struct GraphNode *sLoadedGraphNodeStorage[0x100];
+struct GraphNode **gLoadedGraphNodes = sLoadedGraphNodeStorage;
 f32 gGlobalSoundSource[3];
 f32 gDefaultSoundArgs[3];
 s16 gCurrSaveFileNum = 1;
@@ -45,6 +47,10 @@ char *sys_strdup(const char *source) { return source ? strdup(source) : NULL; }
 
 static struct Object sMarioObject;
 static struct Object sSpawnedObject;
+static struct Object sSpawnedNativeObjects[3];
+static s32 sSpawnedNativeModels[3];
+static unsigned sSpawnedNativeObjectCount;
+static s32 sLastSpawnedModel;
 static struct Object sGoombas[3];
 const BehaviorScript bhvGoomba[] = { ((uintptr_t)OBJ_LIST_GENACTOR << 16) };
 const BehaviorScript bhvTree[] = { ((uintptr_t)OBJ_LIST_POLELIKE << 16) };
@@ -196,10 +202,20 @@ u32 perform_water_step(struct MarioState *m) {
 s16 set_mario_animation(struct MarioState *m, s32 id) { (void)m; return (s16)id; }
 
 struct Object *spawn_object(struct Object *parent, s32 model, const BehaviorScript *behavior) {
-    (void)model;
+    if (behavior == bhvGoomba) {
+        assert(sSpawnedNativeObjectCount < sizeof(sSpawnedNativeObjects) / sizeof(sSpawnedNativeObjects[0]));
+        unsigned slot = sSpawnedNativeObjectCount++;
+        struct Object *native_object = &sSpawnedNativeObjects[slot];
+        sSpawnedNativeModels[slot] = model;
+        append_test_object(OBJ_LIST_GENACTOR, native_object, behavior, ACTIVE_FLAG_ACTIVE, 0);
+        native_object->parentObj = parent;
+        sLastSpawnedModel = model;
+        return native_object;
+    }
     memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
     sSpawnedObject.parentObj = parent; sSpawnedObject.behavior = behavior;
     sSpawnedObject.activeFlags = ACTIVE_FLAG_ACTIVE;
+    sLastSpawnedModel = model;
     return &sSpawnedObject;
 }
 
@@ -223,7 +239,13 @@ static void reset_game_state(void) {
     memset(gMarioStates, 0, sizeof(gMarioStates));
     memset(&sMarioObject, 0, sizeof(sMarioObject));
     memset(&sSpawnedObject, 0, sizeof(sSpawnedObject));
+    memset(sSpawnedNativeObjects, 0, sizeof(sSpawnedNativeObjects));
+    memset(sSpawnedNativeModels, 0, sizeof(sSpawnedNativeModels));
+    sSpawnedNativeObjectCount = 0;
+    sLastSpawnedModel = -1;
     memset(sGoombas, 0, sizeof(sGoombas));
+    memset(sLoadedGraphNodeStorage, 0, sizeof(sLoadedGraphNodeStorage));
+    sLoadedGraphNodeStorage[MODEL_GOOMBA] = (struct GraphNode *)1;
     memset(gObjectListArray, 0, sizeof(gObjectListArray));
     for (int i = 0; i < NUM_OBJ_LISTS; ++i) {
         gObjectListArray[i].next = &gObjectListArray[i];
@@ -368,6 +390,21 @@ int main(int argc, char **argv) {
     assert(mod_runtime_mod_enabled(0));
 
     mod_runtime_update();
+    assert(sSpawnedNativeObjectCount == 3);
+    assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);
+    assert(sSpawnedNativeModels[2] == MODEL_NONE);
+    assert(sSpawnedNativeObjects[0].activeFlags == ACTIVE_FLAG_DEACTIVATED); /* Failed setup was discarded. */
+    assert(sSpawnedNativeObjects[1].behavior == bhvGoomba);
+    assert(sSpawnedNativeObjects[1].parentObj == &sSpawnedNativeObjects[1]);
+    assert(sSpawnedNativeObjects[1].oPosX == 12.5f && sSpawnedNativeObjects[1].oPosY == 34.5f &&
+           sSpawnedNativeObjects[1].oPosZ == 56.5f);
+    assert(sSpawnedNativeObjects[1].oHomeX == 12.5f && sSpawnedNativeObjects[1].oHomeY == 34.5f &&
+           sSpawnedNativeObjects[1].oHomeZ == 56.5f);
+    assert(sSpawnedNativeObjects[1].oAction == 909);
+    assert(sSpawnedNativeObjects[2].parentObj == &sSpawnedNativeObjects[2]);
+    assert(sSpawnedNativeObjects[2].oPosX == 100.0f && sSpawnedNativeObjects[2].oPosY == 200.0f &&
+           sSpawnedNativeObjects[2].oPosZ == 300.0f);
+    assert(mod_runtime_mod_enabled(3)); /* Setup failure is isolated to its object. */
     assert(sLastSoundBits == 0x1357);
     assert(sLastSoundPosition[0] == 12.0f && sLastSoundPosition[1] == 34.0f && sLastSoundPosition[2] == 56.0f);
     assert(mod_runtime_mod_enabled(7));
@@ -421,6 +458,9 @@ int main(int argc, char **argv) {
     assert(mod_runtime_set_enabled(3, false));
     float old_y = sSpawnedObject.oPosY;
     assert(sSpawnedObject.activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[0].activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[1].activeFlags == ACTIVE_FLAG_DEACTIVATED);
+    assert(sSpawnedNativeObjects[2].activeFlags == ACTIVE_FLAG_DEACTIVATED);
     mod_runtime_behavior_tick();
     assert(sSpawnedObject.oPosY == old_y);
 

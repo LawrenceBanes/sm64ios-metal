@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <float.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
@@ -53,6 +54,8 @@
 #define MOD_STORAGE_MAX_ENTRY 1024u
 #define MOD_STORAGE_MAX_BYTES (1024u * 1024u)
 #define MOD_MAX_COMMANDS 128u
+#define MOD_MAX_OWNED_OBJECTS 64u
+#define MOD_MAX_TRACKED_OBJECTS 128u
 
 enum { HOOK_UPDATE = 0, HOOK_MARIO_UPDATE = 1, HOOK_BEFORE_MARIO_UPDATE = 2,
        HOOK_ON_SET_MARIO_ACTION = 3, HOOK_BEFORE_PHYS_STEP = 4,
@@ -75,7 +78,7 @@ typedef struct ModCustomActionId ModCustomActionId;
 struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
 struct ModAction { Mod *owner; char *file; uint32_t id; int every_frame_ref; int gravity_ref; bool enabled; ModAction *next_global; ModAction *next_owned; };
 struct ModBehavior { Mod *owner; char *file; uint32_t id; int object_list; int init_ref; int loop_ref; bool enabled; uintptr_t script[5]; ModBehavior *next_global; ModBehavior *next_owned; };
-struct ModObject { struct Object *object; uint32_t token; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
+struct ModObject { struct Object *object; uint32_t token; Mod *owner; ModBehavior *behavior; bool initialized; bool enabled; ModObject *next; };
 struct ModModule { char *name; int value_ref; bool loading; ModModule *next; };
 struct ModRequest { int type; int index; int item_index; int64_t value; bool enabled; char target_name[MOD_MAX_NAME]; char *path; ModRequest *next; };
 struct DynosPack {
@@ -118,6 +121,7 @@ struct Mod {
 
 typedef struct { size_t bytes; } LuaAllocator;
 typedef struct { lua_Integer id; const char *name; const BehaviorScript *script; } NativeBehavior;
+typedef struct { lua_Integer id; const char *name; int native_model; } NativeModel;
 typedef enum { LUA_UD_MARIO, LUA_UD_CONTROLLER, LUA_UD_VEC_F, LUA_UD_VEC_S, LUA_UD_OBJECT, LUA_UD_SURFACE } LuaUserdataKind;
 typedef struct { LuaUserdataKind kind; int field; struct Object *object; uint32_t token; struct Surface surface; } LuaUserdata;
 
@@ -148,9 +152,13 @@ static pthread_mutex_t sModListMutex = PTHREAD_MUTEX_INITIALIZER;
 static ModRequest *sRequestHead;
 static ModRequest *sRequestTail;
 static Mod *mod_runtime_find_index(int index);
+static void unref_if_valid(int ref);
 
 static const NativeBehavior sNativeBehaviors[] = {
 #include "mod_behavior_entries.inc"
+};
+static const NativeModel sNativeModels[] = {
+#include "mod_model_entries.inc"
 };
 
 enum { MOD_REQUEST_ENABLE = 1, MOD_REQUEST_RELOAD, MOD_REQUEST_IMPORT_ZIP, MOD_REQUEST_MENU_VALUE };
@@ -685,6 +693,7 @@ static bool object_number_get(struct Object *o, const char *key, lua_State *L) {
 #define OGET_NUM(name, field) if (!strcmp(key, name)) { lua_pushnumber(L, o->field); return true; }
 #define OGET_INT(name, field) if (!strcmp(key, name)) { lua_pushinteger(L, o->field); return true; }
     OGET_NUM("oPosX", oPosX) OGET_NUM("oPosY", oPosY) OGET_NUM("oPosZ", oPosZ)
+    OGET_NUM("oHomeX", oHomeX) OGET_NUM("oHomeY", oHomeY) OGET_NUM("oHomeZ", oHomeZ)
     OGET_NUM("oVelX", oVelX) OGET_NUM("oVelY", oVelY) OGET_NUM("oVelZ", oVelZ)
     OGET_NUM("oForwardVel", oForwardVel) OGET_NUM("oDrawingDistance", oDrawingDistance)
     OGET_NUM("hitboxRadius", hitboxRadius) OGET_NUM("hitboxHeight", hitboxHeight)
@@ -702,6 +711,7 @@ static bool object_number_set(struct Object *o, const char *key, lua_State *L, i
 #define OSET_NUM(name, field) if (!strcmp(key, name)) { o->field = (float)luaL_checknumber(L, i); return true; }
 #define OSET_INT(name, field) if (!strcmp(key, name)) { o->field = (int32_t)luaL_checkinteger(L, i); return true; }
     OSET_NUM("oPosX", oPosX) OSET_NUM("oPosY", oPosY) OSET_NUM("oPosZ", oPosZ)
+    OSET_NUM("oHomeX", oHomeX) OSET_NUM("oHomeY", oHomeY) OSET_NUM("oHomeZ", oHomeZ)
     OSET_NUM("oVelX", oVelX) OSET_NUM("oVelY", oVelY) OSET_NUM("oVelZ", oVelZ)
     OSET_NUM("oForwardVel", oForwardVel) OSET_NUM("oDrawingDistance", oDrawingDistance)
     OSET_NUM("hitboxRadius", hitboxRadius) OSET_NUM("hitboxHeight", hitboxHeight)
@@ -812,7 +822,11 @@ static int l_hook_behavior(lua_State *L) {
     if (!lua_isnil(L, 1)) return luaL_error(L, "hook_behavior override of native behavior IDs is unsupported by this engine adapter");
     lua_Integer list_value = luaL_checkinteger(L, 2);
     if (list_value < 0 || list_value >= NUM_OBJ_LISTS)
-        return luaL_error(L, "object list %lld is unsupported for script behaviors", (long long)list_value);
+    {
+        char message[128];
+        snprintf(message, sizeof(message), "object list %lld is unsupported for script behaviors", (long long)list_value);
+        return luaL_error(L, "%s", message);
+    }
     int list = (int)list_value;
     (void)lua_toboolean(L, 3); /* replaceBehavior is meaningful only when replacing native behavior */
     luaL_checktype(L, 4, LUA_TFUNCTION);
@@ -874,12 +888,45 @@ static const BehaviorScript *behavior_from_id(lua_State *L, int index, ModBehavi
 }
 
 static int behavior_id_error(lua_State *L, lua_Integer id, const char *api) {
+    char message[384];
     if (id >= 0 && (uint64_t)id < sizeof(sNativeBehaviors) / sizeof(sNativeBehaviors[0]))
-        return luaL_error(L, "%s: CoopDX behavior ID %lld (%s) is not implemented by this engine",
-                          api, (long long)id, sNativeBehaviors[id].name);
-    if (id >= 0 && (uint64_t)id <= UINT32_MAX)
-        return luaL_error(L, "%s: unknown or inactive custom behavior ID %lld", api, (long long)id);
-    return luaL_error(L, "%s: unknown behavior ID %lld", api, (long long)id);
+        snprintf(message, sizeof(message), "%s: CoopDX behavior ID %lld (%s) is not implemented by this engine",
+                 api, (long long)id, sNativeBehaviors[id].name);
+    else if (id >= 0 && (uint64_t)id <= UINT32_MAX)
+        snprintf(message, sizeof(message), "%s: unknown or inactive custom behavior ID %lld", api, (long long)id);
+    else
+        snprintf(message, sizeof(message), "%s: unknown behavior ID %lld", api, (long long)id);
+    return luaL_error(L, "%s", message);
+}
+
+static int native_model_from_id(lua_State *L, lua_Integer id, const char *api) {
+    const size_t count = sizeof(sNativeModels) / sizeof(sNativeModels[0]);
+    char message[384];
+    if (id < 0 || (uint64_t)id >= count) {
+        snprintf(message, sizeof(message), "%s: CoopDX model ID %lld is outside the supported built-in range; custom DynOS models are unavailable",
+                 api, (long long)id);
+        return luaL_error(L, "%s", message);
+    }
+    const NativeModel *model = &sNativeModels[id];
+    if (model->id != id) {
+        snprintf(message, sizeof(message), "%s: CoopDX model table is inconsistent at ID %lld", api, (long long)id);
+        return luaL_error(L, "%s", message);
+    }
+    if (model->native_model < 0)
+        return luaL_error(L, "%s: %s requires a model asset this engine does not provide; DynOS model decoding is unavailable",
+                          api, model->name);
+    if (model->native_model != MODEL_NONE &&
+        (!gLoadedGraphNodes || !gLoadedGraphNodes[model->native_model]))
+        return luaL_error(L, "%s: %s maps to native model %d, but that model is not loaded in the current level",
+                          api, model->name, model->native_model);
+    return model->native_model;
+}
+
+static float checked_lua_finite_float(lua_State *L, int index, const char *name) {
+    lua_Number value = luaL_checknumber(L, index);
+    if (!isfinite((double)value) || value > FLT_MAX || value < -FLT_MAX)
+        luaL_error(L, "%s must be a finite value representable by the engine", name);
+    return (float)value;
 }
 
 static int object_list_from_behavior_id(lua_State *L, ModBehavior *custom, const BehaviorScript *script) {
@@ -955,7 +1002,11 @@ static int l_obj_get_next_with_same_behavior_id(lua_State *L) {
 static int l_obj_get_first(lua_State *L) {
     lua_Integer list_value = luaL_checkinteger(L, 1);
     if (!gObjectLists || list_value < 0 || list_value >= NUM_OBJ_LISTS)
-        return luaL_error(L, "obj_get_first received invalid object list %lld", (long long)list_value);
+    {
+        char message[128];
+        snprintf(message, sizeof(message), "obj_get_first received invalid object list %lld", (long long)list_value);
+        return luaL_error(L, "%s", message);
+    }
     int list = (int)list_value;
     struct Object *object = find_object_in_list(list, gObjectLists[list].next, NULL, NULL);
     if (object) push_object(L, object); else lua_pushnil(L);
@@ -997,12 +1048,21 @@ static int l_obj_mark_for_deletion(lua_State *L) {
     return 0;
 }
 
-static ModObject *track_object(struct Object *object, ModBehavior *behavior) {
+static ModObject *track_object(struct Object *object, ModBehavior *behavior, Mod *owner) {
     ModObject *record = calloc(1, sizeof(*record));
     if (!record) return NULL;
-    record->object = object; record->behavior = behavior; record->token = sNextObjectToken++;
+    record->object = object; record->owner = owner; record->behavior = behavior; record->token = sNextObjectToken++;
     record->enabled = true; record->next = sObjects; sObjects = record;
     return record;
+}
+
+static bool mod_object_capacity_available(const Mod *owner) {
+    unsigned total = 0, owned = 0;
+    for (const ModObject *entry = sObjects; entry; entry = entry->next) {
+        ++total;
+        if (entry->owner == owner) ++owned;
+    }
+    return owner && total < MOD_MAX_TRACKED_OBJECTS && owned < MOD_MAX_OWNED_OBJECTS;
 }
 
 static struct Object *lua_spawn(lua_State *L, struct Object *parent, int model, uint32_t behavior_id, bool absolute,
@@ -1018,7 +1078,7 @@ static struct Object *lua_spawn(lua_State *L, struct Object *parent, int model, 
         ? spawn_object_abs_with_rot(parent, 0, (s16)model, script, (s16)x, (s16)y, (s16)z,
                                     (s16)pitch, (s16)yaw, (s16)roll)
         : spawn_object(parent, model, script);
-    if (object && !track_object(object, behavior)) {
+    if (object && !track_object(object, behavior, behavior->owner)) {
         object->activeFlags = ACTIVE_FLAG_DEACTIVATED;
         luaL_error(L, "out of memory tracking mod-owned object lifecycle");
         return NULL;
@@ -1047,6 +1107,81 @@ static int l_spawn_object_abs_with_rot(lua_State *L) {
     if (!object) { lua_pushnil(L); return 1; }
     push_object(L, object);
     return 1;
+}
+
+/* CoopDX's local-only object API: model arguments are ModelExtendedId values,
+ * not this engine's MODEL_* values. Dynamic IDs need DynOS registration and
+ * are rejected by native_model_from_id until that subsystem exists. */
+static int l_spawn_non_sync_object(lua_State *L) {
+    if (!sCurrentMod) return luaL_error(L, "spawn_non_sync_object must be called while a mod is executing");
+    if (!sCurrentMod->loaded) {
+        mod_log("warning", sCurrentMod->name,
+                "spawn_non_sync_object is unavailable while mod startup scripts are loading");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_Integer behavior_id = luaL_checkinteger(L, 1);
+    lua_Integer model_id = luaL_checkinteger(L, 2);
+    float x = checked_lua_finite_float(L, 3, "spawn x");
+    float y = checked_lua_finite_float(L, 4, "spawn y");
+    float z = checked_lua_finite_float(L, 5, "spawn z");
+    if (!lua_isnoneornil(L, 6)) luaL_checktype(L, 6, LUA_TFUNCTION);
+
+    ModBehavior *custom_behavior = NULL;
+    const BehaviorScript *script = behavior_from_id(L, 1, &custom_behavior);
+    if (!script) return behavior_id_error(L, behavior_id, "spawn_non_sync_object");
+    int model = native_model_from_id(L, model_id, "spawn_non_sync_object");
+    struct Object *parent = gMarioState ? gMarioState->marioObj : NULL;
+    if (!parent) return luaL_error(L, "spawn_non_sync_object: Mario's parent object is unavailable");
+    if (!mod_object_capacity_available(sCurrentMod))
+        return luaL_error(L, "spawn_non_sync_object: mod-owned object limit reached (%d per mod, %d total)",
+                          (int)MOD_MAX_OWNED_OBJECTS, (int)MOD_MAX_TRACKED_OBJECTS);
+
+    Mod *owner = sCurrentMod;
+    const char *file = sCurrentFile ? sCurrentFile : "main.lua";
+    int setup_ref = LUA_NOREF;
+    if (lua_isfunction(L, 6)) {
+        lua_pushvalue(L, 6);
+        setup_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+    struct Object *object = spawn_object(parent, model, script);
+    if (!object) {
+        if (setup_ref != LUA_NOREF) unref_if_valid(setup_ref);
+        lua_pushnil(L);
+        return 1;
+    }
+
+    /* CoopDX creates these as local-only actors with self-parenting and their
+     * requested position copied to both current and home coordinates. */
+    object->parentObj = object;
+    object->oPosX = object->oHomeX = x;
+    object->oPosY = object->oHomeY = y;
+    object->oPosZ = object->oHomeZ = z;
+    if (!track_object(object, custom_behavior, owner)) {
+        obj_mark_for_deletion(object);
+        if (setup_ref != LUA_NOREF) unref_if_valid(setup_ref);
+        return luaL_error(L, "spawn_non_sync_object: out of memory tracking mod-owned object lifecycle");
+    }
+
+    if (setup_ref != LUA_NOREF) {
+        push_object(L, object);
+        bool setup_ok = call_ref(owner, file, setup_ref, "spawn_non_sync_object setup", 1, 0);
+        unref_if_valid(setup_ref);
+        if (!setup_ok) {
+            obj_mark_for_deletion(object);
+            mod_runtime_object_unload(object);
+            lua_pushnil(L);
+            return 1;
+        }
+    }
+
+    push_object(L, object);
+    return 1;
+}
+
+static int l_spawn_sync_object_unsupported(lua_State *L) {
+    return luaL_error(L, "spawn_sync_object requires CoopDX multiplayer object synchronization, which this single-player engine does not implement");
 }
 
 static int l_set_mario_action(lua_State *L) {
@@ -1693,6 +1828,8 @@ static void register_api(void) {
     register_api_function("hook_behavior", l_hook_behavior);
     register_api_function("spawn_object", l_spawn_object);
     register_api_function("spawn_object_abs_with_rot", l_spawn_object_abs_with_rot);
+    register_api_function("spawn_non_sync_object", l_spawn_non_sync_object);
+    register_api_function("spawn_sync_object", l_spawn_sync_object_unsupported);
     register_api_function("get_id_from_behavior", l_get_id_from_behavior);
     register_api_function("get_behavior_from_id", l_get_behavior_from_id);
     register_api_function("obj_get_first", l_obj_get_first);
@@ -1777,6 +1914,7 @@ static void register_api(void) {
 
 #include "mod_constants.inc"
 #include "mod_behavior_constants.inc"
+#include "mod_model_constants.inc"
 
     /* Level and course identifiers are enums generated from the engine's
      * authoritative level/course lists, so they are not visible to the
@@ -1897,7 +2035,7 @@ static void unload_mod(Mod *mod) {
     ModObject **object_link = &sObjects;
     while (*object_link) {
         ModObject *object = *object_link;
-        if (object->behavior && object->behavior->owner == mod) {
+        if (object->owner == mod) {
             if (object->object) object->object->activeFlags = ACTIVE_FLAG_DEACTIVATED;
             *object_link = object->next;
             free(object);

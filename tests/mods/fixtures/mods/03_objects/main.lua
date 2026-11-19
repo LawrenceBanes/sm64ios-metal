@@ -33,3 +33,41 @@ assert(obj_get_next_with_same_behavior_id(firstGoomba) == nil)
 hook_event(HOOK_UPDATE, function()
     gMarioState.numStars = spawned.oPosY
 end)
+
+assert(E_MODEL_GOOMBA == 58)
+assert(E_MODEL_MAX == 381)
+local didSpawnNative = false
+hook_event(HOOK_UPDATE, function()
+    if didSpawnNative then return end
+    didSpawnNative = true
+
+    local badBehaviorOk = pcall(spawn_non_sync_object, E_MODEL_MAX + 20, E_MODEL_GOOMBA,
+        1, 2, 3, function() end)
+    assert(not badBehaviorOk)
+    local customModelOk, customModelError = pcall(spawn_non_sync_object, id_bhvGoomba, E_MODEL_MAX,
+        1, 2, 3, function() end)
+    assert(not customModelOk and string.find(customModelError, "DynOS"), tostring(customModelError))
+    local unloadedModelOk, unloadedModelError = pcall(spawn_non_sync_object, id_bhvGoomba, E_MODEL_STAR,
+        1, 2, 3, function() end)
+    assert(not unloadedModelOk and string.find(unloadedModelError, "not loaded"))
+    local syncOk, syncError = pcall(spawn_sync_object, id_bhvGoomba, E_MODEL_GOOMBA,
+        1, 2, 3, function() end)
+    assert(not syncOk and string.find(syncError, "multiplayer"))
+
+    local failedSetup = spawn_non_sync_object(id_bhvGoomba, E_MODEL_GOOMBA,
+        1, 2, 3, function() error("intentional setup failure") end)
+    assert(failedSetup == nil)
+
+    local nativeObject = spawn_non_sync_object(id_bhvGoomba, E_MODEL_GOOMBA,
+        12.5, 34.5, 56.5, function(obj)
+            assert(obj.parentObj.oPosX == 12.5)
+            assert(obj.oHomeY == 34.5)
+            obj.oAction = 909
+        end)
+    assert(nativeObject ~= nil)
+    assert(get_id_from_behavior(nativeObject.behavior) == id_bhvGoomba)
+
+    local noSetupObject = spawn_non_sync_object(id_bhvGoomba, E_MODEL_NONE,
+        100, 200, 300, nil)
+    assert(noSetupObject ~= nil and noSetupObject.parentObj.oPosZ == 300)
+end)
