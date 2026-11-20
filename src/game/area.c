@@ -93,7 +93,11 @@ static struct WorldSceneDestination sExternalSpawn;
 #endif
 
 bool area_external_scene_available(void) {
-    return fs_sys_file_exists(fs_get_write_path("scenes/4100.wsc"));
+    fs_scene_library_reset();
+    void *bytes = fs_load_scene_resource("scenes/4100.wsc", 16 * 1024 * 1024, NULL);
+    bool available = bytes != NULL;
+    free(bytes);
+    return available;
 }
 
 bool area_external_scene_spawn(struct SpawnInfo *spawn) {

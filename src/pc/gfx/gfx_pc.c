@@ -772,7 +772,7 @@ static uint8_t *decode_scene_png(const char *path, int width, int height) {
     } else
 #endif
     {
-        png = fs_load_write_file(path, 256 * 1024, &length);
+        png = fs_load_scene_resource(path, 256 * 1024, &length);
     }
     uint8_t *rgba = NULL;
     int w, h;

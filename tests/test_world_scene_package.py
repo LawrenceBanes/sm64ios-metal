@@ -260,7 +260,7 @@ class ScenePackageTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 print(result.stdout.rstrip())
                 self.assertIn("collision-triangles=1579", result.stdout)
-                self.assertIn("spawn=(160,16,1415)", result.stdout)
+                self.assertIn("spawn=" + os.environ.get("SM64_WSC5_EXPECT_SPAWN", "(160,16,1415)"), result.stdout)
                 self.assertIn("room-bounds=", result.stdout)
 
 

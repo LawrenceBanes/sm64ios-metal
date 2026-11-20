@@ -168,6 +168,41 @@ class ImportTest(unittest.TestCase):
     def convert(self, path, layout=None, *, scale=Fraction(1), offset=(0, 0, 0), expanded=False):
         return convert_archive(path, ROOT, layout or {}, scale, offset, expanded, {})
 
+    def test_uniform_world_scale_preserves_materials_and_transforms_bounds(self):
+        from tools.o2r_to_wsc3 import Conversion
+        transform = Conversion(None, ROOT, Fraction(7, 4), (0, 0, 0), {}, True)
+        self.assertEqual(transform.point([-400, 100, 1000]), [-700, 175, 1750])
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "scene.o2r"
+            fixture(path)
+            from tools import o2r_to_wsc3 as converter
+            scenes = []
+            encoder = converter.wsc.encode_scene
+            def capture(scene):
+                scenes.append(scene)
+                return encoder(scene)
+            with patch.object(converter.wsc, "encode_scene", side_effect=capture):
+                original, pngs, before = self.convert(path)
+                scaled, other_pngs, after = self.convert(path, scale=Fraction(7, 4))
+            for base_room, scaled_room in zip(scenes[0]["rooms"], scenes[1]["rooms"]):
+                self.assertEqual(scaled_room["collision_vertices"],
+                                 [[round(v * Fraction(7, 4)) for v in point]
+                                  for point in base_room["collision_vertices"]])
+                for base_batch, scaled_batch in zip(base_room["batches"], scaled_room["batches"]):
+                    self.assertEqual(base_batch["material"], scaled_batch["material"])
+                    for base_vertex, scaled_vertex in zip(base_batch["render_vertices"], scaled_batch["render_vertices"]):
+                        self.assertEqual(scaled_vertex["position"], [round(v * Fraction(7, 4)) for v in base_vertex["position"]])
+                        self.assertEqual({k:v for k,v in base_vertex.items() if k != "position"},
+                                         {k:v for k,v in scaled_vertex.items() if k != "position"})
+            self.assertIsNotNone(scaled)
+            self.assertEqual(pngs, other_pngs)
+            self.assertEqual(before["materials"], after["materials"])
+            self.assertEqual(after["world_transform"]["scale"], "7/4")
+            for a, b in zip(before["entrances"], after["entrances"]):
+                self.assertEqual(b["yaw"], a["yaw"])
+                for axis in (0, 2):
+                    self.assertEqual(b["position"][axis], round(a["position"][axis] * Fraction(7, 4)))
+
     def test_round_trip_is_deterministic_and_preserves_real_packet_order(self):
         with TemporaryDirectory() as temp:
             work = Path(temp)

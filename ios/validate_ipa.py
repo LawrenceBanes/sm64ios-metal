@@ -138,7 +138,7 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
             raise ValueError("WSC2/WSC3 diagnostic textures must be 16x16 RGBA PNGs")
 
 
-LOCAL_SCENE_STRINGS = (b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc")
+LOCAL_SCENE_STRINGS = (b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc", b"oot-assets/runtime-index.tsv")
 STOCK_AUDIO = ("sound/sequences.bin", "sound/sound_data.ctl", "sound/sound_data.tbl")
 BUNDLED_SCENE_PACKAGES = {
     "scene-diagnostic/scenes/4098.wsc",
@@ -152,7 +152,7 @@ def reject_external_worlds(members, container, allowed_packages=()):
         normalized = name.lower()
         if (PurePosixPath(normalized).suffix in {".o2r", ".otr", ".z64", ".n64", ".v64"}
                 or (normalized.endswith(".wsc") and normalized not in allowed_packages)
-                or normalized.startswith(("gfx/scenes/", "gfx/levels/hyrule_field/"))):
+                or normalized.startswith(("oot-assets/", "gfx/scenes/", "gfx/levels/hyrule_field/"))):
             raise ValueError(f"{container} contains a bundled external world asset: {name}")
 
 

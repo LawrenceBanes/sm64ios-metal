@@ -355,6 +355,8 @@ class Conversion:
         self.accepted_approximation_counts = Counter()
         self.report = {"schema_version": 1, "status": "rejected", "source_scene": root,
                        "source_room_paths": [], "candidate_draws": 0, "rooms": [], "entrances": [],
+                       "world_transform": {"scale": str(scale), "offset": list(offset),
+                                           "runtime_scaling": False, "spatial_units": "SM64 world units"},
                        "trace_issues": [], "draw_issues": self.failures, "scene_issues": [],
                        "rendering_approximations": [], "collision_approximations": [],
                        "entrance_approximations": []}
@@ -582,7 +584,11 @@ class Conversion:
                 assign_collision(room, *self.collision(path))
         for room, summary in zip(rooms, summaries):
             summary["collision_triangles"] = len(room["collision_triangles"])
-        apply_bounds(rooms, self.layout.get("bounds"))
+        authored_bounds = self.layout.get("bounds")
+        if authored_bounds is not None:
+            authored_bounds = [{"min": self.point(b["min"]), "max": self.point(b["max"])}
+                               for b in authored_bounds]
+        apply_bounds(rooms, authored_bounds)
         entrances = self.entrances(source, rooms)
         self.report["entrances"] = entrances
         self.report["source_default_entrance"] = self.layout.get("entrance", 0)
@@ -887,6 +893,7 @@ def main(argv=None):
     parser.add_argument("--layout", type=Path, help="optional scene-independent JSON ownership and room metadata")
     parser.add_argument("--scale", type=Fraction, default=Fraction(1), help="units multiplier, e.g. 1/2")
     parser.add_argument("--offset", type=int, nargs=3, default=(0, 0, 0), metavar=("X", "Y", "Z"))
+    parser.add_argument("--installed-library", type=Path, help="existing oot-assets directory; omit byte-identical PNGs already installed there")
     parser.add_argument("--expanded-grid", action="store_true", help="target a build with the expanded collision grid")
     parser.add_argument("--segment", action="append", default=[], metavar="HEX[@OFFSET]=RESOURCE")
     args = parser.parse_args(argv)
@@ -917,7 +924,12 @@ def main(argv=None):
             output = Path(stage) / "scene"
             (output / "scenes").mkdir(parents=True)
             for name, (width, height, pixels) in sorted(pngs.items()):
-                o2r.write_rgba_png(output / "gfx" / (name + ".png"), width, height, pixels)
+                destination = output / "gfx" / (name + ".png")
+                o2r.write_rgba_png(destination, width, height, pixels)
+                if args.installed_library:
+                    installed = args.installed_library / "gfx" / (name + ".png")
+                    if installed.is_file() and sha256(installed.read_bytes()).digest() == sha256(destination.read_bytes()).digest():
+                        destination.unlink()
             (output / "scenes" / f"{SCENE_ID}.wsc").write_bytes(package)
             (output / "conversion-report.json").write_text(encoded_report, encoding="utf-8")
             if args.output.exists():

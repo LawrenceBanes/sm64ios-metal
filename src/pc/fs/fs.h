@@ -119,6 +119,9 @@ void *fs_load_file(const char *vpath, uint64_t *outsize);
 void *fs_load_file_bounded(const char *vpath, uint64_t max_size, uint64_t *outsize);
 /* Load only from the writable user directory; unlike fs_load_file this never
  * falls back to bundled/read-only game data. The path must be relative. */
+void fs_scene_library_reset(void);
+void *fs_load_scene_resource(const char *relative_path, uint64_t max_size, uint64_t *outsize);
+
 void *fs_load_write_file(const char *relative_path, uint64_t max_size, uint64_t *outsize);
 const char *fs_readline(fs_file_t *file, char *dst, uint64_t size);
 

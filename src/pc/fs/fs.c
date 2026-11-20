@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -407,6 +410,96 @@ void *fs_load_write_file(const char *relative_path, uint64_t max_size, uint64_t 
     }
     if (outsize) *outsize = (uint64_t)file_size;
     return buffer;
+}
+
+/* External world assets share a bounded, versioned Documents library. Legacy
+ * Documents paths retain priority. Cache only the small index, never all PNGs. */
+static char *scene_library_index;
+static uint64_t scene_library_index_bytes;
+
+void fs_scene_library_reset(void) {
+    free(scene_library_index);
+    scene_library_index = NULL;
+    scene_library_index_bytes = 0;
+}
+
+static void *fs_load_library_file(const char *path, uint64_t max_size, uint64_t *outsize) {
+#ifndef _WIN32
+    char absolute[SYS_MAX_PATH];
+    int n = snprintf(absolute, sizeof(absolute), "%s/%s", fs_writepath, path);
+    if (n <= 0 || (size_t)n >= sizeof(absolute)) return NULL;
+    /* Reject symlink components below Documents, including the library root. */
+    for (char *p = absolute + strlen(fs_writepath) + 1; ; ++p) {
+        if (*p == '/' || *p == 0) {
+            char saved = *p;
+            *p = 0;
+            struct stat status;
+            int result = lstat(absolute, &status);
+            *p = saved;
+            if (result || S_ISLNK(status.st_mode)) return NULL;
+            if (!saved) break;
+        }
+    }
+#else
+    /* Reparse-point containment has no tested implementation on Windows. */
+    return NULL;
+#endif
+    return fs_load_write_file(path, max_size, outsize);
+}
+
+void *fs_load_scene_resource(const char *relative_path, uint64_t max_size, uint64_t *outsize) {
+    if (!fs_write_relative_path_is_safe(relative_path) ||
+        (strncmp(relative_path, "gfx/scenes/", 11) && strncmp(relative_path, "scenes/", 7))) return NULL;
+    void *legacy = fs_load_write_file(relative_path, max_size, outsize);
+    if (legacy) return legacy;
+    if (!scene_library_index) {
+        uint64_t size = 0;
+        char *raw = fs_load_library_file("oot-assets/runtime-index.tsv", 4 * 1024 * 1024, &size);
+        if (!raw) return NULL;
+        char *index = malloc(size + 1);
+        if (!index) { free(raw); return NULL; }
+        memcpy(index, raw, size);
+        free(raw);
+        index[size] = 0;
+        if (size < 8 || memcmp(index, "OOTLIB1\n", 8) || memchr(index, 0, size)) {
+            fprintf(stderr, "OoT library: invalid runtime index version or encoding\n");
+            free(index);
+            return NULL;
+        }
+        scene_library_index = index;
+        scene_library_index_bytes = size;
+    }
+    const char *line = scene_library_index + 8;
+    const char *end = scene_library_index + scene_library_index_bytes;
+    while (line < end) {
+        const char *newline = memchr(line, '\n', end - line);
+        if (!newline) break;
+        const char *tab = memchr(line, '\t', newline - line);
+        if (!tab) break;
+        const char *second = memchr(tab + 1, '\t', newline - tab - 1);
+        if (!second) break;
+        if ((size_t)(tab - line) == strlen(relative_path) && !memcmp(line, relative_path, tab - line)) {
+            char target[512], number[32], *number_end;
+            size_t target_size = second - tab - 1, number_size = newline - second - 1;
+            if (!target_size || target_size >= sizeof(target) || !number_size || number_size >= sizeof(number)) break;
+            memcpy(target, tab + 1, target_size); target[target_size] = 0;
+            memcpy(number, second + 1, number_size); number[number_size] = 0;
+            unsigned long long expected = strtoull(number, &number_end, 10);
+            if (*number_end || number[0] < '0' || number[0] > '9' || !expected || expected > max_size ||
+                !fs_write_relative_path_is_safe(target) ||
+                (strncmp(target, "gfx/scenes/", 11) && strncmp(target, "scenes/", 7))) break;
+            char full[sizeof(target) + 16];
+            snprintf(full, sizeof(full), "oot-assets/%s", target);
+            uint64_t actual = 0;
+            void *data = fs_load_library_file(full, max_size, &actual);
+            if (data && actual == expected) { if (outsize) *outsize = actual; return data; }
+            free(data);
+            break;
+        }
+        line = newline + 1;
+    }
+    fprintf(stderr, "OoT library resource missing or invalid: %s\n", relative_path);
+    return NULL;
 }
 
 const char *fs_get_write_path(const char *vpath) {

@@ -116,6 +116,7 @@ static void release_scene(void *context, struct WorldScenePackage *package) {
     struct FileScene *scene = package->providerData;
     (void)context;
     if (!scene) return;
+    fs_scene_library_reset();
 
     if (scene->rooms) {
         for (u32 i = 0; i < scene->roomCount; ++i) {
@@ -431,7 +432,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
 #endif
     {
         snprintf(path, sizeof(path), "scenes/%u.wsc", id);
-        bytes = fs_load_write_file(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
+        bytes = fs_load_scene_resource(path, WORLD_SCENE_FILE_MAX_BYTES, &size);
     }
     if (!bytes) {
         if (fs_sys_file_exists(fs_get_write_path(path))) {
