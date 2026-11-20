@@ -96,6 +96,7 @@
 - Pipeline reflection validates all declared resource slots and access types before activation. Compute nodes may not request scene depth, normals, lighting, or shadows; they remain bounded by the existing graph pass and target limits.
 - Added ComputeTexture64 using the existing locally authored checker PNG. Its kernel modulates the actual input image from a user texture and routes it through a generic fullscreen presenter.
 - Focused Shader64 tests pass (26 tests), including production ZIP-importer checks and ASan/UBSan archive smoke. Metal source-generation, project wiring, shell syntax, and diff checks pass. Full `CC=clang tests/run_linux_checks.sh` passed with the usual fixture diagnostics and unrelated existing compiler warnings.
-- Apple MSL/backend validation for ComputeTexture64 is pending; no GPU execution or device screenshot exists. The previous compute-base checkpoint remains green at commit `0331d965263b75ec637965c09dacaa3cfa8b5705` and workflow `44815752341`.
+- Commit `dfcb0bbe` was pushed. Apple workflow [44816848250](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44816848250) passed the full Linux suite and Xcode 27 iOS Metal backend plus both compute MSL examples. The GPU kernels were compiled, not run; no device screenshot exists.
+- The pack-texture compute increment is therefore host- and Apple-compiled, but not GPU/runtime-verified. Continue into the next scene-data capability; no final `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
