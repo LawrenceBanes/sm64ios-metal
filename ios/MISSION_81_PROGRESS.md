@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `d7dafb22` (adds opt-in view-space vertex positions to API 2 material shaders; Apple workflow `44832579016` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `3b2fa1ec` (supports position-derived directional material lighting and fixes its generated-MSL validation mode; Apple workflow `44834002721` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -184,4 +184,5 @@ Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary 
 
 - Relaxed the API 2 `directionalLight` dependency to accept either source normals or actual view-space positions. The source must still declare and use the bounded sun-direction/intensity signature; position-only packs cannot claim source normals implicitly.
 - GeometryNormal64 now derives a flat face normal from Metal fragment derivatives and applies the renderer's configured sun using an explicitly two-sided diffuse model. This avoids assuming the material hook's front/back winding semantics. The normal derivation and lighting are authored in the shader pack, not special-cased in the engine.
-- Updated source validation, UIKit manifest checks, code generation, generated-MSL Apple coverage, and tests for valid position-based lighting and rejection when neither normal nor position inputs are declared. `python3 ios/test_shader64_pack.py`, `CC=clang tests/run_metal_shader_codegen_test.sh`, and the full `CC=clang tests/run_linux_checks.sh` pass. Apple workflow [44833688651](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44833688651) passed Linux but failed in the MSL helper with exit 64 before GeometryNormal64 generation; investigation traced this to the helper's `position-lit` mode guard, not the shader compiler. The guard is fixed and regression validation is underway.
+- Updated source validation, UIKit manifest checks, code generation, generated-MSL Apple coverage, and tests for valid position-based lighting and rejection when neither normal nor position inputs are declared. `python3 ios/test_shader64_pack.py`, `CC=clang tests/run_metal_shader_codegen_test.sh`, and the full `CC=clang tests/run_linux_checks.sh` pass. Apple workflow [44833688651](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44833688651) passed Linux but failed in the MSL helper with exit 64 before GeometryNormal64 generation; investigation traced this to the helper's `position-lit` mode guard, not the shader compiler. The guard was fixed in `3b2fa1ec`.
+- Apple workflow [44834002721](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44834002721) passed the full Linux regression and Xcode 27 backend/generated-MSL compilation, including the position-lit GeometryNormal64 variant. The actual shader now compiles and links as MSL; GPU execution and visual correctness remain unverified.
