@@ -190,6 +190,12 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-depth-compute.air" \
     -o "$shader_dir/shader64-depth-compute.metallib"
 echo "compiled and linked SHADER64 scene-depth compute reference"
 
+depth_normals_compute_source="$repo_dir/ios/shaderpacks/DepthNormalsCompute64/shaders/surface.metal"
+xcrun --sdk iphoneos metal -c "$depth_normals_compute_source" -o "$shader_dir/shader64-depth-normals-compute.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-depth-normals-compute.air" \
+    -o "$shader_dir/shader64-depth-normals-compute.metallib"
+echo "compiled and linked SHADER64 scene-depth plus scene-normals compute reference"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

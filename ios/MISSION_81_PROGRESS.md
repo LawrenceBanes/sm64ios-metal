@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest committed code checkpoint: `d01c5d1c` (Paper64 material-class shading; Apple compile and Linux validation passed in workflow `44804926725`). Current working tree extends material hooks to pack-owned textures.
+- Latest pushed checkpoint before the current increment: `38dc27ceab01b7379d295408127c9491991a2780` (compute scene-depth contract, DepthCompute64, CI `44820115264`). Current working tree adds compute scene normals and corrects imported compute-node type dispatch; host validation passes, Apple CI pending.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -115,5 +115,13 @@
 - Focused pack tests (28), production importer matrix, ASan/UBSan ZIP smoke, codegen, Xcode wiring, shell syntax, and diff checks pass. Full `CC=clang tests/run_linux_checks.sh` passed with existing fixture diagnostics and compiler warnings only.
 - Commit `f2f043ce7da92fc3b4aabc80881771efcb8299be` passed Apple workflow [44820115264](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44820115264), including the full Linux regression job and Xcode 27 backend/MSL compilation of DepthCompute64. This confirms compile/link only; it does not execute the depth kernel or verify fog pixels.
 - No final `main` merge; GPU execution and physical-device image remain unverified.
+
+## Current working increment — scene normals in compute and imported node dispatch
+
+- Added `sceneNormals:true` for API 2 compute nodes at texture/sampler slot 7, alongside scene depth at slot 6 and bounded PNG inputs at slots 2–5. The source contract and Metal pipeline reflection validate the added read-only texture and sampler; the renderer reuses the existing half-resolution normals generated from current depth.
+- Added `DepthNormalsCompute64`, which samples the real scene-depth and depth-derived normal resources in a generic compute kernel and forwards its result through the common fullscreen presenter. This is MSL/source and host-contract evidence only; no GPU execution or visual result is established.
+- Fixed a production iOS pack activation defect discovered during the trace: `activateShaderPack` had hard-coded every API 2 pass as fullscreen, so imported compute passes could not reach their compute pipeline. The manifest `type` now maps to the corresponding bounded graph node type, with a regression assertion.
+- `python3 ios/test_shader64_pack.py`: passed, 29 tests including the new combined-resource contract, reference-pack import, and ASan/UBSan ZIP smoke. `CC=clang tests/run_linux_checks.sh` passed. Metal codegen, Xcode wiring, shell syntax, and diff checks passed before the final documentation refresh; rerun diff checks before commit.
+- Apple MSL/backend CI is pending. Physical GPU output remains unverified. No final `main` merge.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

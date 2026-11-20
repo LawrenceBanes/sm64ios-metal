@@ -1789,7 +1789,9 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         if (!input || !output) { ok = false; break; }
         if (p->node_type == GFX_SHADER64_NODE_COMPUTE) {
             if (!p->compute_pipeline || final ||
-                ((p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) && !graph->pack_texture_count)) {
+                ((p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) && !graph->pack_texture_count) ||
+                ((p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) &&
+                 (!metal_scene_normals_texture || !metal_scene_normals_valid_for_frame))) {
                 ok = false; break;
             }
             id<MTLComputeCommandEncoder> compute = [command computeCommandEncoder];
@@ -1803,6 +1805,10 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
                 [compute setTexture:metal_depth_texture atIndex:6];
                 [compute setSamplerState:metal_present_sampler atIndex:6];
                 [compute setBytes:inverse_projection length:sizeof(inverse_projection) atIndex:3];
+            }
+            if (p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) {
+                [compute setTexture:metal_scene_normals_texture atIndex:7];
+                [compute setSamplerState:metal_present_sampler atIndex:7];
             }
             if (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) {
                 for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index) {
@@ -1940,18 +1946,11 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         if (passes[i].node_type == GFX_SHADER64_NODE_COMPUTE) {
             bool compute_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
             bool compute_scene_depth = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) != 0u;
+            bool compute_scene_normals = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) != 0u;
             char validation[192] = {0};
-            bool compute_valid = compute_scene_depth ?
-                (compute_pack_textures ?
-                    gfx_shader64_validate_compute_depth_textured_pass_source(passes[i].source, passes[i].source_size,
-                                                                            validation, sizeof(validation)) :
-                    gfx_shader64_validate_compute_depth_pass_source(passes[i].source, passes[i].source_size,
-                                                                    validation, sizeof(validation))) :
-                (compute_pack_textures ?
-                    gfx_shader64_validate_compute_textured_pass_source(passes[i].source, passes[i].source_size,
-                                                                       validation, sizeof(validation)) :
-                    gfx_shader64_validate_compute_pass_source(passes[i].source, passes[i].source_size,
-                                                              validation, sizeof(validation)));
+            bool compute_valid = gfx_shader64_validate_compute_resource_pass_source(
+                passes[i].source, passes[i].source_size, compute_pack_textures,
+                compute_scene_depth, compute_scene_normals, validation, sizeof(validation));
             if (!compute_valid) {
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s: %.150s", passes[i].id ?: "?", validation);
                 gfx_metal_shader64_graph_release(graph); return false;
@@ -1972,9 +1971,11 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             BOOL input_bound = NO, output_bound = NO, parameters_bound = NO, frame_info_bound = NO;
             BOOL texture_count_bound = NO, scene_depth_bound = NO, depth_sampler_bound = NO;
             BOOL inverse_projection_bound = NO;
+            BOOL scene_normals_bound = NO, normals_sampler_bound = NO;
             BOOL pack_texture_bound[GFX_SHADER64_MAX_PACK_TEXTURES] = { NO };
             if (pipeline && reflection.arguments.count == (compute_pack_textures ? 9u : 4u) +
-                                                               (compute_scene_depth ? 3u : 0u)) {
+                                                               (compute_scene_depth ? 3u : 0u) +
+                                                               (compute_scene_normals ? 2u : 0u)) {
                 for (MTLArgument *argument in reflection.arguments) {
                     if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                         argument.index == 0u && argument.access == MTLArgumentAccessReadOnly) input_bound = YES;
@@ -1995,6 +1996,11 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                         depth_sampler_bound = YES;
                     else if (compute_scene_depth && argument.type == MTLArgumentTypeBuffer && argument.index == 3u)
                         inverse_projection_bound = YES;
+                    else if (compute_scene_normals && argument.type == MTLArgumentTypeTexture &&
+                             argument.textureType == MTLTextureType2D && argument.access == MTLArgumentAccessReadOnly &&
+                             argument.index == 7u) scene_normals_bound = YES;
+                    else if (compute_scene_normals && argument.type == MTLArgumentTypeSampler && argument.index == 7u)
+                        normals_sampler_bound = YES;
                 }
             }
             BOOL abi_valid = input_bound && output_bound && parameters_bound && frame_info_bound;
@@ -2005,6 +2011,8 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             }
             if (compute_scene_depth)
                 abi_valid = abi_valid && scene_depth_bound && depth_sampler_bound && inverse_projection_bound;
+            if (compute_scene_normals)
+                abi_valid = abi_valid && scene_normals_bound && normals_sampler_bound;
             if (!library || !pipeline) {
                 const char *message = (pipeline_error ?: compile_error).localizedDescription.UTF8String ?: "Metal rejected compute pass";
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s failed: %.300s", passes[i].id, message);

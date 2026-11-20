@@ -1397,7 +1397,7 @@ static int sm64RenderDiagnosticMode;
         [packIDs addObject:child];
     }
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"SHADER64"
-        message:@"API 1 packs replace the final scene composite; API 2 packs run a bounded fullscreen Metal render graph. Native geometry/material rendering and HUD remain in place. API 1 supports source MSL or compatible iOS metallib; API 2 currently supports source MSL passes. Metal shaders are trusted code and are not sandboxed from GPU execution."
+        message:@"API 1 packs replace the final scene composite; API 2 packs run a bounded Metal graph with fullscreen and compute passes. Native geometry/material rendering and HUD remain in place. API 1 supports source MSL or compatible iOS metallib; API 2 currently supports source MSL passes. Metal shaders are trusted code and are not sandboxed from GPU execution."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Classic64 (restore original renderer)" style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) { (void)action; gfx_metal_use_classic_shader(); [self refreshGraphicsSettings]; [self appendStatus:@"Classic64 renderer restored"]; }]];
@@ -1512,10 +1512,10 @@ static int sm64RenderDiagnosticMode;
             if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
             if ([packTextures boolValue] && (!textureList.count || (!compute && ([sceneDepth boolValue] ||
                 [sceneLighting boolValue] || [sceneShadows boolValue])))) passOK = NO;
-            if ([sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
+            if (!compute && [sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue])) passOK = NO;
             if (compute && ([sceneLighting boolValue] ||
-                [sceneShadows boolValue] || [sceneNormals boolValue])) passOK = NO;
+                [sceneShadows boolValue])) passOK = NO;
             if ([frameInfo boolValue] && (compute || [sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
@@ -1533,7 +1533,7 @@ static int sm64RenderDiagnosticMode;
         }
     }
     if (!identifierOK || !metadataOK || (!api1 && !api2)) {
-        if (errorOut) *errorOut = @"Manifest must use the supported API 1 postprocess contract or API 2 bounded fullscreen render graph.";
+        if (errorOut) *errorOut = @"Manifest must use the supported API 1 postprocess contract or API 2 bounded fullscreen/compute render graph.";
         return nil;
     }
     return manifest;
@@ -1561,9 +1561,12 @@ static int sm64RenderDiagnosticMode;
             NSData *bytes = [attrs[NSFileType] isEqualToString:NSFileTypeRegular] && [attrs[NSFileSize] unsignedLongLongValue] <= GFX_SHADER64_MAX_SOURCE_BYTES ? [NSData dataWithContentsOfFile:file] : nil;
             if (!bytes) { validation = @"A graph pass source is missing or exceeds the 256 KiB limit"; break; }
             [graphSources addObject:bytes];
+            NSString *type = definition[@"type"];
+            unsigned int nodeType = [type isEqualToString:@"compute"] ?
+                GFX_SHADER64_NODE_COMPUTE : GFX_SHADER64_NODE_FULLSCREEN;
             graphPasses[i] = (struct GfxShader64GraphSource){
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
-                bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u,
+                bytes.bytes, bytes.length, [definition[@"scale"] floatValue], nodeType,
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
