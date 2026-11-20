@@ -184,6 +184,12 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-animated-graph.air" \
     -o "$shader_dir/shader64-animated-graph.metallib"
 echo "compiled and linked SHADER64 frame-aware fullscreen reference"
 
+depth_compute_source="$repo_dir/ios/shaderpacks/DepthCompute64/shaders/fog.metal"
+xcrun --sdk iphoneos metal -c "$depth_compute_source" -o "$shader_dir/shader64-depth-compute.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-depth-compute.air" \
+    -o "$shader_dir/shader64-depth-compute.metallib"
+echo "compiled and linked SHADER64 scene-depth compute reference"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

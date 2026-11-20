@@ -323,11 +323,13 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                    GFX_SHADER64_RESOURCE_PACK_TEXTURES |
                                    GFX_SHADER64_RESOURCE_SCENE_NORMALS |
                                    GFX_SHADER64_RESOURCE_FRAME_INFO)) != 0u ||
-            ((p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) &&
+            (p->node_type == GFX_SHADER64_NODE_FULLSCREEN &&
+             (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) &&
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP))) ||
-            ((p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) &&
+            (p->node_type == GFX_SHADER64_NODE_FULLSCREEN &&
+             (p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) &&
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP))) ||
@@ -339,6 +341,7 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                    GFX_SHADER64_RESOURCE_SCENE_NORMALS))) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
              (p->resource_flags & ~(GFX_SHADER64_RESOURCE_PACK_TEXTURES |
+                                    GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                     GFX_SHADER64_RESOURCE_FRAME_INFO)) != 0u) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
              (p->resource_flags & GFX_SHADER64_RESOURCE_FRAME_INFO) != 0u) ||
@@ -632,7 +635,7 @@ int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_
     return 1;
 }
 
-static int validate_compute_source(const char *source, size_t size, int pack_textures,
+static int validate_compute_source(const char *source, size_t size, int pack_textures, int scene_depth,
                                    char *error, size_t error_size) {
     static const char *const required[] = {
         "kernel void shader64_compute(",
@@ -650,6 +653,11 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
         "texture2d<float> packTexture3 [[texture(5)]]",
         "constant uint &packTextureCount [[buffer(1)]]"
     };
+    static const char *const depth_required[] = {
+        "depth2d<float> sceneDepth [[texture(6)]]",
+        "sampler depthSampler [[sampler(6)]]",
+        "constant float4x4 &inverseProjection [[buffer(3)]]"
+    };
     if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
         err(error, error_size, "compute pass source is missing, oversized, or contains NUL"); return 0;
     }
@@ -662,16 +670,25 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
             if (!contains(source, size, texture_required[i])) {
                 err(error, error_size, "textured compute source does not implement the bounded texture contract"); return 0;
             }
+    if (scene_depth)
+        for (size_t i = 0; i < sizeof(depth_required) / sizeof(depth_required[0]); ++i)
+            if (!contains(source, size, depth_required[i])) {
+                err(error, error_size, "depth compute source does not implement the bounded camera-depth contract"); return 0;
+            }
     /* API 2 compute has two core texture inputs and one parameter buffer;
      * optional pack textures occupy fixed additional slots. Reject undeclared
      * bindings rather than compiling with unbound resources. This is a
      * contract check, not a Metal parser. */
-    size_t texture_bindings = 0, buffer_bindings = 0;
+    size_t texture_bindings = 0, buffer_bindings = 0, sampler_bindings = 0;
     for (size_t i = 0; i + 10u <= size; ++i)
         if (!memcmp(source + i, "[[texture(", 10u)) ++texture_bindings;
     for (size_t i = 0; i + 9u <= size; ++i)
         if (!memcmp(source + i, "[[buffer(", 9u)) ++buffer_bindings;
-    if (texture_bindings != (pack_textures ? 6u : 2u) || buffer_bindings != (pack_textures ? 3u : 2u)) {
+    for (size_t i = 0; i + 10u <= size; ++i)
+        if (!memcmp(source + i, "[[sampler(", 10u)) ++sampler_bindings;
+    if (texture_bindings != (pack_textures ? 6u : 2u) + (scene_depth ? 1u : 0u) ||
+        buffer_bindings != (pack_textures ? 3u : 2u) + (scene_depth ? 1u : 0u) ||
+        sampler_bindings != (scene_depth ? 1u : 0u)) {
         err(error, error_size, "compute pass resource bindings do not match its declared texture contract"); return 0;
     }
     if (contains(source, size, "#include \"")) {
@@ -683,12 +700,22 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
 
 int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size) {
-    return validate_compute_source(source, size, 0, error, error_size);
+    return validate_compute_source(source, size, 0, 0, error, error_size);
 }
 
 int gfx_shader64_validate_compute_textured_pass_source(const char *source, size_t size,
                                                        char *error, size_t error_size) {
-    return validate_compute_source(source, size, 1, error, error_size);
+    return validate_compute_source(source, size, 1, 0, error, error_size);
+}
+
+int gfx_shader64_validate_compute_depth_pass_source(const char *source, size_t size,
+                                                    char *error, size_t error_size) {
+    return validate_compute_source(source, size, 0, 1, error, error_size);
+}
+
+int gfx_shader64_validate_compute_depth_textured_pass_source(const char *source, size_t size,
+                                                             char *error, size_t error_size) {
+    return validate_compute_source(source, size, 1, 1, error, error_size);
 }
 
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,

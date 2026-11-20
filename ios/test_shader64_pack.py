@@ -84,6 +84,12 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_compute_textured_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_compute_textured_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_compute_depth_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_compute_depth_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_compute_depth_textured_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_compute_depth_textured_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_lit_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_lit_pass_source.restype = ctypes.c_int
@@ -391,6 +397,11 @@ class ShaderPackTests(unittest.TestCase):
             self.GraphPass(b"present", b"filtered", b"present", 1.0, 1, 0))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             textured_compute_graph, 2, 1920, 1080, order, error, len(error)), error.value)
+        depth_textured_compute_graph = (self.GraphPass * 2)(
+            self.GraphPass(b"compute", b"sceneColor", b"filtered", 0.5, 2, 9),
+            self.GraphPass(b"present", b"filtered", b"present", 1.0, 1, 0))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            depth_textured_compute_graph, 2, 1920, 1080, order, error, len(error)), error.value)
         invalid_present = (self.GraphPass * 1)(
             self.GraphPass(b"compute", b"sceneColor", b"present", 1.0, 2, 0))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
@@ -442,6 +453,24 @@ class ShaderPackTests(unittest.TestCase):
         missing = source.replace(b"[[texture(5)]]", b"[[texture(6)]]")
         self.assertFalse(self.api.gfx_shader64_validate_compute_textured_pass_source(
             missing, len(missing), error, len(error)))
+
+    def test_compute_scene_depth_contract(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]], '
+                  b'texture2d<float, access::write> output [[texture(1)]], '
+                  b'constant float4 &params [[buffer(0)]], constant float4 &frameInfo [[buffer(2)]], '
+                  b'depth2d<float> sceneDepth [[texture(6)]], sampler depthSampler [[sampler(6)]], '
+                  b'constant float4x4 &inverseProjection [[buffer(3)]], '
+                  b'uint2 tid [[thread_position_in_grid]]) { '
+                  b'float2 uv=(float2(tid)+0.5)/float2(output.get_width(),output.get_height()); '
+                  b'float d=sceneDepth.sample(depthSampler,uv); float4 clip=float4(uv*2.0-1.0,d*2.0-1.0,1.0); '
+                  b'float4 pos=inverseProjection*clip; output.write(image.read(tid)+pos*params.x+frameInfo,tid); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_compute_depth_pass_source(
+            source, len(source), error, len(error)), error.value)
+        no_camera = source.replace(b"[[buffer(3)]]", b"[[buffer(4)]]")
+        self.assertFalse(self.api.gfx_shader64_validate_compute_depth_pass_source(
+            no_camera, len(no_camera), error, len(error)))
 
     def test_api2_graph_rejects_cycles_feedback_and_unbounded_targets(self):
         error = ctypes.create_string_buffer(256)
@@ -530,7 +559,7 @@ class ShaderPackTests(unittest.TestCase):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
-                         "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64")
+                         "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -554,17 +583,29 @@ class ShaderPackTests(unittest.TestCase):
                     shadow_pass = bool(definition.get("sceneShadows"))
                     texture_pass = bool(definition.get("packTextures"))
                     combined_normals_textures = normals_pass and texture_pass
-                    validator = (self.api.gfx_shader64_validate_frame_pass_source if frame_info_pass else
-                                 (self.api.gfx_shader64_validate_compute_textured_pass_source
-                                  if texture_pass else self.api.gfx_shader64_validate_compute_pass_source)
-                                 if compute_pass else
-                                 self.api.gfx_shader64_validate_normals_textured_pass_source if combined_normals_textures else
-                                 self.api.gfx_shader64_validate_textured_pass_source if texture_pass else
-                                 self.api.gfx_shader64_validate_normals_pass_source if normals_pass else
-                                 self.api.gfx_shader64_validate_shadow_pass_source if shadow_pass else
-                                 self.api.gfx_shader64_validate_lit_pass_source if lighting_pass else
-                                 self.api.gfx_shader64_validate_depth_pass_source if depth_pass else
-                                 self.api.gfx_shader64_validate_pass_source)
+                    if compute_pass:
+                        if depth_pass:
+                            validator = (self.api.gfx_shader64_validate_compute_depth_textured_pass_source
+                                         if texture_pass else self.api.gfx_shader64_validate_compute_depth_pass_source)
+                        else:
+                            validator = (self.api.gfx_shader64_validate_compute_textured_pass_source
+                                         if texture_pass else self.api.gfx_shader64_validate_compute_pass_source)
+                    elif frame_info_pass:
+                        validator = self.api.gfx_shader64_validate_frame_pass_source
+                    elif combined_normals_textures:
+                        validator = self.api.gfx_shader64_validate_normals_textured_pass_source
+                    elif texture_pass:
+                        validator = self.api.gfx_shader64_validate_textured_pass_source
+                    elif normals_pass:
+                        validator = self.api.gfx_shader64_validate_normals_pass_source
+                    elif shadow_pass:
+                        validator = self.api.gfx_shader64_validate_shadow_pass_source
+                    elif lighting_pass:
+                        validator = self.api.gfx_shader64_validate_lit_pass_source
+                    elif depth_pass:
+                        validator = self.api.gfx_shader64_validate_depth_pass_source
+                    else:
+                        validator = self.api.gfx_shader64_validate_pass_source
                     self.assertTrue(validator(source, len(source), error, len(error)),
                                     f"{pack_id}: {error.value!r}")
                     if not compute_pass:

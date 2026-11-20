@@ -105,6 +105,14 @@
 - Added AnimatedGraph64, a source-defined time-varying color pulse, plus C validator/wrapper tests and graph resource-combination tests.
 - Focused Shader64 validation passes (27 tests, including production importer and ASan/UBSan archive smoke), as do Metal codegen, Xcode project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh`.
 - Commit `288973e3b4832e87218df4b7b4f9398fc19e213e` passed Apple workflow [44818900682](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44818900682), including Xcode 27 iOS Metal backend and AnimatedGraph64 wrapper MSL compilation plus Linux regressions. This validates compile/link only; no runtime GPU result or screenshot is available.
-- Next: implement bounded temporal history support for graph passes, including invalidation on pack switch and scene/resolution discontinuities. No final `main` merge yet.
+- Next: extend compute scene data while preserving a low-overhead path. No final `main` merge yet.
+
+## Current working increment — scene depth in compute passes
+
+- Added optional `sceneDepth: true` for API 2 compute nodes. The engine binds its real single-sample Metal depth texture at texture/sampler slot 6 and inverse projection at buffer 3, while preserving image input/output slots 0–1, pack texture slots 2–5, frame context buffer 2, and pack texture count buffer 1.
+- The production graph gates depth-dependent dispatch on the existing camera/depth availability checks. Shared validation rejects unsupported lighting, shadows, normals, resource combinations, and out-of-contract bindings. GPU pipeline reflection checks the depth texture, sampler, and inverse-projection buffer.
+- Added DepthCompute64, which reconstructs view-space distance from scene depth and applies a depth fog pass, plus direct Apple MSL compilation coverage. This is source-level evidence of a real scene-data interface; it is not runtime visual proof.
+- Focused pack tests (28), production importer matrix, ASan/UBSan ZIP smoke, codegen, Xcode wiring, shell syntax, and diff checks pass. Full `CC=clang tests/run_linux_checks.sh` passed with existing fixture diagnostics and compiler warnings only. Apple CI is pending for this increment.
+- No final `main` merge; GPU execution and physical-device image remain unverified.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
