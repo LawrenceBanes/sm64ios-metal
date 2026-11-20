@@ -79,6 +79,8 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
 
 An individual API 2 pass can declare `"sceneDepth":true` and implement the `shader64_pass_depth` contract documented in [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md). Raw nonlinear Depth32Float samples and inverse projection are supplied only to those passes. Depth-dependent packs gracefully use the native composite on frames where the renderer cannot provide a single-sample depth texture and valid projection.
 
+Reference packs include **DepthDebug64** (raw depth), **NormalDebug64** (screen-space normals reconstructed from neighboring depth samples), and **MaterialDebug64** (world/object/character class colors). Reconstructed normals are an approximation derived from depth discontinuities; the engine does not yet export a native normal attachment.
+
 ## Reference packs
 
 - **Classic64** is the built-in original renderer and recovery path.

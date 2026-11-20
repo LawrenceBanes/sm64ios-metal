@@ -1,0 +1,12 @@
+{
+  "formatVersion": 2,
+  "id": "NormalDebug64",
+  "name": "Normal Debug 64",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "passes": [
+    { "id": "depth_normals", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/normals.metal", "scale": 1.0, "sceneDepth": true }
+  ]
+}

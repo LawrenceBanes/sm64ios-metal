@@ -248,7 +248,8 @@ class ShaderPackTests(unittest.TestCase):
             passes, 2, 8192, 8192, order, error, len(error)), error.value)
 
     def test_production_importer_accepts_every_reference_pack(self):
-        reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines", "DepthDebug64")
+        reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
+                         "DepthDebug64", "NormalDebug64", "MaterialDebug64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -286,7 +287,6 @@ class ShaderPackTests(unittest.TestCase):
                     f"{pack_id}: {error.value!r}")
                 material_definition = manifest.get("materialShader")
                 if material_definition is not None:
-                    self.assertEqual(pack_id, "GraphDemo", "unexpected material hook in reference pack")
                     material_path = material_definition["source"]
                     self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
                     material_source = (directory / material_path).read_bytes()

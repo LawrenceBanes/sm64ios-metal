@@ -100,7 +100,7 @@ xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx"
 for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/BlissGridlines/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal; do
-    if [[ "$(basename "$source")" == "material.metal" || "$(basename "$source")" == "depth.metal" ]]; then
+    if [[ "$(basename "$source")" == "material.metal" || "$(basename "$source")" == "depth.metal" || "$(basename "$source")" == "normals.metal" ]]; then
         continue
     fi
     pack=$(basename "$(dirname "$(dirname "$source")")")
@@ -111,29 +111,33 @@ for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
     echo "compiled and linked SHADER64 API 2 reference $name"
 done
 
-material_source="$repo_dir/ios/shaderpacks/GraphDemo/shaders/material.metal"
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$material_wrapper_tool"
-"$material_wrapper_tool" "$material_source" > "$shader_dir/shader64-graphdemo-material.metal"
-xcrun --sdk iphoneos metal -c "$shader_dir/shader64-graphdemo-material.metal" \
-    -o "$shader_dir/shader64-graphdemo-material.air"
-xcrun --sdk iphoneos metallib "$shader_dir/shader64-graphdemo-material.air" \
-    -o "$shader_dir/shader64-graphdemo-material.metallib"
-echo "compiled and linked SHADER64 API 2 GraphDemo material hook"
+for material_source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/material.metal \
+                      "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/material.metal; do
+    pack=$(basename "$(dirname "$(dirname "$material_source")")")
+    name="shader64-$pack-material"
+    "$material_wrapper_tool" "$material_source" > "$shader_dir/$name.metal"
+    xcrun --sdk iphoneos metal -c "$shader_dir/$name.metal" -o "$shader_dir/$name.air"
+    xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
+    echo "compiled and linked SHADER64 API 2 $pack material hook"
+done
 
-depth_source="$repo_dir/ios/shaderpacks/DepthDebug64/shaders/depth.metal"
 depth_wrapper_tool="$output_dir/shader64-wrap-depth"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_depth_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$depth_wrapper_tool"
-"$depth_wrapper_tool" "$depth_source" > "$shader_dir/shader64-depth-debug64-depth.metal"
-xcrun --sdk iphoneos metal -c "$shader_dir/shader64-depth-debug64-depth.metal" \
-    -o "$shader_dir/shader64-depth-debug64-depth.air"
-xcrun --sdk iphoneos metallib "$shader_dir/shader64-depth-debug64-depth.air" \
-    -o "$shader_dir/shader64-depth-debug64-depth.metallib"
-echo "compiled and linked SHADER64 scene-depth API 2 reference"
+for depth_source in "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal \
+                    "$repo_dir"/ios/shaderpacks/NormalDebug64/shaders/*.metal; do
+    pack=$(basename "$(dirname "$(dirname "$depth_source")")")
+    name="shader64-$pack-scene-depth"
+    "$depth_wrapper_tool" "$depth_source" > "$shader_dir/$name.metal"
+    xcrun --sdk iphoneos metal -c "$shader_dir/$name.metal" -o "$shader_dir/$name.air"
+    xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
+    echo "compiled and linked SHADER64 $pack scene-depth reference"
+done
 
 echo "Compiling the SHADER64 precompiled-library ABI example for iPhoneOS."
 xcrun --sdk iphoneos metal -c "$repo_dir/ios/shaderpacks/examples/compiled_postprocess.metal" \

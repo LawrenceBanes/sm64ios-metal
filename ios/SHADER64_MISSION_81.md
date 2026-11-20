@@ -37,6 +37,8 @@ The hook does **not** yet provide world-space positions, normals, transforms, in
 
 An API 2 pass may opt into the auxiliary `sceneDepth` resource with `"sceneDepth": true`. It then implements `shader64_pass_depth(color, uv, image, imageSampler, sceneDepth, depthSampler, inverseProjection, params)`. `sceneDepth` is the native Depth32Float hardware depth sampled over the scene viewport; its values are nonlinear Metal depth in [0,1], and 1 represents clear/background. `inverseProjection` is the current engine inverse projection matrix; screen UV maps x to [-1,1] and flips y to Metal clip coordinates, while depth is mapped from [0,1] to [-1,1] before unprojection. Scene depth is read-only and bound only for opted-in passes. Camera capture is enabled only while a graph requests it. If a valid single-sample depth texture or projection is unavailable, the renderer logs and uses its built-in final composite for that frame. Custom passes that need linear/view-space values must reconstruct them from this documented pair; no normals or world positions are implied.
 
+Reference diagnostic packs now use only these public resources: `DepthDebug64` shades raw nonlinear depth, `NormalDebug64` reconstructs a view-space normal approximation from neighboring depth samples and inverse projection, and `MaterialDebug64` colors the existing world/object/character class signal through the external material hook. The normal display is a screen-space depth-gradient reconstruction, not a native per-vertex normal attachment; it is expected to have discontinuity artifacts at silhouettes.
+
 ```json
 {
   "formatVersion": 2,
@@ -75,9 +77,9 @@ Inspected local archive: `Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip`, SHA-256 `
 |---|---|---|
 | Composite/final image passes | API 2 fullscreen DAG; one image in/out per pass | Basic chained passes executable; no multi-attachment MRT |
 | Final camera-gridline option | API 2 screen-space pass | Included as licensed adaptation pack; GUI hide flag is represented by a pack toggle |
-| Engine scene depth and camera projection | Optional `sceneDepth` input on API 2 fullscreen nodes plus inverse projection | Implemented for DepthDebug64; custom packs can reconstruct positions, but no normal/history helper or MSAA depth path |
+| Engine scene depth and camera projection | Optional `sceneDepth` input on API 2 fullscreen nodes plus inverse projection | Implemented; DepthDebug64 shades raw values and NormalDebug64 demonstrates depth-derived view-space normals. No native normal attachment or MSAA depth path |
 | Shadow map and shadow color textures | Needs declared depth/comparison textures and shadow pass nodes | Not available to user graphs; built-in engine shadow pass remains private |
-| Deferred/G-buffer surfaces | Needs material/normal/albedo attachments and geometry hook | Not available |
+| Material categories and post-combiner shading | Optional API 2 material hook with world/object/character category | Implemented; MaterialDebug64 exposes categories as actual surface colors. No normals, world position, or full albedo/roughness G-buffer |
 | Setup compute and voxel lighting | Needs compute nodes, storage buffers, atomic/resource contracts | Not available |
 | Minecraft time/weather/biome/entity/player uniforms | Needs generic world state API and per-game adapters | Not available; no Minecraft concepts in core API |
 | Blue/noise textures and custom LUTs | Needs bounded texture resources and pack-relative binding contract | Not available |

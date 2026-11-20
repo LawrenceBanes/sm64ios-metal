@@ -1,0 +1,16 @@
+{
+  "formatVersion": 2,
+  "id": "MaterialDebug64",
+  "name": "Material Debug 64",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "classification", "label": "Classification", "type": "boolean", "default": 1 }
+  ],
+  "materialShader": { "source": "shaders/material.metal" },
+  "passes": [
+    { "id": "passthrough", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/passthrough.metal", "scale": 1.0 }
+  ]
+}
