@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `3303360fa275b3b9d3726be51fa9a9c81a96e8e4`, with SSAO quality controls in progress.
+- Current source commit: `095517d4a423915df73b75c6be8056daa29d0013`, with depth-masked sky presets in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -57,11 +57,17 @@
 ### M79-B — SSAO quality controls (implementation increment)
 
 - Added persisted Low / Standard / High AO profiles. They vary sample count (4/8/8), sample spacing, bias, intensity, and view-space radius; a developer control exposes the selection and reset returns to Standard.
-- Source checks and shader-source generation checks pass; the full Linux suite passed locally. The latest full-game IPA workflow [44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366) is building its earlier source checkpoint `3303360f`; Apple validation for AO controls is pending.
+- Source checks and shader-source generation checks pass; the full Linux suite passed locally. Apple SDK/MSL validation passed at `095517d4` in [run 44698561959](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698561959). Quality selection has not been visually compared on hardware.
+
+### M79-E — Depth-masked sky presets (implementation increment)
+
+- Added persisted Original / Day / Sunset selection. The final presentation pass replaces only clear-depth pixels with a camera-relative horizon gradient, so scene geometry remains untouched and sky pixels stay excluded from fog and AO reconstruction.
+- This is a simple gradient, not an OoT skybox or sun disk. Source assertions pass; full Linux and Apple shader validation for the combined AO/sky follow-up are pending.
 
 ### Build candidate status
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
+- A newer full game build from source `3303360fa275b3b9d3726be51fa9a9c81a96e8e4` passed compile, IPA structure checks, and private upload in [workflow 44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366). Private draft: [unsigned build 44698163366.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-f4ffbc277ed244358b57); IPA SHA-256 `df42a01c548d61b7f8369dc6c36079e0f54ccd35684edc5980bc499d2b8966a`. It contains color grading and fog profiles but predates the AO quality control and sky gradient.
 
 ### M79-C — Directional lighting and shadows (not implemented)
 
@@ -82,4 +88,4 @@
 
 ## Next task
 
-Finish Apple validation for the AO profiles, build a current private IPA containing them, then continue with AO/HUD separation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Finish Apple validation for sky presets and build a current private IPA containing AO quality and sky controls, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.

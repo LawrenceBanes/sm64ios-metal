@@ -121,6 +121,12 @@ def main() -> None:
     ):
         require(token in metal + metal_h + shader_c + uikit,
                 f"missing bounded SSAO quality control: {token}")
+    for token in (
+        "SM64MetalSkyPreset", "gfx_metal_cycle_sky_preset", "gfx_metal_set_sky_preset",
+        "skyParams [[buffer(6)]]", "sceneDepth>=0.999999", "Sky: %@",
+    ):
+        require(token in metal + metal_h + shader_c + uikit,
+                f"missing depth-masked sky preset: {token}")
 
     print("Configurable Metal renderer foundation source checks passed")
 

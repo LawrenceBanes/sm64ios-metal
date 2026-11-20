@@ -29,6 +29,9 @@ void gfx_metal_set_fog_enabled(bool enabled);
 uint32_t gfx_metal_fog_profile(void);
 void gfx_metal_cycle_fog_profile(void);
 void gfx_metal_set_fog_profile(uint32_t profile);
+uint32_t gfx_metal_sky_preset(void);
+void gfx_metal_cycle_sky_preset(void);
+void gfx_metal_set_sky_preset(uint32_t preset);
 bool gfx_metal_bloom_enabled(void);
 void gfx_metal_set_bloom_enabled(bool enabled);
 #endif

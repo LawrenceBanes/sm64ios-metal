@@ -92,6 +92,7 @@ static float metal_exposure_stops;
 static uint32_t metal_color_grade;
 static bool metal_fog_is_enabled;
 static uint32_t metal_fog_profile;
+static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
@@ -251,6 +252,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
     metal_fog_profile = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalFogProfile"]));
+    metal_sky_preset = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSkyPreset"]));
     metal_bloom_is_enabled = [defaults boolForKey:@"SM64MetalBloomEnabled"];
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
@@ -364,6 +366,15 @@ void gfx_metal_set_fog_profile(uint32_t profile) {
     uint32_t sanitized = MIN(profile, 3u);
     @synchronized ([NSObject class]) { metal_fog_profile = sanitized; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalFogProfile"];
+}
+uint32_t gfx_metal_sky_preset(void) { @synchronized ([NSObject class]) { return metal_sky_preset; } }
+void gfx_metal_cycle_sky_preset(void) {
+    gfx_metal_set_sky_preset((gfx_metal_sky_preset() + 1u) % 3u);
+}
+void gfx_metal_set_sky_preset(uint32_t preset) {
+    uint32_t sanitized = MIN(preset, 2u);
+    @synchronized ([NSObject class]) { metal_sky_preset = sanitized; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalSkyPreset"];
 }
 bool gfx_metal_bloom_enabled(void) { @synchronized ([NSObject class]) { return metal_bloom_is_enabled; } }
 void gfx_metal_set_bloom_enabled(bool enabled) {
@@ -1083,7 +1094,7 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
-        !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u) return false;
+        !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1241,12 +1252,14 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         { 1.08f, 1.12f, 0.015f, -0.015f } /* cinematic */
     };
     vector_float4 grade_style = grades[gfx_metal_color_grade() % 4u];
+    vector_float4 sky_params = { (float)gfx_metal_sky_preset(), 0.0f, 0.0f, 0.0f };
     [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
     [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
     [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:2];
     [encoder setFragmentBytes:&fog_color length:sizeof(fog_color) atIndex:3];
     [encoder setFragmentBytes:&bloom_params length:sizeof(bloom_params) atIndex:4];
     [encoder setFragmentBytes:&grade_style length:sizeof(grade_style) atIndex:5];
+    [encoder setFragmentBytes:&sky_params length:sizeof(sky_params) atIndex:6];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;

@@ -69,6 +69,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *gradeButton;
 @property(nonatomic, strong) UIButton *fogProfileButton;
 @property(nonatomic, strong) UIButton *aoQualityButton;
+@property(nonatomic, strong) UIButton *skyPresetButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -571,6 +572,9 @@ static int sm64RenderDiagnosticMode;
     self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(cycleAOQuality)];
     self.aoQualityButton.frame = CGRectMake(14, 312, 172, 30);
     [self.graphicsPanel addSubview:self.aoQualityButton];
+    self.skyPresetButton = [self buttonWithTitle:@"Sky: Original" action:@selector(cycleSkyPreset)];
+    self.skyPresetButton.frame = CGRectMake(194, 312, 168, 30);
+    [self.graphicsPanel addSubview:self.skyPresetButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
@@ -707,6 +711,9 @@ static int sm64RenderDiagnosticMode;
     static NSString *const ao_quality_names[] = { @"Low", @"Standard", @"High" };
     [self.aoQualityButton setTitle:[NSString stringWithFormat:@"AO quality: %@", ao_quality_names[MIN(gfx_metal_ssao_quality(), 2u)]]
                            forState:UIControlStateNormal];
+    static NSString *const sky_names[] = { @"Original", @"Day", @"Sunset" };
+    [self.skyPresetButton setTitle:[NSString stringWithFormat:@"Sky: %@", sky_names[MIN(gfx_metal_sky_preset(), 2u)]]
+                           forState:UIControlStateNormal];
 #endif
 }
 
@@ -763,6 +770,13 @@ static int sm64RenderDiagnosticMode;
 - (void)cycleAOQuality {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_ssao_quality();
+    [self refreshGraphicsSettings];
+#endif
+}
+
+- (void)cycleSkyPreset {
+#if defined(RAPI_METAL)
+    gfx_metal_cycle_sky_preset();
     [self refreshGraphicsSettings];
 #endif
 }
@@ -840,6 +854,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_color_grade(0u);
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);
+    gfx_metal_set_sky_preset(0u);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
