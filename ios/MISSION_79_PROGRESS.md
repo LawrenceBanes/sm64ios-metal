@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `dc1e33eeb76af5ea330e73d6029e4a1ca1d67e4b`, with the master effects switch in progress.
+- Current source commit: `3c4cf5902ab22a34791c4ecc9c73663d273b11b5`.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -72,7 +72,7 @@
 ### M79-F — Master effects switch (implementation increment)
 
 - Added a persisted master switch that gates AO, tone mapping, FXAA, exposure, bloom, fog, color grading, and sky presentation without deleting the individual saved choices. Turning effects off clears the AO/bloom work counters; Classic preset/reset disable it.
-- Focused source checks pass; Apple build validation and a current full Linux rerun are pending for this addition.
+- Focused source checks and full Linux regression pass. Apple SDK/MSL validation passed in [run 44700236497](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44700236497). Physical switch usability and resulting visual fallback remain unverified.
 
 ### Build candidate status
 
@@ -99,4 +99,4 @@
 
 ## Next task
 
-Validate and package the master effects switch, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.
+Produce a full IPA containing the master switch, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.
