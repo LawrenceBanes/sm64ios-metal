@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `095517d4a423915df73b75c6be8056daa29d0013`, with depth-masked sky presets in progress.
+- Current source commit: `300cc597685623222c2e96301ea801eeb8152cef`.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -62,7 +62,7 @@
 ### M79-E — Depth-masked sky presets (implementation increment)
 
 - Added persisted Original / Day / Sunset selection. The final presentation pass replaces only clear-depth pixels with a camera-relative horizon gradient, so scene geometry remains untouched and sky pixels stay excluded from fog and AO reconstruction.
-- This is a simple gradient, not an OoT skybox or sun disk. Source assertions pass; full Linux and Apple shader validation for the combined AO/sky follow-up are pending.
+- This is a simple gradient, not an OoT skybox or sun disk. Full Linux regression and Apple SDK/MSL validation passed for the combined AO/sky commit in [run 44698930438](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698930438). Sky appearance remains device-unverified.
 
 ### Build candidate status
 
@@ -88,4 +88,4 @@
 
 ## Next task
 
-Finish Apple validation for sky presets and build a current private IPA containing AO quality and sky controls, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Build a current private IPA containing AO quality and sky controls, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
