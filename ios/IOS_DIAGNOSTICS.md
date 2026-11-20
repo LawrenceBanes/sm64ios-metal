@@ -2,6 +2,12 @@
 
 The iOS app writes timestamped checkpoints to `Documents/SM64Diagnostics.log` and flushes each line. The app already exposes its Documents folder to Files through `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`.
 
+## External WSC5 Hyrule Field test
+
+In the diagnostic test build, Gameplay includes **Load Hyrule Field (WSC5)** and **Leave Hyrule Field**. The app reads `Documents/scenes/4100.wsc` and each referenced PNG from `Documents/gfx/scenes/`; none of those world assets is bundled in the IPA. The log records the parsed format and package counts, selected entrance/spawn, room activation, texture references rejected during load, sampled texture-upload requests, and bounded Metal draw/triangle counts. These counters prove parsing and draw encoding only; they do not prove that the scene produced visible pixels.
+
+The optional **Tex log** switch adds sampled vertex, UV, texture-binding, and pixel diagnostics. It is bounded to early draw/upload samples and periodic checkpoints. Disable it after collecting a short log to keep capture noise low.
+
 ## Get the log from iPhone
 
 In the Files app, open **Browse → On My iPhone → Super Mario 64** and copy or share `SM64Diagnostics.log`. If that folder is not shown, open SM64 once and return to Files. The native **Share log** button in the diagnostic panel sends the same file through the iOS share sheet.

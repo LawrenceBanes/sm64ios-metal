@@ -112,7 +112,11 @@ class IpaValidationTests(unittest.TestCase):
                 package_app(app, ipa)
 
             pack_resources()
-            with self.assertRaisesRegex(ValueError, "missing the Documents WSC3 loader"):
+            with self.assertRaisesRegex(ValueError, "missing the Documents WSC5 Hyrule loader"):
+                validate(str(ipa), False, require_local_scene_loader=True)
+            executable.write_bytes(original_binary + b"\0Load Local WSC3 Scene\0Leave Local WSC3 Scene")
+            pack_resources()
+            with self.assertRaisesRegex(ValueError, "missing the Documents WSC5 Hyrule loader"):
                 validate(str(ipa), False, require_local_scene_loader=True)
             executable.write_bytes(original_binary + b"\0".join(LOCAL_SCENE_STRINGS))
             pack_resources()
@@ -125,6 +129,11 @@ class IpaValidationTests(unittest.TestCase):
                     pack_resources(external=external)
                     with self.assertRaisesRegex(ValueError, "external world asset"):
                         validate(str(ipa), False, require_local_scene_loader=True)
+
+    def test_local_scene_loader_validator_requires_the_wsc5_hyrule_actions(self):
+        self.assertEqual(LOCAL_SCENE_STRINGS, (
+            b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc"
+        ))
 
     def test_valid_arm64_ipa_structure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

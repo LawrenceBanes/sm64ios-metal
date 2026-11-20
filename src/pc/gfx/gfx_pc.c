@@ -47,9 +47,15 @@ static u32 scene_render_frame;
 #include "gfx_ios_diagnostics.h"
 #define GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() gfx_ios_texture_cache_diagnostics_enabled()
 #define GFX_TEXTURE_CACHE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
+#if defined(IOS_SCENE_DIAGNOSTIC)
+#define WSC_TEXTURE_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define WSC_TEXTURE_DIAG_LOG(...) ((void)0)
+#endif
 #else
 #define GFX_TEXTURE_CACHE_DIAGNOSTICS_ENABLED() 0
 #define GFX_TEXTURE_CACHE_DIAG_LOG(...) ((void)0)
+#define WSC_TEXTURE_DIAG_LOG(...) ((void)0)
 #endif
 
 #include "../platform.h"
@@ -1353,6 +1359,9 @@ static void gfx_tile_uv(const struct LoadedVertex *vertex, u32 width, u32 height
 }
 
 #if defined(IOS_O2R_SCENE_RUNTIME) && defined(EXTERNAL_DATA)
+#if defined(TARGET_OS_IOS) && defined(IOS_SCENE_DIAGNOSTIC)
+static u32 scene_texture_upload_diagnostic_count;
+#endif
 static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
     uint32_t shader = SHADER_OPT_SCENE_MATERIAL;
     if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
@@ -1388,10 +1397,20 @@ static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
                 uint8_t *rgba = decode_scene_png(path, texture->width, texture->height);
                 if (!rgba) {
                     fprintf(stderr, "WSC3 texture became unavailable: %s\n", path);
+                    WSC_TEXTURE_DIAG_LOG("WSC scene texture decode failed asset=%s expected=%ux%u",
+                                         texture->name, texture->width, texture->height);
                     gfx_forget_scene_texture(texture->name);
                     return false;
                 }
                 gfx_rapi->upload_texture(rgba, texture->width, texture->height);
+#if defined(TARGET_OS_IOS) && defined(IOS_SCENE_DIAGNOSTIC)
+                if (scene_texture_upload_diagnostic_count < 64) {
+                    ++scene_texture_upload_diagnostic_count;
+                    WSC_TEXTURE_DIAG_LOG("WSC scene texture upload requested index=%u asset=%s size=%ux%u",
+                                         scene_texture_upload_diagnostic_count, texture->name,
+                                         texture->width, texture->height);
+                }
+#endif
                 stbi_image_free(rgba);
             }
         }

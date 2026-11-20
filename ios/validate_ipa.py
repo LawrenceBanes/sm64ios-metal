@@ -138,7 +138,7 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
             raise ValueError("WSC2/WSC3 diagnostic textures must be 16x16 RGBA PNGs")
 
 
-LOCAL_SCENE_STRINGS = (b"Load Local WSC3 Scene", b"Leave Local WSC3 Scene", b"scenes/4100.wsc")
+LOCAL_SCENE_STRINGS = (b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc")
 STOCK_AUDIO = ("sound/sequences.bin", "sound/sound_data.ctl", "sound/sound_data.tbl")
 BUNDLED_SCENE_PACKAGES = {
     "scene-diagnostic/scenes/4098.wsc",
@@ -240,7 +240,7 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
         if b"SM64SceneDelegate" not in executable:
             raise ValueError("main executable does not contain the configured SM64SceneDelegate class")
         if require_local_scene_loader and not all(marker in executable for marker in LOCAL_SCENE_STRINGS):
-            raise ValueError("main executable is missing the Documents WSC3 loader or its menu actions")
+            raise ValueError("main executable is missing the Documents WSC5 Hyrule loader or its menu actions")
         if "iPhoneOS" not in info.get("CFBundleSupportedPlatforms", []):
             raise ValueError("app bundle is not marked for iPhoneOS")
         if not info.get("CFBundleIdentifier"):
@@ -326,7 +326,7 @@ def validate(ipa_path: str, require_system_deps: bool, require_game_textures: bo
     if require_scene_diagnostic or require_local_scene_loader:
         print("WSC diagnostic resources: WSC2/WSC3 rooms, textures, and failed-load probe present")
     if require_local_scene_loader:
-        print("Local WSC3 loader: menu, Documents package slot, and stock audio present; no external world bundled")
+        print("Local WSC5 Hyrule loader: menu, Documents package slot, and stock audio present; no external world bundled")
     print("signature: unsigned structure check only; SideStore signing and device launch remain unverified")
 
 
@@ -338,7 +338,7 @@ def main() -> None:
     parser.add_argument("--require-scene-diagnostic", action="store_true", help="require the original WSC2/WSC3 diagnostic resources in res/base.zip")
     parser.add_argument("--require-shitbox-identity", action="store_true", help="verify the SHITBOX LABZ INC. name, bundle ID, and release versions")
     parser.add_argument("--require-local-scene-loader", action="store_true",
-                        help="require the Documents WSC3 loader and stock audio, and reject bundled external worlds")
+                        help="require the Documents WSC5 Hyrule loader and stock audio, and reject bundled external worlds")
     args = parser.parse_args()
     validate(args.ipa, args.require_system_deps, args.require_game_textures,
              args.require_scene_diagnostic, args.require_shitbox_identity, args.require_local_scene_loader)

@@ -117,15 +117,33 @@ static bool external_spawn_has_clearance(struct WorldPoint point) {
         struct Surface *floor, *ceil;
         f32 height = find_floor(x, point.y, z, &floor);
         if (!floor || floor->type != SURFACE_DEFAULT || floor->normal.y < 0.707f
-            || point.y - height > 80 || height - point.y > 35 || height < -10000) return false;
+            || point.y - height > 80 || height - point.y > 35 || height < -10000) {
+            SCENE_DIAG_LOG("Hyrule WSC5 spawn clearance failed sample=%zu point=(%.1f,%.1f,%.1f) floor=%s height=%.1f normalY=%.3f type=%d",
+                           i, x, point.y, z, floor ? "hit" : "miss", height,
+                           floor ? floor->normal.y : 0.0f, floor ? floor->type : -1);
+            return false;
+        }
         f32 top = find_ceil(x, height, z, &ceil);
-        if (ceil && top < height + 180) return false;
+        if (ceil && top < height + 180) {
+            SCENE_DIAG_LOG("Hyrule WSC5 spawn clearance failed: low ceiling sample=%zu point=(%.1f,%.1f,%.1f) ceiling=%.1f",
+                           i, x, point.y, z, top);
+            return false;
+        }
     }
     f32 x = point.x, y = point.y, z = point.z;
-    if (f32_find_wall_collision(&x, &y, &z, 30, 50) != 0) return false;
+    if (f32_find_wall_collision(&x, &y, &z, 30, 50) != 0) {
+        SCENE_DIAG_LOG("Hyrule WSC5 spawn clearance failed: near wall point=(%.1f,%.1f,%.1f)",
+                       point.x, point.y, point.z);
+        return false;
+    }
     x = point.x;
     z = point.z;
-    return f32_find_wall_collision(&x, &y, &z, 150, 50) == 0;
+    if (f32_find_wall_collision(&x, &y, &z, 150, 50) != 0) {
+        SCENE_DIAG_LOG("Hyrule WSC5 spawn clearance failed: blocked 150-unit approach point=(%.1f,%.1f,%.1f)",
+                       point.x, point.y, point.z);
+        return false;
+    }
+    return true;
 }
 
 void area_external_scene_track(const f32 *position) {
@@ -140,7 +158,7 @@ void area_external_scene_track(const f32 *position) {
      * available even when a movement step can cross a narrow room. */
     world_scene_track_room(&sAreaScene, player);
     u32 current = world_scene_current_room(&sAreaScene);
-    if (current != previous) SCENE_DIAG_LOG("External WSC3 room %u -> %u", previous, current);
+    if (current != previous) SCENE_DIAG_LOG("Hyrule WSC5 room %u -> %u", previous, current);
 }
 
 void scene_diagnostic_check_failed_load(void) {
@@ -173,7 +191,7 @@ static void load_area_scene(s32 index) {
      * original IDs. Entry 0 is the package's default room. */
     u32 sceneId = ((u32)gCurrLevelNum << 8) | (u32)index;
     world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
-    struct WorldSceneDestination destination;
+    struct WorldSceneDestination destination = {0};
     enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, &destination);
 #ifdef IOS_SCENE_DIAGNOSTIC
     if (sceneId == SCENE_EXTERNAL_PACKAGE) {
@@ -183,8 +201,11 @@ static void load_area_scene(s32 index) {
             result = WORLD_SCENE_BAD_PACKAGE;
         if (result == WORLD_SCENE_OK) sExternalSpawn = destination;
         else world_scene_close(&sAreaScene);
-        SCENE_DIAG_LOG("External WSC3 load result=%d activeRooms=%u", result,
-                       world_scene_active_room_count(&sAreaScene));
+        SCENE_DIAG_LOG("Hyrule WSC5 activation result=%d room=%u activeRooms=%u spawn=(%lld,%lld,%lld) yaw=%d",
+                       result, world_scene_current_room(&sAreaScene),
+                       world_scene_active_room_count(&sAreaScene),
+                       (long long)destination.position.x, (long long)destination.position.y,
+                       (long long)destination.position.z, destination.yaw);
     }
     if (sceneId == SCENE_DIAGNOSTIC_PACKAGE || sceneId == SCENE_DIAGNOSTIC_WSC3_PACKAGE) {
         struct Surface *floor;

@@ -247,11 +247,21 @@ class ScenePackageTest(unittest.TestCase):
             subprocess.run(shlex.split(os.environ.get("CC", "clang")) + [
                 "-std=gnu99", "-O1", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-DF3DEX_GBI_2E", "-DNON_MATCHING", "-DAVOID_UB", "-DVERSION_US", "-DEXTERNAL_DATA",
-                "-DIOS_O2R_SCENE_RUNTIME", "-DIOS_SCENE_DIAGNOSTIC", "-D_LANGUAGE_C", "-Iinclude", "-Isrc", "-I.",
+                "-DIOS_O2R_SCENE_RUNTIME", "-DIOS_SCENE_DIAGNOSTIC", "-DIOS_CONNECTED_WORLD_TEST=1",
+                "-D_LANGUAGE_C", "-Iinclude", "-Isrc", "-I.",
                 *sources, "-lm", "-o", executable
             ], cwd=ROOT, check=True)
             subprocess.run([executable, work, packed, work / "gfx/scenes" / imported_textures[0].name],
                            cwd=work, check=True)
+            real_scene_dir = os.environ.get("SM64_WSC5_PROBE_DIR")
+            if real_scene_dir:
+                result = subprocess.run([executable, "--probe-wsc5-scene", real_scene_dir],
+                                        cwd=work, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                print(result.stdout.rstrip())
+                self.assertIn("collision-triangles=1579", result.stdout)
+                self.assertIn("spawn=(160,16,1415)", result.stdout)
+                self.assertIn("room-bounds=", result.stdout)
 
 
 if __name__ == "__main__":

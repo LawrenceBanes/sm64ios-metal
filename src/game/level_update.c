@@ -506,7 +506,7 @@ void warp_area(void) {
 #ifdef IOS_SCENE_DIAGNOSTIC
             if (gCurrLevelNum == LEVEL_CASTLE_GROUNDS && sWarpDest.areaIdx == SCENE_EXTERNAL_AREA
                 && !area_external_scene_spawn(NULL)) {
-                gfx_ios_diag_log("External WSC3 rejected; returning to Castle Grounds");
+                gfx_ios_diag_log("Hyrule WSC5 rejected; returning to Castle Grounds");
                 gfx_ios_portal_status("Scene rejected. Check package, textures and default entrance in the log.");
                 unload_area();
                 sWarpDest.areaIdx = 1;
@@ -1036,7 +1036,7 @@ static void apply_scene_diagnostic_request(void) {
         gWarpTransition.isActive || sDelayedWarpOp != WARP_OP_NONE || sWarpDest.type != WARP_TYPE_NOT_WARPING ||
         !gMarioState->marioObj || gMarioState->action == ACT_UNINITIALIZED ||
         (gMarioState->action & ACT_FLAG_INTANGIBLE)) {
-        gfx_ios_diag_log("WSC2 request ignored: resume active gameplay in Castle Grounds and retry");
+        gfx_ios_diag_log("Scene request ignored: resume active Castle Grounds gameplay and retry");
         return;
     }
     if (request == SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD) {
@@ -1044,14 +1044,14 @@ static void apply_scene_diagnostic_request(void) {
     } else if (request == SCENE_DIAGNOSTIC_TOGGLE_AREA || request == SCENE_DIAGNOSTIC_TOGGLE_WSC3
                || request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) {
         if (mario_ios_is_riding_yoshi(gMarioState) || mario_ios_is_driving_kart(gMarioState)) {
-            gfx_ios_diag_log("WSC2 warp ignored: dismount before changing area");
+            gfx_ios_diag_log("Scene warp ignored: dismount before changing area");
             return;
         }
         s16 sceneArea = request == SCENE_DIAGNOSTIC_TOGGLE_WSC3 ? SCENE_DIAGNOSTIC_WSC3_AREA : SCENE_DIAGNOSTIC_AREA;
         if (request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) {
             sceneArea = SCENE_EXTERNAL_AREA;
             if (gCurrentArea->index != sceneArea && !area_external_scene_available()) {
-                gfx_ios_portal_status("Install scenes/4100.wsc and its textures in Documents first.");
+                gfx_ios_portal_status("Install the WSC5 package and gfx/scenes textures in Documents first.");
                 return;
             }
         }

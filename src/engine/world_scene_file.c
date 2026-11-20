@@ -11,6 +11,12 @@
 #include "pc/fs/fs.h"
 #include "pc/gfx/gfx_render_section.h"
 #include "surface_partition.h"
+#if defined(IOS_BUILD) && defined(IOS_SCENE_DIAGNOSTIC)
+#include "pc/gfx/gfx_ios_diagnostics.h"
+#define WSC_DIAG_LOG(...) gfx_ios_diag_log(__VA_ARGS__)
+#else
+#define WSC_DIAG_LOG(...) ((void)0)
+#endif
 
 struct SceneReader {
     const u8 *next;
@@ -163,6 +169,8 @@ static bool read_texture(struct SceneReader *reader, char texture[96], u16 width
     if (!gfx_validate_scene_texture(path, width, height)) {
         fprintf(stderr, "Scene package texture cannot decode as %ux%u PNG: %s\n",
                 (unsigned)width, (unsigned)height, path);
+        WSC_DIAG_LOG("Scene texture reference rejected path=%s expected=%ux%u",
+                     path, (unsigned)width, (unsigned)height);
         return false;
     }
     return true;
@@ -355,7 +363,16 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
         if (materialFormat) {
             batch->pass = read_u16(reader);
             batch->triangleCount = read_u16(reader);
-            if (batch->pass > 1 || !read_material(reader, batch, fogFormat, decalFormat)) return false;
+            size_t materialBytesBefore = reader->remaining;
+            if (batch->pass > 1 || !read_material(reader, batch, fogFormat, decalFormat)) {
+                fprintf(stderr, "Scene room %u batch %u has invalid material (pass=%u triangles=%u bytesBefore=%zu bytesAfter=%zu)\n",
+                        desc->id, i, batch->pass, batch->triangleCount,
+                        materialBytesBefore, reader->remaining);
+                WSC_DIAG_LOG("Scene material invalid room=%u batch=%u pass=%u triangles=%u bytesBefore=%zu bytesAfter=%zu",
+                             desc->id, i, batch->pass, batch->triangleCount,
+                             materialBytesBefore, reader->remaining);
+                return false;
+            }
         } else if (!legacy) {
             batch->pass = read_u16(reader);
             batch->state = read_u16(reader);
@@ -367,8 +384,13 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
                 return false;
         }
         total += batch->triangleCount;
-        if (total > WORLD_SCENE_FILE_MAX_TRIANGLES || !read_render_vertices(reader, desc, batch))
+        if (total > WORLD_SCENE_FILE_MAX_TRIANGLES) return false;
+        size_t vertexOffset = reader->remaining;
+        if (!read_render_vertices(reader, desc, batch)) {
+            WSC_DIAG_LOG("Scene render batch invalid room=%u batch=%u triangleCount=%u bytesBefore=%zu bytesAfter=%zu",
+                         desc->id, i, batch->triangleCount, vertexOffset, reader->remaining);
             return false;
+        }
     }
 
     size_t payloadSize = 6u * room->vertexCount + 10u * room->triangleCount;
@@ -414,6 +436,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     if (!bytes) {
         if (fs_sys_file_exists(fs_get_write_path(path))) {
             fprintf(stderr, "Scene package %u is unreadable or exceeds the size limit\n", id);
+            WSC_DIAG_LOG("WSC scene package unreadable or over size limit id=%u path=%s", id, path);
         }
         return 0;
     }
@@ -472,6 +495,30 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
         exit->destinationEntranceId = read_u32(&reader);
     }
     if (reader.failed || reader.remaining != 0) goto fail;
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (id == SCENE_EXTERNAL_PACKAGE) {
+        char format[5] = {0};
+        u32 batchCount = 0, renderTriangles = 0, collisionTriangles = 0, textureReferences = 0;
+        memcpy(format, magic, 4);
+        for (u32 r = 0; r < rooms; ++r) {
+            const struct FileRoom *room = &scene->rooms[r];
+            collisionTriangles += room->triangleCount;
+            batchCount += room->batchCount;
+            for (u16 b = 0; b < room->batchCount; ++b) {
+                const struct FileBatch *batch = &room->batches[b];
+                renderTriangles += batch->triangleCount;
+                if (batch->texture[0]) ++textureReferences;
+                if (batch->material) {
+                    textureReferences += batch->material->texture[0].name[0] != '\0';
+                    textureReferences += batch->material->texture[1].name[0] != '\0';
+                }
+            }
+        }
+        WSC_DIAG_LOG("External scene package parsed id=%u format=%s rooms=%u entrances=%u exits=%u batches=%u renderTriangles=%u collisionTriangles=%u textureReferences=%u bytes=%llu",
+                     id, format, rooms, entrances, exits, batchCount, renderTriangles,
+                     collisionTriangles, textureReferences, (unsigned long long)size);
+    }
+#endif
     *package = (struct WorldScenePackage){id, scene->descs, rooms, scene->entrances,
                                         entrances, scene->exits, exits, scene};
     free(bytes);
@@ -480,6 +527,12 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
 fail:
     fprintf(stderr, "Scene package %u has invalid data near byte %zu\n",
             id, (size_t)(reader.next - bytes));
+    WSC_DIAG_LOG("Scene package rejected id=%u format=%s byteOffset=%zu remaining=%zu",
+                 id, magic && !memcmp(magic, "WSC5", 4) ? "WSC5"
+                    : magic && !memcmp(magic, "WSC4", 4) ? "WSC4"
+                    : magic && !memcmp(magic, "WSC3", 4) ? "WSC3"
+                    : magic && !memcmp(magic, "WSC2", 4) ? "WSC2" : "unknown",
+                 (size_t)(reader.next - bytes), reader.remaining);
     release_scene(NULL, package);
     memset(package, 0, sizeof(*package));
     free(bytes);
@@ -505,6 +558,8 @@ static s32 activate_room(void *context, const struct WorldScenePackage *package,
     if (result != WORLD_REGION_OK) {
         fprintf(stderr, "Scene package %u room %u collision registration failed (%d)\n",
                 package->id, desc->id, result);
+        WSC_DIAG_LOG("Scene collision registration failed package=%u room=%u result=%d",
+                     package->id, desc->id, result);
         return 0;
     }
     if (world_region_activate(id) != WORLD_REGION_OK) {

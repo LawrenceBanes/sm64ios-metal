@@ -291,9 +291,11 @@ static int sm64RenderDiagnosticMode;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_WSC3);
     }]];
     NSString *externalTitle = area_scene_package_id() == SCENE_EXTERNAL_PACKAGE ?
-        @"Leave Local WSC3 Scene" : @"Load Local WSC3 Scene";
+        @"Leave Hyrule Field" : @"Load Hyrule Field (WSC5)";
     [menu addAction:[UIAlertAction actionWithTitle:externalTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
+        gfx_ios_diag_log("Gameplay menu queued Hyrule Field WSC5 %s package=4100",
+                         area_scene_package_id() == SCENE_EXTERNAL_PACKAGE ? "leave" : "load");
         scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL);
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Probe WSC2 failed-load recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {

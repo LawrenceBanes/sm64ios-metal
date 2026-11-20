@@ -1204,6 +1204,15 @@ static void gfx_metal_end_frame(void) {
     double drawable_width = metal_view.drawableSize.width;
     double drawable_height = metal_view.drawableSize.height;
     uint32_t submitted_frame = frame_count;
+#ifdef IOS_SCENE_DIAGNOSTIC
+    if (submitted_frame <= 3 || submitted_frame % 120 == 0) {
+        gfx_ios_diag_log("Metal frame encoded frame=%u drawCalls=%llu triangles=%llu renderTarget=%lux%lu",
+                         submitted_frame, (unsigned long long)metal_frame_draw_calls,
+                         (unsigned long long)metal_frame_triangles,
+                         (unsigned long)metal_active_render_width,
+                         (unsigned long)metal_active_render_height);
+    }
+#endif
     uintptr_t submitted_drawable_identity = (uintptr_t)(void *)submitted_drawable;
     uintptr_t submitted_texture_identity = (uintptr_t)(void *)submitted_drawable.texture;
 #if !TARGET_OS_SIMULATOR

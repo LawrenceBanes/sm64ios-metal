@@ -512,6 +512,9 @@ static void check_external_scene_probe(struct WorldSceneRuntime *runtime, u32 sc
     assert(world_region_info_at(0, &region) && region.active && region.renderList
            && region.translucentList);
     assert(region.triangleCount > 0);
+    assert(destination.position.x >= region.min.x && destination.position.x <= region.max.x);
+    assert(destination.position.y >= region.min.y && destination.position.y <= region.max.y);
+    assert(destination.position.z >= region.min.z && destination.position.z <= region.max.z);
     struct Surface *floor = NULL;
     f32 floorY = find_floor((f32)destination.position.x, (f32)destination.position.y + 200.0f,
                             (f32)destination.position.z, &floor);
@@ -525,8 +528,12 @@ static void check_external_scene_probe(struct WorldSceneRuntime *runtime, u32 sc
     triangles = textures = scene_probe_draws = scene_probe_uploads = 0;
     gfx_run_dl(frame);
     assert(triangles >= minimumTriangles && scene_probe_draws > 0 && scene_probe_uploads > 0);
-    printf("WSC scene %u host view: visible-triangles=%u draw-calls=%u texture-uploads=%u floor=%.1f\n",
-           sceneId, triangles, scene_probe_draws, scene_probe_uploads, floorY);
+    printf("WSC scene %u host probe: submitted-triangles=%u draw-calls=%u texture-uploads=%u collision-triangles=%u spawn=(%lld,%lld,%lld) room-bounds=(%lld,%lld,%lld)..(%lld,%lld,%lld) floor=%.1f\n",
+           sceneId, triangles, scene_probe_draws, scene_probe_uploads, region.triangleCount,
+           (long long)destination.position.x, (long long)destination.position.y,
+           (long long)destination.position.z, (long long)region.min.x,
+           (long long)region.min.y, (long long)region.min.z, (long long)region.max.x,
+           (long long)region.max.y, (long long)region.max.z, floorY);
     check_scene_probe = false;
     world_scene_close(runtime);
     assert(world_region_count() == 0);
