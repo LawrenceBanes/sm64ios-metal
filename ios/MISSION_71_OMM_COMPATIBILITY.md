@@ -8,7 +8,7 @@ The archive has 198 entries (2.5 MB compressed, 3.0 MB uncompressed): 89 Lua fil
 
 The upstream mod page describes unique Odyssey/Cappy moves, custom animations and star/death dances, improved power-ups, non-stop mode, an Odyssey HUD with level-star display and radar, and a custom camera. These are audit targets, not claims of compatibility.
 
-## Feature matrix at checkpoint `340b14ae` plus current Mission 71 work
+## Feature matrix at the current Mission 71 checkpoint
 
 | Subsystem | Status | Evidence and remaining gap |
 |---|---|---|
@@ -16,7 +16,7 @@ The upstream mod page describes unique Odyssey/Cappy moves, custom animations an
 | Event hooks and OMM Lua initialization | Implemented; partially verified | Startup registers callbacks and the local test dispatches update/Mario/HUD events. The local network-player view now includes the current course field expected by OMM. HUD-behind callbacks run through the host runtime; a world callback still reaches an unimplemented Bowling Ball Spawner behavior lookup. |
 | Custom actions and moveset | Partially supported; host callback verified | The host test reads OMM's `ACT_OMM_CAPPY_THROW_GROUND` from its per-mod environment, seeds controller input, and dispatches the real registered action callback. It consumes the input and transitions Mario's action state (`0x03000880` in this fixture run). This validates a real Lua-to-native action callback and controller write, but not a complete Cappy launch, bounce/vault transitions, or full moveset gameplay. Multiplayer synchronization callbacks are inactive offline. |
 | Peach model | Host verified through production path | `omm_peachy_geo` loads, registers as a dynamic extended model, attaches to the local Mario object, traverses production `geo_process_object()` and produces display-list submissions. Host traversal is not a Metal pixel or iPhone result. |
-| Other OMM actor models | Partially supported | Six sparkle actor graphs register. Lookups for the four Tiara variants and opaque/translucent OMM star models fail GeoLayout validation with `unbalanced geolayout end`; calls resolve to the native error-model ID. |
+| Other OMM actor models | Host verified through production traversal | Four Tiara variants and opaque/translucent star bundles register after the validator accepts valid graph roots that begin with a display-list node or branch instead of requiring `GEO_NODE_START`. Each was assigned to the local player's `sharedChild`, traversed by the production `geo_process_object()` path, and submitted display-list draws in the host renderer harness. Pixel appearance remains unverified. |
 | OMM custom Lua animations | Registered and host traversal verified | Ten original animation tables load. The Mission 71 host test applies the original `anim_mario_omm_cappy_throw` record, advances it through Peach's production GeoLayout animated parts, confirms animated transform values change, and confirms native display-list submissions. This does not yet verify action-to-animation selection, all animation transitions, or device output. |
 | DynOS `.bhv` | Partially supported | `bhvOmmCappy` is recognized as an active bounded behavior using the supported command subset. Unsupported opcodes deactivate the affected behavior; full Cappy object lifecycle and interactions still need gameplay tests. |
 | Textures and materials | Partially supported; host decoded | PNG-backed actor textures and all 80 standalone `.tex` resources in this archive decode under the 32 MiB per-mod decoded texture cap. Exact Metal material appearance has not been verified on iPhone. |
@@ -41,17 +41,19 @@ MOD_TEST_DYNOS_ACTOR_NAME=omm_peachy_geo \
 MOD_TEST_DYNOS_GRAPH_RENDER=1 \
 MOD_TEST_OMM_ANIMATION=1 \
 MOD_TEST_OMM_ACTIONS=1 \
-MOD_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+MOD_TEST_OMM_EXTRA_MODELS=1 \
+MOD_TEST_OMM_HUD=1 \
+MOD_TEST_REQUIRE_TEXTURE_HUD=1 \
+MOD_TEST_CFLAGS='-DEXTERNAL_DATA -fsanitize=address,undefined -fno-omit-frame-pointer' \
 ASAN_OPTIONS=detect_leaks=0 CC=clang bash tests/mods/run_host_tests.sh
 ```
 
-The targeted authentic OMM run passes host ASan/UBSan, executes Peach GeoLayout traversal (23 display-list appends, 15 callbacks, 41 transform nodes), verifies changing transforms from OMM's original Cappy-throw animation data, and dispatches the original ground-throw action callback. The callback consumes seeded controller input and changes Mario action state. With the OMM HUD test state set to Bob-omb Battlefield, the unmodified HUD callback submits 13 texture commands in the behind pass and no texture commands in the front pass. All 80 archive `.tex` resources decode under the revised bounded texture budget. The full Linux suite passes locally. The current code checkpoint is `d7c9561aecc29cb8db020e79e2dd81d6d08eddc9`; its compile-only Apple workflow is [44642628546](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44642628546) and is pending. Earlier Xcode 27 Metal validation, iPhoneOS arm64 compilation, IPA structural validation, and private unsigned IPA upload pass for commit `91f72e3877d788047383749bb457786ee8253e9d` in [workflow 44638359362](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44638359362). The [private unsigned IPA release](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44638359362-1) contains no OMM ZIP or assets; IPA SHA-256 is `3b82930349b7042b46b5548ddd1ad3f6fd8dd2a51776fdc5593f69b39a13efa9`. These results do not verify a complete Cappy launch, Metal pixels, or physical iPhone operation.
+The targeted authentic OMM run passes host ASan/UBSan, executes Peach GeoLayout traversal (23 display-list appends, 15 callbacks, 41 transform nodes), verifies changing transforms from OMM's original Cappy-throw animation data, and dispatches the original ground-throw action callback. The callback consumes seeded controller input and changes Mario action state. Each of the four Tiara and two OMM star models registers, attaches to the player object, traverses the production GeoLayout path, and submits display-list draws in the host renderer harness. With the OMM HUD test state set to Bob-omb Battlefield, the unmodified HUD callback submits 13 texture commands in the behind pass and no texture commands in the front pass. All 80 archive `.tex` resources decode under the revised bounded texture budget. The full Linux suite and targeted ASan/UBSan tests pass locally. Apple compile-only workflow [44642628546](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44642628546) passed Xcode 27 Metal validation and full iPhoneOS arm64 compilation for code commit `d7c9561aecc29cb8db020e79e2dd81d6d08eddc9`; later GeoLayout root-validation changes await their own CI run. Earlier IPA structural validation and private unsigned IPA upload pass for commit `91f72e3877d788047383749bb457786ee8253e9d` in [workflow 44638359362](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44638359362). The [private unsigned IPA release](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44638359362-1) contains no OMM ZIP or assets; IPA SHA-256 is `3b82930349b7042b46b5548ddd1ad3f6fd8dd2a51776fdc5593f69b39a13efa9`. These results do not verify GPU pixels or physical iPhone output.
 
 ## Next compatibility targets
 
 1. Exercise original OMM action callbacks with deterministic local controller input and assert Mario-state transitions, including Cappy throw and bounce/vault paths.
-2. Extend GeoLayout interpretation for the authentic Tiara/star actor graphs without bypassing validation.
-3. Connect registered OMM animations to the action transitions used by the original scripts; manual animation selection remains a host probe.
+2. Connect registered OMM animations to the action transitions used by the original scripts; manual animation selection remains a host probe.
 4. Verify original sample decode/playback and complete owned-resource cleanup.
 5. Implement or explicitly bound the Bowling Ball Spawner behavior and other gameplay callback requirements found by deeper execution.
 6. Validate the integrated candidate in Apple CI, then have the user verify controls, visuals, and sound on iPhone.

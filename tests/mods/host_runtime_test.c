@@ -1175,6 +1175,60 @@ int main(int argc, char **argv) {
                 if (gLoadedGraphNodes[slot] && mod_runtime_extended_model_id(slot) == peach_id)
                     peach_native_model = slot;
             assert(peach_native_model >= 0);
+            if (getenv("MOD_TEST_OMM_EXTRA_MODELS")) {
+                static const char *extra_models[] = {
+                    "omm_tiara_geo", "omm_tiara_wing_geo", "omm_tiara_metal_geo",
+                    "omm_tiara_winged_metal_geo", "omm_geo_star_opaque",
+                    "omm_geo_star_transparent",
+                };
+                for (size_t i = 0; i < sizeof(extra_models) / sizeof(extra_models[0]); ++i) {
+                    int extra_id = 0;
+                    char extra_error[400] = {0};
+                    bool loaded = mod_runtime_host_load_dynos_model(0, extra_models[i],
+                        &extra_id, extra_error, sizeof(extra_error));
+                    printf("OMM extra model %s: %s%s%s\n", extra_models[i],
+                        loaded ? "registered" : "unsupported", loaded ? "" : " — ",
+                        loaded ? "" : extra_error);
+                    if (loaded) {
+                        assert(extra_id >= 0x10000);
+                        int extra_slot = -1;
+                        for (int slot = 0; slot < 0x100; ++slot)
+                            if (gLoadedGraphNodes[slot] &&
+                                mod_runtime_extended_model_id(slot) == extra_id)
+                                extra_slot = slot;
+                        assert(extra_slot >= 0);
+                        gMarioState->marioObj = &sMarioObject;
+                        assert(mod_runtime_request_player_dynos_model(extra_models[i]));
+                        mod_runtime_host_process_requests();
+                        assert(sMarioObject.header.gfx.sharedChild == gLoadedGraphNodes[extra_slot]);
+
+                        struct GraphNodeRoot extra_root = {0};
+                        struct GraphNodePerspective extra_frustum = {0};
+                        struct GraphNodeCamera extra_camera = {0};
+                        struct GraphNodeMasterList extra_master = {0};
+                        struct AllocOnlyPool extra_pool = {0};
+                        uint8_t extra_pool_storage[65536];
+                        uint8_t extra_gfx_scratch[4096];
+                        extra_root.areaIndex = 1;
+                        extra_frustum.fov = 45.0f;
+                        extra_frustum.near = 1;
+                        extra_frustum.far = 20000;
+                        extra_pool.totalSpace = sizeof(extra_pool_storage);
+                        extra_pool.startPtr = extra_pool_storage;
+                        extra_pool.freePtr = extra_pool_storage;
+                        sMarioObject.header.gfx.node.flags = GRAPH_RENDER_ACTIVE;
+                        sMarioObject.header.gfx.unk18 = 1;
+                        sMarioObject.header.gfx.pos[2] = -1000.0f;
+                        ++gAreaUpdateCounter;
+                        assert(rendering_graph_host_process_object(&sMarioObject, &extra_root,
+                            &extra_frustum, &extra_camera, &extra_master, &extra_pool,
+                            extra_gfx_scratch, sizeof(extra_gfx_scratch)));
+                        assert(rendering_graph_host_display_list_submissions() > 0);
+                        printf("OMM extra model %s: production GeoLayout traversal submitted display-list draws\n",
+                               extra_models[i]);
+                    }
+                }
+            }
             gMarioState->marioObj = &sMarioObject;
             sMarioObject.header.gfx.sharedChild = gLoadedGraphNodes[0xE6];
             assert(mod_runtime_request_player_dynos_model("omm_peachy_geo"));

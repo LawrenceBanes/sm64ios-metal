@@ -26,6 +26,17 @@ payload += struct.pack('<II', 0x05, 0x01)
 def write(file, body, declared=None):
     (directory / file).write_bytes(b'DYNOSBIN' + struct.pack('<Q', len(body) if declared is None else declared) + zlib.compress(body))
 write('synthetic.bin', payload)
+direct_root = payload.replace(
+    b'\x05' + name('test_geo') + struct.pack('<I', 6) +
+    struct.pack('<III', 0x0b, 0x04, 0x15) +
+    b'PNTR' + name('test_gfx') + struct.pack('<I', 0) +
+    struct.pack('<II', 0x05, 0x01),
+    b'\x05' + name('test_geo') + struct.pack('<I', 3) +
+    struct.pack('<I', 0x15) +
+    b'PNTR' + name('test_gfx') + struct.pack('<I', 0) +
+    struct.pack('<I', 0x01),
+)
+write('direct-root.bin', direct_root)
 offset_payload = payload.replace(
     b'PNTR' + name('test_vertices') + struct.pack('<I', 0),
     b'PNTR' + name('test_vertices') + struct.pack('<I', 1),
@@ -52,6 +63,7 @@ ${CC:-cc} -std=gnu99 -O1 -g ${MOD_TEST_CFLAGS:-} -Wall -Wextra -Werror \
   -o "$BUILD/dynos_actor_test"
 
 "$BUILD/dynos_actor_test" "$BUILD/synthetic.bin"
+"$BUILD/dynos_actor_test" "$BUILD/direct-root.bin"
 "$BUILD/dynos_actor_test" "$BUILD/offsets.bin"
 "$BUILD/dynos_actor_test" --reject "$BUILD/bad-ref.bin" "$BUILD/cycle.bin" \
   "$BUILD/unknown.bin" "$BUILD/oversize.bin" "$BUILD/truncated.bin"

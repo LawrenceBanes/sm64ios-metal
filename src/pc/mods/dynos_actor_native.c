@@ -57,7 +57,7 @@ static bool validate_geo_record(const DynosActorBundle *bundle,
         return errorf(error, error_size, "geolayout is not linked", name);
     const GeoLayout *words = actor->resources[index];
     unsigned depth = 0;
-    bool has_node_root = false;
+    bool has_graph_root = false;
     for (uint32_t cursor = 0; cursor < rec->count;) {
         uint32_t command = (uint32_t)words[cursor];
         uint8_t opcode = (uint8_t)command;
@@ -65,36 +65,52 @@ static bool validate_geo_record(const DynosActorBundle *bundle,
         uint32_t width = 0;
         switch (opcode) {
             case 0x01: /* GEO_END */
-                if (cursor != rec->count - 1 || depth || (require_root && !has_node_root))
-                    return errorf(error, error_size, "unbalanced geolayout end", name);
+                if (cursor != rec->count - 1)
+                    return errorf(error, error_size, "GEO_END is followed by trailing commands", name);
+                if (depth)
+                    return errorf(error, error_size, "GEO_END reached with open graph nodes", name);
+                if (require_root && !has_graph_root)
+                    return errorf(error, error_size, "root geolayout creates no graph node", name);
                 return true;
             case 0x00: /* GEO_BRANCH_AND_LINK: target pointer is a separate word. */
             case 0x02: /* GEO_BRANCH */
+                /* A branch may resolve the root graph in a child layout; the
+                 * production process_geo_layout() result is checked later. */
+                has_graph_root = true;
                 width = 2; break;
             case 0x03: /* GEO_RETURN */
-                if (cursor != rec->count - 1 || depth || (require_root && !has_node_root))
-                    return errorf(error, error_size, "unbalanced geolayout return", name);
+                if (cursor != rec->count - 1)
+                    return errorf(error, error_size, "GEO_RETURN is followed by trailing commands", name);
+                if (depth)
+                    return errorf(error, error_size, "GEO_RETURN reached with open graph nodes", name);
+                if (require_root && !has_graph_root)
+                    return errorf(error, error_size, "root geolayout creates no graph node", name);
                 return true;
             case 0x04: /* GEO_OPEN_NODE */
+                if (require_root && !depth && !has_graph_root)
+                    return errorf(error, error_size, "root geolayout opens a node before creating its graph root", name);
                 if (++depth > 30) return errorf(error, error_size, "geolayout nesting exceeds limit", name);
                 width = 1; break;
             case 0x05: /* GEO_CLOSE_NODE */
                 if (!depth) return errorf(error, error_size, "geolayout close underflows", name);
                 --depth; width = 1; break;
             case 0x0b: /* GEO_NODE_START */
-                has_node_root = true;
+                has_graph_root = true;
                 width = 1; break;
             case 0x20: /* GEO_CULLING_RADIUS */
             case 0x17: /* GEO_RENDER_OBJ */
             case 0x1b: /* GEO_COPY_VIEW */
+                if (opcode != 0x20) has_graph_root = true;
                 width = 1; break;
             case 0x0d: /* GEO_RENDER_RANGE */
             case 0x0e: /* GEO_SWITCH_CASE */
             case 0x15: /* GEO_DISPLAY_LIST */
             case 0x16: /* GEO_SHADOW */
             case 0x18: /* GEO_ASM */
+                has_graph_root = true;
                 width = 2; break;
             case 0x10: { /* GEO_TRANSLATE_ROTATE family. */
+                has_graph_root = true;
                 unsigned layout = (params & 0x70u) >> 4;
                 static const uint8_t words_by_layout[] = { 4, 2, 2, 1 };
                 if (layout >= sizeof(words_by_layout))
@@ -105,11 +121,14 @@ static bool validate_geo_record(const DynosActorBundle *bundle,
             case 0x11: /* GEO_TRANSLATE_NODE */
             case 0x12: /* GEO_ROTATION_NODE */
             case 0x14: /* GEO_BILLBOARD_WITH_PARAMS */
+                has_graph_root = true;
                 width = 2 + !!(params & 0x80); break;
             case 0x13: /* GEO_ANIMATED_PART */
             case 0x1c: /* GEO_HELD_OBJECT */
+                has_graph_root = true;
                 width = 3; break;
             case 0x1d: /* GEO_SCALE */
+                has_graph_root = true;
                 width = 2 + !!(params & 0x80); break;
             case 0x1a: /* GEO_NOP_1A */
             case 0x1e: /* GEO_NOP_1E */

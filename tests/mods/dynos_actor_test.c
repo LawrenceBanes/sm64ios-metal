@@ -95,9 +95,10 @@ int main(int argc, char **argv) {
             const Vtx *vertices = dynos_actor_native_find(&bundle, &native, 3, "test_vertices");
             const uintptr_t *geo = dynos_actor_native_find(&bundle, &native, 5, "test_geo");
             bool uses_offsets = strstr(argv[arg], "offsets.bin") != NULL;
+            bool direct_root = strstr(argv[arg], "direct-root.bin") != NULL;
             assert(display_list && vertices && geo);
             assert(display_list[0].words.w1 == (uintptr_t)(vertices + (uses_offsets ? 1 : 0)));
-            assert(geo[3] == (uintptr_t)(display_list + (uses_offsets ? 1 : 0)));
+            assert(geo[direct_root ? 1 : 3] == (uintptr_t)(display_list + (uses_offsets ? 1 : 0)));
         }
         bool root_valid = dynos_actor_native_validate_root_geo(&bundle, &native,
                                                                 root->name, error, sizeof(error));
