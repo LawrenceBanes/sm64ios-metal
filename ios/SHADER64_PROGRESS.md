@@ -4,7 +4,8 @@
 
 - Branch: `mission-79-shader64`
 - Base checkpoint: `24b757afec596d883ad5aee09719f75d8eba15ff`
-- Current work: runtime postprocess shader pack vertical slice
+- Runtime postprocess shader pack vertical slice: `9f47ddf3aefb8ab53542c067d868a3ee4af698f8`
+- Current work: API v1 postprocess-only pack support; broader render stages remain unfinished
 - Physical Apple device output: not tested
 
 ## Implemented in this increment
@@ -24,7 +25,10 @@
 - `CC=clang tests/run_metal_shader_codegen_test.sh`: passed.
 - `tests/run_linux_checks.sh`: passed on 2026-11-20. Existing unrelated platform/action warnings were printed; no suite failure.
 - `git diff --check`: passed.
-- `xcrun` is unavailable in this local environment. Apple Metal compilation and iPhoneOS arm64 compilation remain pending GitHub Actions.
+- Apple Metal/Xcode validation: [workflow 44772126993](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44772126993) passed Linux checks and iOS device/simulator Metal backend compile/link, including wrapped reference pack MSL.
+- Full IPA workflow: [run 44772390342](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44772390342) passed Linux checks, Xcode 27 Metal/MSL validation, full iPhoneOS arm64 app build, packaging and private upload. The IPA was built from commit `9f47ddf3aefb8ab53542c067d868a3ee4af698f8`.
+- Private draft release: [unsigned build 44772390342.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-9f1ed7aa4c78936135a2). Asset `sm64ios-connected-world-arm64-unsigned.ipa`, 9,375,182 bytes, SHA-256 `c1074ab3e43242e209515c89f24e430e73a1e92c7955ff9167e467802d96d9ef`.
+- `xcrun` is unavailable locally; Apple build evidence comes from the GitHub-hosted Xcode 27 workflows. No physical iPhone rendering, visual parity, performance, thermal, or GPU-workload safety has been verified.
 
 ## Explicit current API 1 limitations
 
@@ -36,4 +40,4 @@
 
 ## Next
 
-Run GitHub Apple Metal validation on this branch; repair actual compiler findings. Then run the iPhoneOS compile-only/full app build if the validation succeeds. Do not claim device pixels until the IPA is installed and inspected on hardware.
+Next: extend the versioned contract beyond the single postprocess replacement only where real renderer resources and semantics can be supplied; keep unsupported stages unavailable. Device installation and pixel-level output remain an iPhone test task. Do not claim device pixels until the IPA is installed and inspected on hardware.
