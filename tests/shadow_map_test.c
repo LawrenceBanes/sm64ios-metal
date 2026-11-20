@@ -1,0 +1,38 @@
+#include "pc/gfx/gfx_shadow_map.h"
+
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+
+int main(void) {
+    const float vertices[][3] = {
+        { -100.0f, 0.0f, -100.0f }, { 100.0f, 0.0f, -100.0f },
+        { 100.0f, 0.0f, 100.0f }, { -100.0f, 0.0f, 100.0f },
+        { 0.0f, 180.0f, 0.0f }
+    };
+    const float sun_ray[3] = { -0.35f, -1.0f, -0.25f };
+    struct GfxShadowMapTransform transform;
+    assert(gfx_shadow_map_fit(vertices, 5, sun_ray, 1024, &transform));
+    for (size_t i = 0; i < 5; ++i) {
+        float clip[3], uv_depth[3];
+        assert(gfx_shadow_map_project(&transform, vertices[i], clip, uv_depth));
+        assert(uv_depth[0] >= 0.0f && uv_depth[0] <= 1.0f);
+        assert(uv_depth[1] >= 0.0f && uv_depth[1] <= 1.0f);
+        assert(uv_depth[2] >= 0.0f && uv_depth[2] <= 1.0f);
+        assert(fabsf(clip[0]) <= 1.0f && fabsf(clip[1]) <= 1.0f);
+    }
+    struct GfxShadowMapTransform shifted;
+    const float shifted_vertices[][3] = {
+        { -100.0f + 0.02f, 0.0f, -100.0f }, { 100.0f + 0.02f, 0.0f, -100.0f },
+        { 100.0f + 0.02f, 0.0f, 100.0f }, { -100.0f + 0.02f, 0.0f, 100.0f },
+        { 0.0f + 0.02f, 180.0f, 0.0f }
+    };
+    assert(gfx_shadow_map_fit(shifted_vertices, 5, sun_ray, 1024, &shifted));
+    assert(fabsf(transform.minimum[0] - shifted.minimum[0]) < 1.0e-6f);
+    assert(fabsf(transform.minimum[1] - shifted.minimum[1]) < 1.0e-6f);
+    assert(!gfx_shadow_map_fit(vertices, 0, sun_ray, 1024, &transform));
+    assert(!gfx_shadow_map_fit(vertices, 5, (float[3]){ 0, 0, 0 }, 1024, &transform));
+    assert(!gfx_shadow_map_fit(vertices, 5, sun_ray, 8, &transform));
+    puts("Directional shadow fit, depth projection, stabilization, and bounds checks passed");
+    return 0;
+}

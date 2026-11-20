@@ -15,6 +15,10 @@ def main() -> None:
     state_h = (ROOT / "src/pc/gfx/gfx_metal_state.h").read_text()
     state_c = (ROOT / "src/pc/gfx/gfx_metal_state.c").read_text()
     state_test = (ROOT / "tests/metal_state_test.c").read_text()
+    shadow_h = (ROOT / "src/pc/gfx/gfx_shadow_map.h").read_text()
+    shadow_c = (ROOT / "src/pc/gfx/gfx_shadow_map.c").read_text()
+    shadow_test = (ROOT / "tests/shadow_map_test.c").read_text()
+    linux_runner = (ROOT / "tests/run_linux_checks.sh").read_text()
     shader_h = (ROOT / "src/pc/gfx/gfx_metal_shader.h").read_text()
     shader_c = (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text()
     shader_emit = (ROOT / "tests/metal_shader_emit.c").read_text()
@@ -44,6 +48,13 @@ def main() -> None:
         "gfx_metal_target_size(2796, 1290, 75", "gfx_metal_pipeline_cache_index(4, 15) == 47",
     ):
         require(token in state_test, f"missing host regression case: {token}")
+    for token in (
+        "gfx_shadow_map_fit", "gfx_shadow_map_project", "center_x = roundf",
+        "uv_depth[c] = c == 1 ? 1.0f - n : n",
+    ):
+        require(token in shadow_h + shadow_c, f"missing directional shadow math: {token}")
+    require("Directional shadow fit" in shadow_test and "run_shadow_map_test.sh" in linux_runner,
+            "directional shadow fit must have a host regression test in the Linux suite")
 
     require("gfx_metal_present_shader_source" in shader_h and
             "sm64_present_vertex" in shader_c and "sm64_present_fragment" in shader_c,

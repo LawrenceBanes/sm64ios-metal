@@ -31,6 +31,7 @@ jobs:
           tests/run_metal_shader_codegen_test.sh
           tests/run_metal_state_test.sh
           tests/run_scene_capture_test.sh
+          tests/run_shadow_map_test.sh
           tests/run_scene_bvh_test.sh
           tests/run_texture_cache_reset_test.sh
           tests/run_texture_override_test.sh

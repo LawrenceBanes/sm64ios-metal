@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `3c4cf5902ab22a34791c4ecc9c73663d273b11b5`.
+- Current source commit: `af1f4469337a5037b4056b4f1fc3a1732f28f2bd`, with directional shadow-fit math in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -74,6 +74,11 @@
 - Added a persisted master switch that gates AO, tone mapping, FXAA, exposure, bloom, fog, color grading, and sky presentation without deleting the individual saved choices. Turning effects off clears the AO/bloom work counters; Classic preset/reset disable it.
 - Focused source checks and full Linux regression pass. Apple SDK/MSL validation passed in [run 44700236497](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44700236497). Physical switch usability and resulting visual fallback remain unverified.
 
+### M79-C — Directional shadow-fit groundwork
+
+- Added bounded CPU math for directional-light basis construction, stabilized light-space bounds, and world-point projection to shadow-map clip/UV/depth coordinates. Invalid, non-finite, degenerate, and unreasonable-resolution input is rejected.
+- Added host geometry/bounds/stabilization regression cases and Linux/Apple workflow coverage. Unit and sanitizer tests pass. This is only the math foundation: no Metal shadow depth texture, geometry pass, or receiver sampling is integrated yet.
+
 ### Build candidate status
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
@@ -99,4 +104,4 @@
 
 ## Next task
 
-Produce a full IPA containing the master switch, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.
+Finish Apple validation for the shadow-fit tests, integrate the actual Metal depth pass and receiver path, then continue with AO/HUD separation, sun disk/light shafts, and device performance evidence.
