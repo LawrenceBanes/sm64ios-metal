@@ -1388,6 +1388,51 @@ static bool gfx_metal_shader64_valid_id(const char *id) {
     return true;
 }
 
+static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibrary> library,
+                                                const float parameters[4], char *error_out,
+                                                size_t error_size) {
+    NSError *error = nil;
+    id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_shader64_vertex"];
+    id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_shader64_fragment"];
+    MTLRenderPipelineDescriptor *descriptor = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
+    descriptor.vertexFunction = vertex;
+    descriptor.fragmentFunction = fragment;
+    descriptor.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
+    descriptor.sampleCount = 1;
+    id<MTLRenderPipelineState> pipeline = (vertex && fragment) ?
+        [metal_device newRenderPipelineStateWithDescriptor:descriptor error:&error] : nil;
+    [vertex release]; [fragment release];
+    if (!pipeline) {
+        const char *message = error.localizedDescription.UTF8String ?: "required SHADER64 entry points are missing";
+        if (error_out && error_size) snprintf(error_out, error_size, "Metal pipeline creation failed: %.400s", message);
+        gfx_ios_diag_log("SHADER64 pipeline failed pack=%s message=%s", pack_id, message);
+        [library release];
+        return false;
+    }
+    @synchronized ([NSObject class]) {
+        [metal_shader64_pipeline release];
+        [metal_shader64_library release];
+        metal_shader64_pipeline = pipeline;
+        metal_shader64_library = library;
+        snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
+        metal_shader64_parameters = (vector_float4){
+            parameters && isfinite(parameters[0]) ? fmaxf(-8.0f, fminf(8.0f, parameters[0])) : 1.0f,
+            parameters && isfinite(parameters[1]) ? fmaxf(-8.0f, fminf(8.0f, parameters[1])) : 0.0f,
+            parameters && isfinite(parameters[2]) ? fmaxf(-8.0f, fminf(8.0f, parameters[2])) : 0.0f,
+            parameters && isfinite(parameters[3]) ? fmaxf(-8.0f, fminf(8.0f, parameters[3])) : 0.0f
+        };
+        metal_offscreen_runtime_failed = false;
+    }
+    if (error_out && error_size) error_out[0] = '\0';
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:[NSString stringWithUTF8String:pack_id] forKey:@"SM64Shader64ActivePack"];
+    [defaults setObject:@[@(metal_shader64_parameters.x), @(metal_shader64_parameters.y),
+                          @(metal_shader64_parameters.z), @(metal_shader64_parameters.w)]
+                  forKey:@"SM64Shader64Parameters"];
+    gfx_ios_diag_log("SHADER64 pack activated id=%s stage=postprocess api=1", pack_id);
+    return true;
+}
+
 bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
                                     size_t source_size, const float parameters[4], char *error_out,
                                     size_t error_size) {
@@ -1419,43 +1464,37 @@ bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
         gfx_ios_diag_log("SHADER64 compile failed pack=%s message=%s", pack_id, error.localizedDescription.UTF8String ?: "unknown");
         return false;
     }
-    id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_shader64_vertex"];
-    id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_shader64_fragment"];
-    MTLRenderPipelineDescriptor *descriptor = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
-    descriptor.vertexFunction = vertex;
-    descriptor.fragmentFunction = fragment;
-    descriptor.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
-    descriptor.sampleCount = 1;
-    id<MTLRenderPipelineState> pipeline = (vertex && fragment) ?
-        [metal_device newRenderPipelineStateWithDescriptor:descriptor error:&error] : nil;
-    [vertex release]; [fragment release];
-    if (!pipeline) {
-        if (error_out && error_size) snprintf(error_out, error_size, "Metal pipeline creation failed: %.400s", error.localizedDescription.UTF8String ?: "entry point missing");
-        gfx_ios_diag_log("SHADER64 pipeline failed pack=%s message=%s", pack_id, error.localizedDescription.UTF8String ?: "entry point missing");
-        [library release]; return false;
+    return gfx_metal_activate_shader64_library(pack_id, library, parameters, error_out, error_size);
+}
+
+bool gfx_metal_load_shader64_library(const char *pack_id, const void *library_bytes,
+                                     size_t library_size, const float parameters[4], char *error_out,
+                                     size_t error_size) {
+    if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) ||
+        !library_bytes || !library_size || library_size > GFX_SHADER64_MAX_LIBRARY_BYTES) {
+        if (error_out && error_size) snprintf(error_out, error_size, "invalid pack id, Metal device, or compiled library size");
+        return false;
     }
-    @synchronized ([NSObject class]) {
-        [metal_shader64_pipeline release];
-        [metal_shader64_library release];
-        metal_shader64_pipeline = pipeline;
-        metal_shader64_library = library;
-        snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
-        metal_shader64_parameters = (vector_float4){
-            parameters && isfinite(parameters[0]) ? fmaxf(-8.0f, fminf(8.0f, parameters[0])) : 1.0f,
-            parameters && isfinite(parameters[1]) ? fmaxf(-8.0f, fminf(8.0f, parameters[1])) : 0.0f,
-            parameters && isfinite(parameters[2]) ? fmaxf(-8.0f, fminf(8.0f, parameters[2])) : 0.0f,
-            parameters && isfinite(parameters[3]) ? fmaxf(-8.0f, fminf(8.0f, parameters[3])) : 0.0f
-        };
-        metal_offscreen_runtime_failed = false;
+    dispatch_data_t bytes = dispatch_data_create(library_bytes, library_size,
+        DISPATCH_TARGET_QUEUE_DEFAULT, DISPATCH_DATA_DESTRUCTOR_NONE);
+    if (!bytes) {
+        if (error_out && error_size) snprintf(error_out, error_size, "could not create Metal library data handle");
+        return false;
     }
-    if (error_out && error_size) error_out[0] = '\0';
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setObject:[NSString stringWithUTF8String:pack_id] forKey:@"SM64Shader64ActivePack"];
-    [defaults setObject:@[@(metal_shader64_parameters.x), @(metal_shader64_parameters.y),
-                          @(metal_shader64_parameters.z), @(metal_shader64_parameters.w)]
-                  forKey:@"SM64Shader64Parameters"];
-    gfx_ios_diag_log("SHADER64 pack activated id=%s stage=postprocess api=1", pack_id);
-    return true;
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithData:bytes error:&error];
+#if OS_OBJECT_USE_OBJC
+    [bytes release];
+#else
+    dispatch_release(bytes);
+#endif
+    if (!library) {
+        const char *message = error.localizedDescription.UTF8String ?: "unknown library format or target";
+        if (error_out && error_size) snprintf(error_out, error_size, "compiled Metal library rejected: %.400s", message);
+        gfx_ios_diag_log("SHADER64 library rejected pack=%s message=%s", pack_id, message);
+        return false;
+    }
+    return gfx_metal_activate_shader64_library(pack_id, library, parameters, error_out, error_size);
 }
 
 static void gfx_metal_restore_shader64_pack(void) {
@@ -1464,11 +1503,20 @@ static void gfx_metal_restore_shader64_pack(void) {
     if (!packID.length || !gfx_metal_shader64_valid_id(packID.UTF8String)) return;
     NSArray<NSString *> *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     if (!documents.count) return;
-    NSString *sourcePath = [[[[documents[0] stringByAppendingPathComponent:@"shaderpacks"]
-        stringByAppendingPathComponent:packID] stringByAppendingPathComponent:@"shaders"]
-        stringByAppendingPathComponent:@"postprocess.metal"];
+    NSString *packRoot = [[documents[0] stringByAppendingPathComponent:@"shaderpacks"] stringByAppendingPathComponent:packID];
+    NSData *manifestData = [NSData dataWithContentsOfFile:[packRoot stringByAppendingPathComponent:@"manifest.json"]];
+    NSDictionary *manifest = manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil] : nil;
+    NSString *relative = [manifest[@"source"] isKindOfClass:[NSString class]] ? manifest[@"source"] : nil;
+    BOOL compiledLibrary = [relative isEqualToString:@"shaders/postprocess.metallib"];
+    if (!compiledLibrary && ![relative isEqualToString:@"shaders/postprocess.metal"]) {
+        [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
+        gfx_ios_diag_log("SHADER64 restore skipped id=%s reason=manifest source path unsupported", packID.UTF8String);
+        return;
+    }
+    NSString *sourcePath = [packRoot stringByAppendingPathComponent:relative];
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:sourcePath error:nil];
-    if (![attrs[NSFileType] isEqualToString:NSFileTypeRegular] || [attrs[NSFileSize] unsignedLongLongValue] > GFX_SHADER64_MAX_SOURCE_BYTES) {
+    unsigned long long maxSize = compiledLibrary ? GFX_SHADER64_MAX_LIBRARY_BYTES : GFX_SHADER64_MAX_SOURCE_BYTES;
+    if (![attrs[NSFileType] isEqualToString:NSFileTypeRegular] || [attrs[NSFileSize] unsignedLongLongValue] > maxSize) {
         [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
         gfx_ios_diag_log("SHADER64 restore skipped id=%s reason=source missing or oversized", packID.UTF8String);
         return;
@@ -1479,8 +1527,10 @@ static void gfx_metal_restore_shader64_pack(void) {
     if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
         if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
     char error[384] = {0};
-    if (!data || !gfx_metal_load_shader64_source(packID.UTF8String, data.bytes, data.length,
-                                                 parameters, error, sizeof(error))) {
+    bool loaded = data && (compiledLibrary ?
+        gfx_metal_load_shader64_library(packID.UTF8String, data.bytes, data.length, parameters, error, sizeof(error)) :
+        gfx_metal_load_shader64_source(packID.UTF8String, data.bytes, data.length, parameters, error, sizeof(error)));
+    if (!loaded) {
         [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
         gfx_ios_diag_log("SHADER64 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
                          error[0] ? error : "source unavailable");

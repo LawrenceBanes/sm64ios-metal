@@ -5,9 +5,10 @@
 
 #define GFX_SHADER64_MAX_ARCHIVE_BYTES (8u * 1024u * 1024u)
 #define GFX_SHADER64_MAX_SOURCE_BYTES (256u * 1024u)
+#define GFX_SHADER64_MAX_LIBRARY_BYTES (4u * 1024u * 1024u)
 #define GFX_SHADER64_MAX_PACK_FILES 10u
 
-/* Installs only manifest.json and direct-child .metal files under shaders/.
+/* Installs only manifest.json and direct-child .metal/.metallib files under shaders/.
  * The destination must be a new private directory. Partial recognized files
  * are removed if extraction fails. */
 int gfx_shader64_install_zip(const void *bytes, size_t size,

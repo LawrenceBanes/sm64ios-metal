@@ -11,6 +11,9 @@ extern struct GfxRenderingAPI gfx_metal_api;
 bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
                                     size_t source_size, const float parameters[4], char *error,
                                     size_t error_size);
+bool gfx_metal_load_shader64_library(const char *pack_id, const void *library_bytes,
+                                     size_t library_size, const float parameters[4], char *error,
+                                     size_t error_size);
 void gfx_metal_use_classic_shader(void);
 const char *gfx_metal_active_shader64_pack(void);
 void gfx_metal_set_shader64_parameters(const float parameters[4]);

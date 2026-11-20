@@ -6,7 +6,7 @@ SHADER64 is an optional user shader interface layered on the existing Metal rend
 
 Create a ZIP whose root contains exactly `manifest.json` and `shaders/postprocess.metal` (an optional explicit `shaders/` directory entry is allowed). In Graphics, tap **Shader Pack**, then **Import ZIP Pack…**, choose the archive in Files, and select the installed pack. Compilation happens on selection. If compilation or pipeline creation fails, the prior pipeline stays active and the error is shown. Choose **Classic64** to restore the original renderer immediately. The active pack and four parameter values persist across launches; a missing or failing pack automatically falls back to Classic64.
 
-The v1 installer accepts ZIP stored or deflate entries, up to 8 MiB compressed/expanded total, 64 entries, 10 recognized files, 64 KiB manifest and 256 KiB per shader source. It rejects traversal paths, absolute paths, backslashes, symlinks, encrypted entries, ZIP64, unknown files and unsupported compression. Textures, presets, nested `require`-style source includes and metallib-only packs are not part of API 1 yet.
+The v1 installer accepts ZIP stored or deflate entries, up to 8 MiB compressed/expanded total, 64 entries, 10 recognized files, 64 KiB manifest, 256 KiB per shader source, and 4 MiB per compiled library. It rejects traversal paths, absolute paths, backslashes, symlinks, encrypted entries, ZIP64, unknown files and unsupported compression. Textures, presets, nested `require`-style source includes, and multi-pass packs are not part of API 1.
 
 ## Manifest
 
@@ -27,7 +27,7 @@ The v1 installer accepts ZIP stored or deflate entries, up to 8 MiB compressed/e
 }
 ```
 
-The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four float parameters are allowed. Defaults and bounds must be finite, `min <= default <= max`. UI parameter entry is clamped to each declared range. API version mismatches are rejected.
+The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four float parameters are allowed. Defaults and bounds must be finite, `min <= default <= max`. UI parameter entry is clamped to each declared range. API version mismatches are rejected. `source` may be `shaders/postprocess.metal` or `shaders/postprocess.metallib`; both forms use the same API v1 postprocess contract.
 
 ## Metal entry point
 
@@ -44,9 +44,20 @@ float4 shader64_post(float4 color, float2 uv,
 
 `color` is the rasterized scene sample; `uv` is normalized screen space, `image` and `imageSampler` allow bounded-resolution neighbor samples, and `params[0..3]` contain the manifest parameter values. The stage outputs SDR color for the drawable. Scene depth, normals, object transforms, custom textures, and previous-frame data are not exposed in API 1. Custom packs replace the built-in final composite while active; consequently built-in AO, tone mapping, fog, bloom, FXAA, sun/shadow receiver, and light-shaft composition are bypassed. The built-in geometry rasterizer and post-composite HUD remain active.
 
+### Precompiled iOS Metal libraries
+
+For a `.metallib` pack, compile a source that exports `sm64_shader64_vertex` and `sm64_shader64_fragment` with the exact argument bindings shown in [`examples/compiled_postprocess.metal`](shaderpacks/examples/compiled_postprocess.metal). Keep the effect in `shader64_post`. With Xcode installed, build it for iPhoneOS:
+
+```sh
+xcrun --sdk iphoneos metal -c compiled_postprocess.metal -o compiled_postprocess.air
+xcrun --sdk iphoneos metallib compiled_postprocess.air -o postprocess.metallib
+```
+
+Set `source` to `shaders/postprocess.metallib` and include the resulting library at that path. The runtime asks Metal to load the binary for the active device and creates a pipeline using the fixed API v1 entry points. Metal rejects incompatible libraries; a failed load leaves the active pipeline unchanged. The Apple validation workflow compiles and links this reference example. It does not execute it on a GPU, so runtime library loading and visual output still require a device run.
+
 ## Trust and compatibility
 
-Metal source compilation is not a security sandbox. A pack can contain expensive or faulty GPU work and the runtime cannot reliably preempt every GPU workload on iOS. Install packs from sources you trust, keep the Classic64 recovery action available, and start with small bounded shaders. The app limits archive and source sizes, validates metadata and paths, and exposes only the scene texture and four float values, but it does not claim that arbitrary Metal source is memory-safe or immune to GPU stalls. This initial release uses runtime MSL source compilation; precompiled `.metallib` loading is not enabled.
+Metal source compilation is not a security sandbox. A pack can contain expensive or faulty GPU work and the runtime cannot reliably preempt every GPU workload on iOS. Install packs from sources you trust, keep the Classic64 recovery action available, and start with small bounded shaders. The app limits archive and source/library sizes, validates metadata and paths, and exposes only the scene texture and four float values, but it does not claim that arbitrary Metal source or libraries are memory-safe or immune to GPU stalls. API 1 supports runtime MSL compilation and Metal's compiled `.metallib` loading.
 
 Version 1 accepts only a single postprocess replacement stage. Future APIs must be introduced with a versioned contract and explicit resources; packs requesting unavailable buffers, materials, passes, or device features must be rejected rather than silently approximated.
 

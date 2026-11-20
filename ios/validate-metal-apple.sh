@@ -90,6 +90,14 @@ for source in "$repo_dir"/ios/shaderpacks/*/shaders/*.metal; do
     echo "compiled and linked SHADER64 reference $name"
 done
 
+echo "Compiling the SHADER64 precompiled-library ABI example for iPhoneOS."
+xcrun --sdk iphoneos metal -c "$repo_dir/ios/shaderpacks/examples/compiled_postprocess.metal" \
+    -o "$shader_dir/shader64-compiled-example.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-compiled-example.air" \
+    -o "$shader_dir/shader64-compiled-example.metallib"
+test -s "$shader_dir/shader64-compiled-example.metallib"
+echo "compiled and linked SHADER64 precompiled-library example"
+
 echo "Verifying project wiring and Makefile framework selection."
 "$repo_dir/tests/check_metal_project_wiring.sh"
 

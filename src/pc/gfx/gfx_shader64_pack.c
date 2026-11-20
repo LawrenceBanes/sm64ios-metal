@@ -72,7 +72,15 @@ static int allowed_name(const unsigned char *s, size_t n, int dir) {
     if (dir) return n == 8 && memcmp(s, "shaders/", 8) == 0;
     return (n == sizeof(manifest) - 1 && memcmp(s, manifest, n) == 0) ||
            (n > 14 && memcmp(s, "shaders/", 8) == 0 &&
-            !memchr(s + 8, '/', n - 8) && memcmp(s + n - 6, ".metal", 6) == 0);
+            !memchr(s + 8, '/', n - 8) &&
+            (memcmp(s + n - 6, ".metal", 6) == 0 ||
+             (n > 17 && memcmp(s + n - 9, ".metallib", 9) == 0)));
+}
+
+static size_t entry_limit(const struct entry *e) {
+    if (e->name_len >= 9 && memcmp(e->name + e->name_len - 9, ".metallib", 9) == 0)
+        return GFX_SHADER64_MAX_LIBRARY_BYTES;
+    return GFX_SHADER64_MAX_SOURCE_BYTES;
 }
 
 static int extract_one(const unsigned char *zip, size_t zip_size,
@@ -92,9 +100,9 @@ static int extract_one(const unsigned char *zip, size_t zip_size,
     data_pos = (size_t)e->offset + 30u + name_len + extra_len;
     if (data_pos > zip_size || e->compressed > zip_size - data_pos) goto malformed;
     if (name_len != e->name_len || memcmp(local + 30, e->name, name_len) != 0) goto malformed;
-    if (e->uncompressed > GFX_SHADER64_MAX_SOURCE_BYTES &&
+    if (e->uncompressed > entry_limit(e) &&
         !(name_len == 13 && memcmp(e->name, "manifest.json", 13) == 0)) {
-        err(error, error_size, "shader source exceeds 256 KiB"); return 0;
+        err(error, error_size, "shader source or compiled library exceeds its size limit"); return 0;
     }
     if (e->uncompressed > MAX_MANIFEST && name_len == 13 && memcmp(e->name, "manifest.json", 13) == 0) {
         err(error, error_size, "manifest exceeds 64 KiB"); return 0;
@@ -190,16 +198,19 @@ int gfx_shader64_install_zip(const void *data, size_t size, const char *destinat
                 if (entries[previous].name_len == name_len && memcmp(entries[previous].name, name, name_len) == 0) {
                     err(error, error_size, "duplicate file path in shader archive"); return 0;
                 }
-            if (uncomp > GFX_SHADER64_MAX_SOURCE_BYTES && !(name_len == 13 && memcmp(name, "manifest.json", 13) == 0)) { err(error, error_size, "shader source exceeds 256 KiB"); return 0; }
+            if (uncomp > entry_limit(&(struct entry){ .name = name, .name_len = name_len }) &&
+                !(name_len == 13 && memcmp(name, "manifest.json", 13) == 0)) {
+                err(error, error_size, "shader source or compiled library exceeds its size limit"); return 0;
+            }
             if (total > GFX_SHADER64_MAX_ARCHIVE_BYTES - uncomp) { err(error, error_size, "expanded shader pack exceeds 8 MiB"); return 0; }
             total += uncomp;
             entries[accepted++] = (struct entry){ name, name_len, flags, method, u32(zip + pos + 16), comp, uncomp, u32(zip + pos + 42), external };
             if (name_len == 13 && memcmp(name, "manifest.json", 13) == 0) { if (have_manifest++) { err(error, error_size, "duplicate manifest"); return 0; } }
             else have_source = 1;
-        } else if (!accepted_name) { err(error, error_size, "archive contains unsupported paths; only manifest.json and shaders/*.metal are accepted"); return 0; }
+        } else if (!accepted_name) { err(error, error_size, "archive contains unsupported paths; only manifest.json and direct shaders/*.metal or *.metallib files are accepted"); return 0; }
         pos += rec_len;
     }
-    if (pos != cdir_end || !have_manifest || !have_source) { err(error, error_size, "pack needs one manifest.json and at least one shaders/*.metal file"); return 0; }
+    if (pos != cdir_end || !have_manifest || !have_source) { err(error, error_size, "pack needs one manifest.json and at least one direct shader source or compiled library"); return 0; }
     char shader_dir[1024];
     if (snprintf(shader_dir, sizeof(shader_dir), "%s/shaders", destination) >= (int)sizeof(shader_dir) ||
         SHADER64_MKDIR(shader_dir, 0700) != 0) { err(error, error_size, "could not create shader source directory"); return 0; }

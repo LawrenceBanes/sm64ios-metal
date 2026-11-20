@@ -1254,14 +1254,14 @@ static int sm64RenderDiagnosticMode;
     NSMutableArray<NSString *> *packIDs = [NSMutableArray array];
     NSString *root = [self shaderPackRoot];
     NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:root error:nil];
-    for (NSString *child in children) {
+        for (NSString *child in children) {
         BOOL isDirectory = NO;
         NSString *folder = [root stringByAppendingPathComponent:child];
         if (![[NSFileManager defaultManager] fileExistsAtPath:folder isDirectory:&isDirectory] || !isDirectory) continue;
         [packIDs addObject:child];
     }
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"SHADER64"
-        message:@"Custom packs replace the final scene composite. Native SM64 material rendering and HUD remain in place; built-in post effects are bypassed while a custom composite is active. Metal shaders are trusted code and are not sandboxed from GPU execution."
+        message:@"Custom packs replace the final scene composite. Native SM64 material rendering and HUD remain in place; built-in post effects are bypassed while a custom composite is active. Source MSL and compatible iOS metallib packs are supported. Metal shaders are trusted code and are not sandboxed from GPU execution."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Classic64 (restore original renderer)" style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) { (void)action; gfx_metal_use_classic_shader(); [self refreshGraphicsSettings]; [self appendStatus:@"Classic64 renderer restored"]; }]];
@@ -1303,9 +1303,10 @@ static int sm64RenderDiagnosticMode;
     BOOL metadataOK = [manifest[@"name"] isKindOfClass:[NSString class]] && [manifest[@"name"] length] > 0 && [manifest[@"name"] length] <= 80 &&
         [manifest[@"version"] isKindOfClass:[NSString class]] && [manifest[@"author"] isKindOfClass:[NSString class]];
     if (!identifierOK || !metadataOK || format.integerValue != 1 || api.integerValue != 1 ||
-        ![stage isEqualToString:@"postprocess"] || ![source isEqualToString:@"shaders/postprocess.metal"] ||
+        ![stage isEqualToString:@"postprocess"] ||
+        !([source isEqualToString:@"shaders/postprocess.metal"] || [source isEqualToString:@"shaders/postprocess.metallib"]) ||
         ![entry isEqualToString:@"shader64_post"]) {
-        if (errorOut) *errorOut = @"Manifest must use format/API 1, postprocess stage, the fixed postprocess source, and shader64_post entry point.";
+        if (errorOut) *errorOut = @"Manifest must use format/API 1, postprocess stage, a supported postprocess source or library, and shader64_post entry point.";
         return nil;
     }
     return manifest;
@@ -1314,7 +1315,9 @@ static int sm64RenderDiagnosticMode;
 - (void)activateShaderPack:(NSString *)packID {
     NSString *root = [self shaderPackRoot], *validation = nil;
     NSDictionary *manifest = [self shaderManifestForID:packID root:root error:&validation];
-    NSString *sourcePath = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:@"shaders/postprocess.metal"];
+    NSString *relative = [manifest[@"source"] isKindOfClass:[NSString class]] ? manifest[@"source"] : @"";
+    BOOL compiledLibrary = [relative isEqualToString:@"shaders/postprocess.metallib"];
+    NSString *sourcePath = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:relative];
     NSData *source = manifest ? [NSData dataWithContentsOfFile:sourcePath] : nil;
     float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     NSArray *configured = manifest[@"parameters"];
@@ -1339,8 +1342,9 @@ static int sm64RenderDiagnosticMode;
         parameters[i] = (float)v;
     }
     char error[512] = {0};
-    BOOL loaded = source && !validation && gfx_metal_load_shader64_source(packID.UTF8String,
-        source.bytes, source.length, parameters, error, sizeof(error));
+    BOOL loaded = source && !validation && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
+        source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,
+        source.bytes, source.length, parameters, error, sizeof(error)));
     if (!loaded) {
         NSString *message = validation ?: (source ? [NSString stringWithUTF8String:error] : @"Shader source file is missing.");
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Shader pack not activated" message:message preferredStyle:UIAlertControllerStyleAlert];

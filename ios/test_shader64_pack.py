@@ -60,6 +60,23 @@ class ShaderPackTests(unittest.TestCase):
         self.assertEqual((path / "shaders/postprocess.metal").read_bytes(), VALID)
         self.assertEqual((path / "manifest.json").read_bytes(), b'{"shaderApiVersion":1}')
 
+    def test_imports_bounded_precompiled_metallib(self):
+        binary = b"MTLB" + bytes(range(64))
+        manifest = json.dumps({"formatVersion": 1, "shaderApiVersion": 1,
+            "stage": "postprocess", "source": "shaders/postprocess.metallib"}).encode()
+        ok, error, path = self.install(self.archive([
+            ("manifest.json", manifest), ("shaders/postprocess.metallib", binary)]))
+        self.assertTrue(ok, error)
+        self.assertEqual((path / "shaders/postprocess.metallib").read_bytes(), binary)
+
+    def test_rejects_oversized_precompiled_metallib(self):
+        manifest = b'{"formatVersion":1}'
+        binary = b"M" * (4 * 1024 * 1024 + 1)
+        ok, error, _ = self.install(self.archive([
+            ("manifest.json", manifest), ("shaders/postprocess.metallib", binary)]))
+        self.assertFalse(ok)
+        self.assertIn("size limit", error)
+
     def test_rejects_unsafe_and_unrecognized_entries(self):
         for entries in (
             [("manifest.json", b"{}"), ("shaders/a.metal", VALID), ("../escape", b"x")],
@@ -107,7 +124,8 @@ class ShaderPackTests(unittest.TestCase):
     def test_ios_runtime_vertical_slice_wiring(self):
         metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
         ui = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
-        for token in ("newLibraryWithSource:wrapped", "gfx_shader64_build_wrapper",
+        for token in ("newLibraryWithSource:wrapped", "newLibraryWithData:bytes", "gfx_shader64_build_wrapper",
+                      "gfx_metal_load_shader64_library", "postprocess.metallib",
                       "metal_shader64_pipeline", "shader64_parameters", "gfx_metal_use_classic_shader",
                       "gfx_metal_restore_shader64_pack", "SM64Shader64ActivePack"):
             self.assertIn(token, metal)
