@@ -85,6 +85,8 @@ static id<MTLTexture> metal_bloom_temp_texture;
 static id<MTLTexture> metal_bloom_output_texture;
 static id<MTLTexture> metal_shadow_texture;
 static id<MTLTexture> metal_god_ray_texture;
+static id<MTLTexture> metal_ui_depth_texture;
+static NSUInteger metal_ui_depth_width, metal_ui_depth_height;
 static id<MTLRenderPipelineState> metal_shadow_pipeline;
 static id<MTLComputePipelineState> metal_god_ray_pipeline;
 static id<MTLDepthStencilState> metal_shadow_depth_state;
@@ -126,6 +128,7 @@ static NSUInteger metal_active_sample_count = 1;
 static NSUInteger metal_active_render_width;
 static NSUInteger metal_active_render_height;
 static bool metal_frame_uses_offscreen;
+static bool metal_scene_postprocessed_before_ui;
 static bool metal_offscreen_runtime_failed;
 static id<MTLCommandBuffer> metal_command;
 static id<MTLRenderCommandEncoder> metal_encoder;
@@ -225,6 +228,8 @@ static void gfx_metal_release_render_targets(void) {
     [metal_bloom_output_texture release]; metal_bloom_output_texture = nil;
     [metal_shadow_texture release]; metal_shadow_texture = nil;
     [metal_god_ray_texture release]; metal_god_ray_texture = nil;
+    [metal_ui_depth_texture release]; metal_ui_depth_texture = nil;
+    metal_ui_depth_width = metal_ui_depth_height = 0;
     metal_god_ray_width = metal_god_ray_height = 0;
     metal_shadow_texture_size = 0;
     metal_shadow_transform_valid = false;
@@ -1854,6 +1859,99 @@ static void gfx_metal_on_resize(void) {
     }
     gfx_ios_diag_log("Game MTKView resize/layout hostBounds=%.0fx%.0f frame=(%.0f,%.0f %.0fx%.0f) bounds=%.0fx%.0f drawable=%.0fx%.0f expected=%.0fx%.0f scale=%.2f windowBounds=%.0fx%.0f scene=%@", host_view.bounds.size.width, host_view.bounds.size.height, metal_view.frame.origin.x, metal_view.frame.origin.y, metal_view.frame.size.width, metal_view.frame.size.height, bounds.width, bounds.height, actual_drawable.width, actual_drawable.height, expected_drawable.width, expected_drawable.height, scale, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, metal_view.window.windowScene.session.persistentIdentifier);
 }
+
+static bool gfx_metal_encode_scene_composite(void) {
+    if (!gfx_metal_encode_bloom(metal_command)) {
+        gfx_metal_set_bloom_enabled(false);
+        gfx_ios_diag_log("Metal bloom disabled after texture or compute-pipeline failure");
+    }
+    if (!gfx_metal_encode_ssao(metal_command)) {
+        gfx_metal_set_ssao_enabled(false);
+        gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
+    }
+    if (!gfx_metal_encode_god_rays(metal_command)) {
+        gfx_metal_set_god_rays_enabled(false);
+        gfx_ios_diag_log("Metal screen-space light shafts disabled after depth or compute-pipeline failure");
+    }
+    if (!gfx_metal_encode_shadows(metal_command)) {
+        metal_shadow_transform_valid = false;
+        @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = 0; }
+        if (frame_count <= 3 || frame_count % 120 == 0)
+            gfx_ios_diag_log("Metal directional shadow map skipped: no bounded world-space caster set or pass resources unavailable");
+    }
+    if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command)) {
+        metal_offscreen_runtime_failed = true;
+        return false;
+    }
+    return true;
+}
+
+static bool gfx_metal_ensure_ui_depth(NSUInteger width, NSUInteger height) {
+    if (metal_ui_depth_texture && metal_ui_depth_width == width && metal_ui_depth_height == height)
+        return true;
+    uint64_t previous_bytes = metal_ui_depth_texture ? (uint64_t)metal_ui_depth_width * metal_ui_depth_height * 4u : 0u;
+    [metal_ui_depth_texture release];
+    metal_ui_depth_texture = nil;
+    metal_ui_depth_width = metal_ui_depth_height = 0;
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                           width:width height:height mipmapped:NO];
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    metal_ui_depth_texture = [metal_device newTextureWithDescriptor:descriptor];
+    if (!metal_ui_depth_texture) return false;
+    metal_ui_depth_texture.label = @"SM64 HUD depth";
+    metal_ui_depth_width = width;
+    metal_ui_depth_height = height;
+    @synchronized ([NSObject class]) {
+        if (metal_performance_stats.estimated_target_bytes >= previous_bytes)
+            metal_performance_stats.estimated_target_bytes -= previous_bytes;
+        metal_performance_stats.estimated_target_bytes += (uint64_t)width * height * 4u;
+    }
+    return true;
+}
+
+static void gfx_metal_begin_ui_overlay(void) {
+    if (!metal_frame_uses_offscreen || metal_scene_postprocessed_before_ui || !metal_encoder ||
+        !metal_command || !metal_drawable) return;
+    NSUInteger width = metal_drawable.texture.width;
+    NSUInteger height = metal_drawable.texture.height;
+    /* If the UI depth target cannot be created, leave the original encoder
+     * active. The normal end-of-frame composite then handles the whole list. */
+    if (!gfx_metal_ensure_ui_depth(width, height)) {
+        gfx_ios_diag_log("Metal HUD split skipped: drawable-sized depth target unavailable");
+        return;
+    }
+    [metal_encoder endEncoding];
+    metal_encoder = nil;
+    bool composited = gfx_metal_encode_scene_composite();
+    metal_scene_postprocessed_before_ui = true;
+    metal_frame_uses_offscreen = false;
+    metal_active_sample_count = 1;
+    metal_active_render_width = width;
+    metal_active_render_height = height;
+
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = metal_drawable.texture;
+    pass.colorAttachments[0].loadAction = composited ? MTLLoadActionLoad : MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+    pass.depthAttachment.texture = metal_ui_depth_texture;
+    pass.depthAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+    pass.depthAttachment.clearDepth = 1.0;
+    metal_encoder = [metal_command renderCommandEncoderWithDescriptor:pass];
+    if (!metal_encoder) {
+        @synchronized ([NSObject class]) { metal_offscreen_runtime_failed = true; }
+        gfx_ios_diag_log("Metal HUD overlay encoder unavailable after scene composite");
+        return;
+    }
+    if (!composited) {
+        gfx_ios_diag_log("Metal HUD overlay using direct fallback clear after scene composite failure");
+    } else if (frame_count <= 3 || frame_count % 120 == 0) {
+        gfx_ios_diag_log("Metal scene composited before HUD; UI uses drawable-resolution pass with isolated depth");
+    }
+}
+
 static void gfx_metal_start_frame(void) {
     if (!metal_view || !metal_queue) {
         if (drawable_unavailable_count++ < 4) gfx_ios_diag_log("Metal frame start unavailable view=%@ queue=%@", metal_view, metal_queue);
@@ -1879,6 +1977,7 @@ static void gfx_metal_start_frame(void) {
     metal_drawable = [metal_layer nextDrawable];
     MTLRenderPassDescriptor *pass = nil;
     metal_frame_uses_offscreen = metal_drawable && gfx_metal_ensure_offscreen_targets(metal_drawable);
+    metal_scene_postprocessed_before_ui = false;
     if (metal_drawable) {
         NSUInteger width = metal_frame_uses_offscreen ? metal_target_width : metal_drawable.texture.width;
         NSUInteger height = metal_frame_uses_offscreen ? metal_target_height : metal_drawable.texture.height;
@@ -1971,28 +2070,14 @@ static void gfx_metal_start_frame(void) {
     has_viewport = has_scissor = false;
 }
 static void gfx_metal_end_frame(void) {
-    if (!metal_encoder) return;
-    [metal_encoder endEncoding]; metal_encoder = nil;
-    if (!gfx_metal_encode_bloom(metal_command)) {
-        gfx_metal_set_bloom_enabled(false);
-        gfx_ios_diag_log("Metal bloom disabled after texture or compute-pipeline failure");
+    if (metal_encoder) {
+        [metal_encoder endEncoding];
+        metal_encoder = nil;
+    } else if (!metal_scene_postprocessed_before_ui) {
+        return;
     }
-    if (!gfx_metal_encode_ssao(metal_command)) {
-        gfx_metal_set_ssao_enabled(false);
-        gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
-    }
-    if (!gfx_metal_encode_god_rays(metal_command)) {
-        gfx_metal_set_god_rays_enabled(false);
-        gfx_ios_diag_log("Metal screen-space light shafts disabled after depth or compute-pipeline failure");
-    }
-    if (!gfx_metal_encode_shadows(metal_command)) {
-        metal_shadow_transform_valid = false;
-        @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = 0; }
-        if (frame_count <= 3 || frame_count % 120 == 0)
-            gfx_ios_diag_log("Metal directional shadow map skipped: no bounded world-space caster set or pass resources unavailable");
-    }
-    if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))
-        metal_offscreen_runtime_failed = true;
+    if (!metal_scene_postprocessed_before_ui)
+        (void)gfx_metal_encode_scene_composite();
     @synchronized ([NSObject class]) {
         metal_performance_stats.draw_calls = metal_frame_draw_calls;
         metal_performance_stats.triangles = metal_frame_triangles;
@@ -2092,6 +2177,7 @@ static void gfx_metal_end_frame(void) {
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
 static void gfx_metal_shutdown(void) {
     metal_encoder = nil; metal_drawable = nil; metal_command = nil;
+    metal_scene_postprocessed_before_ui = false;
     gfx_metal_release_render_targets();
     [metal_ssao_pipeline release]; metal_ssao_pipeline = nil;
     [metal_ssao_denoise_pipeline release]; metal_ssao_denoise_pipeline = nil;
@@ -2152,7 +2238,8 @@ struct GfxRenderingAPI gfx_metal_api = {
     gfx_metal_set_sampler_parameters, gfx_metal_set_depth_test, gfx_metal_set_depth_mask,
     gfx_metal_set_zmode_decal, gfx_metal_set_viewport, gfx_metal_set_scissor,
     gfx_metal_set_use_alpha, gfx_metal_draw_triangles, gfx_metal_init, gfx_metal_on_resize,
-    gfx_metal_start_frame, gfx_metal_end_frame, gfx_metal_finish_render, gfx_metal_shutdown, true
+    gfx_metal_start_frame, gfx_metal_end_frame, gfx_metal_finish_render, gfx_metal_shutdown, true,
+    gfx_metal_begin_ui_overlay
 };
 
 #endif

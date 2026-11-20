@@ -25,6 +25,10 @@ def main() -> None:
     metal_h = (ROOT / "src/pc/gfx/gfx_metal.h").read_text()
     metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
     uikit = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
+    gfx_pc = (ROOT / "src/pc/gfx/gfx_pc.c").read_text()
+    rendering_api = (ROOT / "src/pc/gfx/gfx_rendering_api.h").read_text()
+    render_tags = (ROOT / "src/pc/gfx/gfx_render_section.h").read_text()
+    area = (ROOT / "src/game/area.c").read_text()
     main_source = (ROOT / "src/pc/pc_main.m").read_text()
 
     for token in (
@@ -106,7 +110,7 @@ def main() -> None:
         "gfx_metal_encode_final_pass", "metal_frame_uses_offscreen && !gfx_metal_encode_final_pass",
         "if (metal_offscreen_runtime_failed) return false;",
         "gfx_metal_apply_settings(fallback);\n    @synchronized ([NSObject class]) { metal_offscreen_runtime_failed = true; }",
-        "if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))\n        metal_offscreen_runtime_failed = true;",
+        "if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command)) {\n        metal_offscreen_runtime_failed = true;",
         "[metal_layer nextDrawable]", "[metal_command presentDrawable:submitted_drawable]",
         "gfx_metal_pipeline_cache_index", "desc.sampleCount = metal_active_sample_count",
         "metal_frame_uses_offscreen ?\n        MTLPixelFormatRGBA16Float : metal_view.colorPixelFormat",
@@ -132,6 +136,17 @@ def main() -> None:
         require(token in metal, f"missing Metal backend capability or fallback invariant: {token}")
     require("gfx_metal_settings_use_offscreen(metal_settings)" in metal,
             "Classic 100%/1x render must stay on the direct drawable path")
+    require("GFX_RENDER_UI_OVERLAY_BEGIN_TAG" in render_tags and
+            area.index("geo_process_root(gCurrentArea->unk04") < area.index("GFX_RENDER_UI_OVERLAY_BEGIN_TAG") < area.index("render_hud();"),
+            "iOS Metal game output must split the 3D scene before HUD commands")
+    require("begin_ui_overlay" in rendering_api and
+            "gfx_flush();\n                    gfx_rapi->begin_ui_overlay();" in gfx_pc,
+            "display-list traversal must flush the world batch before the optional overlay boundary")
+    require("gfx_metal_encode_scene_composite();" in metal and
+            "metal_scene_postprocessed_before_ui" in metal and
+            "pass.colorAttachments[0].loadAction = composited ? MTLLoadActionLoad : MTLLoadActionClear;" in metal and
+            "metal_frame_uses_offscreen = false;" in metal,
+            "Metal must composite the world before rendering HUD commands to the drawable")
     require("if (key != UINT32_MAX && metal_frame_uses_offscreen) key += 48u;" in metal and
             "#define METAL_PIPELINE_STATE_CAP 96" in metal,
             "BGRA8 and float-target pipelines need disjoint cache entries")

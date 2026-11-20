@@ -24,6 +24,9 @@
 #endif
 #include "ingame_menu.h"
 #include "screen_transition.h"
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+#include "pc/gfx/gfx_render_section.h"
+#endif
 #include "mario.h"
 #include "mario_hat.h"
 #include "mario_actions_cutscene.h"
@@ -665,6 +668,9 @@ void render_game(void) {
 
         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH,
                       SCREEN_HEIGHT - BORDER_HEIGHT);
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+        gDPNoOpTag(gDisplayListHead++, GFX_RENDER_UI_OVERLAY_BEGIN_TAG);
+#endif
         render_hud();
 
         gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);

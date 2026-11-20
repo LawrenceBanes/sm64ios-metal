@@ -2352,6 +2352,12 @@ static void gfx_run_dl(Gfx* cmd) {
         switch (opcode) {
 #if defined(TARGET_OS_IOS) || defined(IOS_O2R_SCENE_RUNTIME)
             case G_NOOP:
+                if (cmd->words.w1 == GFX_RENDER_UI_OVERLAY_BEGIN_TAG &&
+                    gfx_rapi->begin_ui_overlay != NULL) {
+                    gfx_flush();
+                    gfx_rapi->begin_ui_overlay();
+                    break;
+                }
 #ifdef IOS_O2R_SCENE_RUNTIME
                 if (inside_scene_display_list && cmd->words.w0 == WORLD_SCENE_MATERIAL_OPCODE) {
                     gfx_flush();

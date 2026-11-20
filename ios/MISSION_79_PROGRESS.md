@@ -7,6 +7,12 @@
 - Current pushed source commit: `aa7c92c1` (responsive Graphics panel layout); Apple backend/MSL validation passed in [run 44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490), and regression/backend validation passed again in [run 44705969874](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705969874). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) passed for source `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; it predates the responsive layout and latest direct-fallback repair.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
+## Latest uncommitted M79-A work
+
+- Added an iOS/Metal display-list marker between `geo_process_root()` and HUD/text/menu drawing. `gfx_pc` flushes the 3D batch at that marker and calls an optional rendering API hook.
+- In the offscreen path, Metal now encodes bloom/AO/light shafts/shadows and composites the world to the drawable before opening a drawable-sized transparent HUD pass with its own cleared depth target. The UI is therefore excluded from scene grading, fog, bloom, SSAO, shadowing, and sky replacement. If the overlay depth allocation fails, the renderer keeps the old single-pass composite path. Classic/direct rendering does not split.
+- Focused source checks, generated MSL checks, `git diff --check`, and the full local Clang Linux regressions pass. Apple compile, IPA packaging, and physical visual verification are pending.
+
 ## Milestones
 
 ### M79-A — Infrastructure (partial)
@@ -16,7 +22,7 @@
 - Internal Depth32Float target is shader-readable and stored for offscreen rendering.
 - Fullscreen presentation samples scene color and composites to the drawable.
 - CPU matrix inversion and row-vector depth reconstruction helpers have host tests.
-- **Open:** scene HUD/UI is still included in the same color target; transparent draw ordering has not been validated; no device image comparison.
+- Native HUD/text/menu commands now have a post-composite overlay boundary in the offscreen path (latest code still needs Apple validation). **Open:** transparent world geometry ordering has not been validated; no device image comparison.
 
 ### M79-B — SSAO (implementation in progress, not accepted)
 

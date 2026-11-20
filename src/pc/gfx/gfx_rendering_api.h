@@ -32,6 +32,9 @@ struct GfxRenderingAPI {
     void (*finish_render)(void);
     void (*shutdown)(void);
     bool supports_scene_materials;
+    /* Optional split point used by Metal to postprocess the 3D scene before
+     * the later display-list HUD/UI commands are drawn to the drawable. */
+    void (*begin_ui_overlay)(void);
 };
 
 #endif
