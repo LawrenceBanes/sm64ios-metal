@@ -56,6 +56,16 @@ int main(void) {
     assert(!gfx_shadow_map_fit(vertices, 0, sun_ray, 1024, &transform));
     assert(!gfx_shadow_map_fit(vertices, 5, (float[3]){ 0, 0, 0 }, 1024, &transform));
     assert(!gfx_shadow_map_fit(vertices, 5, sun_ray, 8, &transform));
-    puts("Directional shadow fit, depth projection, stabilization, and bounds checks passed");
+    assert(gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 1024) ==
+           gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 1024));
+    assert(gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 1024) !=
+           gfx_shadow_map_geometry_key(shifted_vertices, 5, sun_ray, 1024));
+    assert(gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 1024) !=
+           gfx_shadow_map_geometry_key(vertices, 5, (float[3]){ -0.34f, -1.0f, -0.25f }, 1024));
+    assert(gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 1024) !=
+           gfx_shadow_map_geometry_key(vertices, 5, sun_ray, 2048));
+    assert(gfx_shadow_map_geometry_key(vertices, 0, sun_ray, 1024) == 0);
+    assert(gfx_shadow_map_geometry_key((const float (*)[3])((float[][3]){{ NAN, 0, 0 }}), 1, sun_ray, 1024) == 0);
+    puts("Directional shadow fit, projection, stabilization, and cache-key checks passed");
     return 0;
 }

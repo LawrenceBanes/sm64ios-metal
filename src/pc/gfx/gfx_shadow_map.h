@@ -22,5 +22,8 @@ bool gfx_shadow_map_fit(const float (*positions)[3], size_t count,
                         struct GfxShadowMapTransform *transform);
 bool gfx_shadow_map_project(const struct GfxShadowMapTransform *transform,
                             const float position[3], float clip[3], float uv_depth[3]);
+/* Stable cache key for unchanged world-space casters, light direction, and map size. */
+uint64_t gfx_shadow_map_geometry_key(const float (*positions)[3], size_t count,
+                                     const float light_direction[3], uint32_t resolution);
 
 #endif

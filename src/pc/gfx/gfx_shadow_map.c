@@ -3,6 +3,30 @@
 #include <math.h>
 #include <string.h>
 
+static void hash_bytes(uint64_t *hash, const void *data, size_t size) {
+    const uint8_t *bytes = data;
+    for (size_t i = 0; i < size; ++i) {
+        *hash ^= bytes[i];
+        *hash *= UINT64_C(1099511628211);
+    }
+}
+
+uint64_t gfx_shadow_map_geometry_key(const float (*positions)[3], size_t count,
+                                     const float light_direction[3], uint32_t resolution) {
+    if (!positions || count == 0 || !light_direction || resolution == 0) return 0;
+    uint64_t hash = UINT64_C(14695981039346656037);
+    hash_bytes(&hash, &count, sizeof(count));
+    hash_bytes(&hash, &resolution, sizeof(resolution));
+    hash_bytes(&hash, light_direction, sizeof(float) * 3u);
+    for (size_t i = 0; i < count; ++i) {
+        for (size_t axis = 0; axis < 3; ++axis) {
+            if (!isfinite(positions[i][axis])) return 0;
+        }
+        hash_bytes(&hash, positions[i], sizeof(float) * 3u);
+    }
+    return hash ? hash : UINT64_C(1);
+}
+
 static float dot3(const float a[3], const float b[3]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }

@@ -94,6 +94,9 @@ static id<MTLBuffer> metal_shadow_vertex_buffer;
 static float (*metal_shadow_world_positions)[3];
 static struct GfxShadowMapTransform metal_shadow_transform;
 static bool metal_shadow_transform_valid;
+static bool metal_shadow_cache_valid;
+static uint64_t metal_shadow_cached_geometry_key;
+static size_t metal_shadow_cached_vertex_count;
 static NSUInteger metal_shadow_texture_size;
 static NSUInteger metal_god_ray_width, metal_god_ray_height;
 static NSUInteger metal_ssao_width, metal_ssao_height;
@@ -233,6 +236,9 @@ static void gfx_metal_release_render_targets(void) {
     metal_god_ray_width = metal_god_ray_height = 0;
     metal_shadow_texture_size = 0;
     metal_shadow_transform_valid = false;
+    metal_shadow_cache_valid = false;
+    metal_shadow_cached_geometry_key = 0;
+    metal_shadow_cached_vertex_count = 0;
     metal_ssao_width = metal_ssao_height = 0;
     metal_bloom_width = metal_bloom_height = 0;
     metal_depth_width = metal_depth_height = 0;
@@ -1685,10 +1691,14 @@ static bool gfx_metal_ensure_shadow_pipeline(void) {
 
 static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
     if (!gfx_metal_shadows_enabled()) return true;
-    metal_shadow_transform_valid = false;
+    bool previous_transform_valid = metal_shadow_transform_valid;
     struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
     if (!capture.triangles || capture.triangle_count == 0 || !metal_shadow_texture ||
-        !gfx_metal_ensure_shadow_pipeline()) return false;
+        !gfx_metal_ensure_shadow_pipeline()) {
+        metal_shadow_transform_valid = false;
+        metal_shadow_cache_valid = false;
+        return false;
+    }
     size_t limit = capture.triangle_count < 8192u ? capture.triangle_count : 8192u;
     size_t vertex_count = 0;
     for (size_t t = 0; t < limit; ++t) {
@@ -1699,22 +1709,39 @@ static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
             const float *local = triangle->vertices[v].position;
             if (!gfx_shadow_map_transform_point(triangle->object_transform, local,
                                                 metal_shadow_world_positions[vertex_count]))
-                return false;
+                { metal_shadow_transform_valid = false; metal_shadow_cache_valid = false; return false; }
             ++vertex_count;
         }
     }
-    if (vertex_count < 3u) return false;
+    if (vertex_count < 3u) {
+        metal_shadow_transform_valid = false;
+        metal_shadow_cache_valid = false;
+        return false;
+    }
     float sun_ray[3];
     gfx_metal_get_sun_direction(sun_ray);
     for (int axis = 0; axis < 3; ++axis) sun_ray[axis] = -sun_ray[axis];
+    uint64_t geometry_key = gfx_shadow_map_geometry_key((const float (*)[3])metal_shadow_world_positions,
+        vertex_count, sun_ray, (uint32_t)metal_shadow_texture_size);
+    if (geometry_key != 0 && metal_shadow_cache_valid && previous_transform_valid &&
+        geometry_key == metal_shadow_cached_geometry_key &&
+        vertex_count == metal_shadow_cached_vertex_count) {
+        @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = vertex_count / 3u; }
+        return true;
+    }
+    metal_shadow_transform_valid = false;
     if (!gfx_shadow_map_fit((const float (*)[3])metal_shadow_world_positions, vertex_count,
-                            sun_ray, (uint32_t)metal_shadow_texture_size, &metal_shadow_transform))
+                            sun_ray, (uint32_t)metal_shadow_texture_size, &metal_shadow_transform)) {
+        metal_shadow_cache_valid = false;
         return false;
+    }
     vector_float4 *clip_positions = metal_shadow_vertex_buffer.contents;
     for (size_t i = 0; i < vertex_count; ++i) {
         float clip[3], uv_depth[3];
-        if (!gfx_shadow_map_project(&metal_shadow_transform, metal_shadow_world_positions[i], clip, uv_depth))
+        if (!gfx_shadow_map_project(&metal_shadow_transform, metal_shadow_world_positions[i], clip, uv_depth)) {
+            metal_shadow_cache_valid = false;
             return false;
+        }
         clip_positions[i] = (vector_float4){ clip[0], clip[1], clip[2], 1.0f };
     }
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -1723,7 +1750,7 @@ static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
     pass.depthAttachment.storeAction = MTLStoreActionStore;
     pass.depthAttachment.clearDepth = 1.0;
     id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
-    if (!encoder) return false;
+    if (!encoder) { metal_shadow_cache_valid = false; return false; }
     [encoder setRenderPipelineState:metal_shadow_pipeline];
     [encoder setDepthStencilState:metal_shadow_depth_state];
     [encoder setViewport:(MTLViewport){ 0.0, 0.0, (double)metal_shadow_texture_size,
@@ -1732,6 +1759,9 @@ static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertex_count];
     [encoder endEncoding];
     metal_shadow_transform_valid = true;
+    metal_shadow_cache_valid = geometry_key != 0;
+    metal_shadow_cached_geometry_key = geometry_key;
+    metal_shadow_cached_vertex_count = vertex_count;
     @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = vertex_count / 3u; }
     return true;
 }

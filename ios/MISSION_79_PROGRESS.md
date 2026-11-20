@@ -4,14 +4,19 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `aa7c92c1` (responsive Graphics panel layout); Apple backend/MSL validation passed in [run 44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490), and regression/backend validation passed again in [run 44705969874](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705969874). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) passed for source `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; it predates the responsive layout and latest direct-fallback repair.
+- Current pushed source commit: `eda005d8` (HUD/UI isolation at the offscreen composite boundary); Apple Metal/MSL and Linux regression passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346). Full IPA workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596) passed for source `12b4cfe8`; it predates HUD isolation and the pending shadow-map cache improvement.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
-## Latest uncommitted M79-A work
+## Latest M79-A checkpoint (`eda005d8`)
 
 - Added an iOS/Metal display-list marker between `geo_process_root()` and HUD/text/menu drawing. `gfx_pc` flushes the 3D batch at that marker and calls an optional rendering API hook.
 - In the offscreen path, Metal now encodes bloom/AO/light shafts/shadows and composites the world to the drawable before opening a drawable-sized transparent HUD pass with its own cleared depth target. The UI is therefore excluded from scene grading, fog, bloom, SSAO, shadowing, and sky replacement. If the overlay depth allocation fails, the renderer keeps the old single-pass composite path. Classic/direct rendering does not split.
-- Focused source checks, generated MSL checks, `git diff --check`, and the full local Clang Linux regressions pass. Apple compile, IPA packaging, and physical visual verification are pending.
+- Focused source checks, generated MSL checks, `git diff --check`, and the full local Clang Linux regressions pass. Apple Metal/MSL and Linux validation passed for committed HUD-split code in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346). A full IPA including the split is pending; physical visual verification remains pending.
+
+## Current uncommitted M79-G work
+
+- Added a portable deterministic cache key over transformed world-space caster vertices, directional light, and shadow resolution. The production shadow pass can reuse the prior depth map and fitted transform if that key and vertex count are unchanged; moving/dynamic captured objects, light changes, and map-size changes invalidate it.
+- `tests/run_shadow_map_test.sh` passes; direct Clang ASan/UBSan execution of `tests/shadow_map_test.c` passes with leak detection disabled; renderer source checks and full local Clang Linux regressions pass. Apple validation is pending.
 
 ## Milestones
 
@@ -131,10 +136,10 @@
 - `07728beb` Apple backend/MSL validation and Linux jobs passed in [run 44704150806](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704150806).
 - Optional sunlight intensity control (Off/Low/Medium/High) uses depth-neighbor reconstructed view normals transformed to world space, Lambert diffuse, and shadow-map PCF visibility. A demonstrated integration defect was fixed: inverse projection had only been computed when fog was active, leaving the shadow receiver's depth reconstruction matrix zero with shadows alone. Apple backend/MSL and Linux checks passed in run [44704797589](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704797589).
 - Graphics panel controls reflow against the current iPhone/iPad panel width rather than keeping the 520-point desktop layout. This change is included in `aa7c92c1`; focused and full Linux tests plus Apple backend/MSL validation passed, but it is not in the current IPA.
-- The offscreen renderer now latches to direct drawable rendering after allocation/compositor failure and does not retry every frame. A deliberate graphics setting change clears the latch. The developer performance panel reports when enhanced effects are suspended on the direct fallback. Focused source checks and full local Clang Linux regressions pass; Apple validation is pending for this follow-up.
+- The offscreen renderer now latches to direct drawable rendering after allocation/compositor failure and does not retry every frame. A deliberate graphics setting change clears the latch. The developer performance panel reports when enhanced effects are suspended on the direct fallback. This is in `12b4cfe8`; Apple backend/MSL and Linux checks pass in [run 44706252460](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44706252460).
 
 ## Next task
 
-The latest full IPA is a private draft from source `169a3f13`, SHA-256 `f6106478d18070a02e01119a5d6263f9eeb03c0c392b53dd635f702b67c872b4`, uploaded by workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225). It predates the responsive layout and failure-latch follow-up. The completed Apple check for `aa7c92c1` is run [44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490).
+The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Complete Linux and Apple validation for the offscreen failure latch, then package a current-source IPA. Afterward address world/HUD isolation and material/shadow quality. Physical-device image and timing review remains required.
+Next: finish validation and commit shadow-map reuse, run Apple validation, and produce a full IPA containing the HUD split. Then continue the open renderer work (transparent ordering, shadow caster bounds, sky/fog quality) and any failures the device evidence reveals. Physical-device image and timing review remains required.
