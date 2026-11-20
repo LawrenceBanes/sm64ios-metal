@@ -22,12 +22,15 @@ The v1 installer accepts ZIP stored or deflate entries, up to 8 MiB compressed/e
   "source": "shaders/postprocess.metal",
   "entryPoint": "shader64_post",
   "parameters": [
-    {"name":"strength", "label":"Strength", "type":"float", "default":1.0, "min":0.0, "max":1.0}
+    {"name":"strength", "label":"Strength", "type":"float", "default":1.0, "min":0.0, "max":1.0},
+    {"name":"paper", "label":"Paper texture", "type":"boolean", "default":0},
+    {"name":"grade", "label":"Color grade", "type":"select", "default":0,
+     "options":["Neutral", "Warm", "Cool"]}
   ]
 }
 ```
 
-The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four float parameters are allowed. Defaults and bounds must be finite, `min <= default <= max`. UI parameter entry is clamped to each declared range. API version mismatches are rejected. `source` may be `shaders/postprocess.metal` or `shaders/postprocess.metallib`; both forms use the same API v1 postprocess contract.
+The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four parameters are allowed. A `float` declares finite `min`, `default`, and `max` within `[-8, 8]` with `min <= default <= max`; the Graphics UI renders a bounded slider. A `boolean` uses default `0` or `1` and renders a toggle. A `select` uses an integer default index and 2–8 non-empty option labels (up to 48 characters each), and renders a segmented selector. In the shader these map to floats: the scalar value, 0/1, or selected option index. API version mismatches are rejected. `source` may be `shaders/postprocess.metal` or `shaders/postprocess.metallib`; both forms use the same API v1 postprocess contract.
 
 ## Metal entry point
 

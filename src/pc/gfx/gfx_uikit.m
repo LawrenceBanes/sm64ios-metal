@@ -133,6 +133,125 @@ static int sm64RenderDiagnosticMode;
 - (void)showRealityCategory:(NSInteger)category;
 @end
 
+#if TARGET_OS_IOS && defined(RAPI_METAL)
+@interface SHADER64ParameterController : UIViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *definitions;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *values;
+@property(nonatomic, strong) NSMutableArray *controls;
+@property(nonatomic, strong) NSMutableArray<UILabel *> *valueLabels;
+@property(nonatomic, copy) void (^onApply)(NSArray<NSNumber *> *values);
+@end
+
+@implementation SHADER64ParameterController
+- (void)loadView {
+    UIView *root = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, 420, 560)] autorelease];
+    root.backgroundColor = UIColor.systemBackgroundColor;
+    self.view = root;
+    UIScrollView *scroll = [[[UIScrollView alloc] initWithFrame:root.bounds] autorelease];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:scroll];
+    UIStackView *stack = [[[UIStackView alloc] initWithFrame:CGRectZero] autorelease];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 14.0;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [scroll addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [scroll.topAnchor constraintEqualToAnchor:root.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:20],
+        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:20],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-20],
+        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
+    ]];
+    self.controls = [NSMutableArray arrayWithCapacity:self.definitions.count];
+    self.valueLabels = [NSMutableArray arrayWithCapacity:self.definitions.count];
+    for (NSUInteger index = 0; index < self.definitions.count; ++index) {
+        NSDictionary *definition = self.definitions[index];
+        NSString *type = definition[@"type"];
+        UILabel *title = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+        title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+        title.text = definition[@"label"];
+        [stack addArrangedSubview:title];
+        id control = nil;
+        if ([type isEqualToString:@"float"]) {
+            UISlider *slider = [[[UISlider alloc] initWithFrame:CGRectZero] autorelease];
+            slider.minimumValue = [definition[@"min"] floatValue];
+            slider.maximumValue = [definition[@"max"] floatValue];
+            slider.value = [self.values[index] floatValue];
+            slider.enabled = slider.maximumValue > slider.minimumValue;
+            [slider addTarget:self action:@selector(parameterChanged:) forControlEvents:UIControlEventValueChanged];
+            control = slider;
+        } else if ([type isEqualToString:@"boolean"]) {
+            UISwitch *toggle = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
+            toggle.on = [self.values[index] boolValue];
+            [toggle addTarget:self action:@selector(parameterChanged:) forControlEvents:UIControlEventValueChanged];
+            control = toggle;
+        } else {
+            NSArray *options = definition[@"options"];
+            UISegmentedControl *selector = [[[UISegmentedControl alloc] initWithItems:options] autorelease];
+            selector.selectedSegmentIndex = [self.values[index] integerValue];
+            selector.apportionsSegmentWidthsByContent = YES;
+            [selector addTarget:self action:@selector(parameterChanged:) forControlEvents:UIControlEventValueChanged];
+            control = selector;
+        }
+        [control setTag:(NSInteger)index];
+        [stack addArrangedSubview:control];
+        UILabel *value = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+        value.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+        [stack addArrangedSubview:value];
+        [self.controls addObject:control];
+        [self.valueLabels addObject:value];
+        [self refreshLabelAtIndex:index];
+    }
+    UIButton *apply = [UIButton buttonWithType:UIButtonTypeSystem];
+    [apply setTitle:@"Apply" forState:UIControlStateNormal];
+    [apply addTarget:self action:@selector(applyValues) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:apply];
+    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
+    [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
+    [cancel addTarget:self action:@selector(cancelChanges) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:cancel];
+}
+
+- (void)refreshLabelAtIndex:(NSUInteger)index {
+    NSDictionary *definition = self.definitions[index];
+    NSString *type = definition[@"type"];
+    if ([type isEqualToString:@"boolean"]) self.valueLabels[index].text = [self.values[index] boolValue] ? @"On" : @"Off";
+    else if ([type isEqualToString:@"select"]) {
+        NSArray *options = definition[@"options"];
+        NSInteger selected = [self.values[index] integerValue];
+        self.valueLabels[index].text = (selected >= 0 && selected < (NSInteger)options.count) ? options[selected] : @"";
+    } else self.valueLabels[index].text = [NSString stringWithFormat:@"%.3f", [self.values[index] doubleValue]];
+}
+
+- (void)parameterChanged:(UIControl *)sender {
+    NSUInteger index = (NSUInteger)sender.tag;
+    NSNumber *value = nil;
+    if ([sender isKindOfClass:[UISlider class]]) value = @([(UISlider *)sender value]);
+    else if ([sender isKindOfClass:[UISwitch class]]) value = @([(UISwitch *)sender isOn] ? 1 : 0);
+    else {
+        NSInteger selected = [(UISegmentedControl *)sender selectedSegmentIndex];
+        NSArray *options = self.definitions[index][@"options"];
+        selected = MAX(0, MIN((NSInteger)options.count - 1, selected));
+        [(UISegmentedControl *)sender setSelectedSegmentIndex:selected];
+        value = @(selected);
+    }
+    self.values[index] = value;
+    [self refreshLabelAtIndex:index];
+}
+
+- (void)applyValues {
+    if (self.onApply) self.onApply([[self.values copy] autorelease]);
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)cancelChanges { [self dismissViewControllerAnimated:YES completion:nil]; }
+@end
+#endif
+
 @interface SM64DiagnosticsPassthroughView : UIView
 @property(nonatomic) CGRect hitRect;
 @end
@@ -1327,18 +1446,40 @@ static int sm64RenderDiagnosticMode;
         NSDictionary *definition = configured[i];
         if (![definition isKindOfClass:[NSDictionary class]]) { validation = @"Each parameter must be an object"; break; }
         NSNumber *defaultValue = definition[@"default"];
-        NSNumber *minimum = definition[@"min"], *maximum = definition[@"max"];
-        if (![definition[@"name"] isKindOfClass:[NSString class]] ||
-            ![definition[@"label"] isKindOfClass:[NSString class]] || ![definition[@"type"] isEqualToString:@"float"] ||
-            ![defaultValue isKindOfClass:[NSNumber class]] || ![minimum isKindOfClass:[NSNumber class]] ||
-            ![maximum isKindOfClass:[NSNumber class]] || !isfinite(defaultValue.doubleValue) ||
-            !isfinite(minimum.doubleValue) || !isfinite(maximum.doubleValue) || minimum.doubleValue > maximum.doubleValue ||
-            defaultValue.doubleValue < minimum.doubleValue || defaultValue.doubleValue > maximum.doubleValue) {
-            validation = @"Each parameter needs a float name/label/default/min/max with finite, ordered bounds"; break;
+        NSString *type = definition[@"type"];
+        if (![definition[@"name"] isKindOfClass:[NSString class]] || ![definition[@"name"] length] ||
+            ![definition[@"label"] isKindOfClass:[NSString class]] || ![definition[@"label"] length] ||
+            ![defaultValue isKindOfClass:[NSNumber class]] || !isfinite(defaultValue.doubleValue)) {
+            validation = @"Each parameter needs a non-empty name/label and finite numeric default"; break;
         }
         double v = defaultValue.doubleValue;
-        if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]] && isfinite([savedForPack[i] doubleValue]))
-            v = MIN(maximum.doubleValue, MAX(minimum.doubleValue, [savedForPack[i] doubleValue]));
+        if ([type isEqualToString:@"float"]) {
+            NSNumber *minimum = definition[@"min"], *maximum = definition[@"max"];
+            if (![minimum isKindOfClass:[NSNumber class]] || ![maximum isKindOfClass:[NSNumber class]] ||
+                !isfinite(minimum.doubleValue) || !isfinite(maximum.doubleValue) ||
+                minimum.doubleValue < -8.0 || maximum.doubleValue > 8.0 ||
+                minimum.doubleValue > maximum.doubleValue || v < minimum.doubleValue || v > maximum.doubleValue) {
+                validation = @"Float parameter bounds must be finite, within -8…8, and contain the default"; break;
+            }
+            if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]] && isfinite([savedForPack[i] doubleValue]))
+                v = MIN(maximum.doubleValue, MAX(minimum.doubleValue, [savedForPack[i] doubleValue]));
+        } else if ([type isEqualToString:@"boolean"]) {
+            if (v != 0.0 && v != 1.0) { validation = @"Boolean parameter defaults must be 0 or 1"; break; }
+            if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]])
+                v = [savedForPack[i] boolValue] ? 1.0 : 0.0;
+        } else if ([type isEqualToString:@"select"]) {
+            NSArray *options = definition[@"options"];
+            if (![options isKindOfClass:[NSArray class]] || options.count < 2 || options.count > 8 ||
+                floor(v) != v || v < 0 || v >= options.count) {
+                validation = @"Select parameters need 2–8 options and a valid integer default index"; break;
+            }
+            for (id option in options) if (![option isKindOfClass:[NSString class]] || ![option length] || [option length] > 48) {
+                validation = @"Select options must be non-empty strings up to 48 characters"; break;
+            }
+            if (validation) break;
+            if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]] && isfinite([savedForPack[i] doubleValue]))
+                v = MIN((double)options.count - 1.0, MAX(0.0, round([savedForPack[i] doubleValue])));
+        } else { validation = @"Parameter type must be float, boolean, or select"; break; }
         parameters[i] = (float)v;
     }
     char error[512] = {0};
@@ -1365,35 +1506,30 @@ static int sm64RenderDiagnosticMode;
     NSArray *definitions = manifest[@"parameters"];
     if (![definitions isKindOfClass:[NSArray class]] || !definitions.count || definitions.count > 4) return;
     NSArray *current = [[NSUserDefaults standardUserDefaults] arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Parameters", manifest[@"name"]]
-        message:@"Values are clamped to the bounds declared by this pack." preferredStyle:UIAlertControllerStyleAlert];
+    NSMutableArray *values = [NSMutableArray arrayWithCapacity:definitions.count];
     for (NSUInteger i = 0; i < definitions.count; ++i) {
         NSDictionary *definition = definitions[i];
-        [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-            textField.placeholder = definition[@"label"];
-            textField.keyboardType = UIKeyboardTypeDecimalPad;
-            NSNumber *value = current.count == definitions.count ? current[i] : definition[@"default"];
-            textField.text = [value stringValue];
-        }];
+        NSNumber *value = current.count == definitions.count && [current[i] isKindOfClass:[NSNumber class]]
+            ? current[i] : definition[@"default"];
+        [values addObject:value];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Apply" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        (void)action;
+    SHADER64ParameterController *controller = [[[SHADER64ParameterController alloc] init] autorelease];
+    controller.title = [NSString stringWithFormat:@"%@ Parameters", manifest[@"name"]];
+    controller.definitions = definitions;
+    controller.values = values;
+    controller.modalPresentationStyle = UIModalPresentationFormSheet;
+    controller.preferredContentSize = CGSizeMake(420, 560);
+    __weak SM64DiagnosticsViewController *weakSelf = self;
+    controller.onApply = ^(NSArray<NSNumber *> *selected) {
+        SM64DiagnosticsViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
         float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-        NSMutableArray *values = [NSMutableArray arrayWithCapacity:definitions.count];
-        NSUInteger index = 0;
-        for (NSDictionary *definition in definitions) {
-            double value = alert.textFields[index].text.doubleValue;
-            if (!isfinite(value)) value = [definition[@"default"] doubleValue];
-            value = MIN([definition[@"max"] doubleValue], MAX([definition[@"min"] doubleValue], value));
-            parameters[index++] = (float)value;
-            [values addObject:@(value)];
-        }
-        [[NSUserDefaults standardUserDefaults] setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+        for (NSUInteger i = 0; i < selected.count && i < 4; ++i) parameters[i] = [selected[i] floatValue];
+        [[NSUserDefaults standardUserDefaults] setObject:selected forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
         gfx_metal_set_shader64_parameters(parameters);
-        [self appendStatus:[NSString stringWithFormat:@"Updated %@ parameters", manifest[@"name"]]];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+        [strongSelf appendStatus:[NSString stringWithFormat:@"Updated %@ parameters", manifest[@"name"]]];
+    };
+    [self presentViewController:controller animated:YES completion:nil];
 }
 
 - (void)importShaderPack {

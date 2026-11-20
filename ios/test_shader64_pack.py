@@ -131,7 +131,8 @@ class ShaderPackTests(unittest.TestCase):
             self.assertIn(token, metal)
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",
                       "gfx_shader64_install_zip", "shader64_post", "Delete an installed pack",
-                      "Configure %@", "gfx_metal_use_classic_shader"):
+                      "Configure %@", "gfx_metal_use_classic_shader", "UISlider", "UISwitch",
+                      "UISegmentedControl", "type must be float, boolean, or select"):
             self.assertIn(token, ui)
         for pack in ("Classic64", "Paper64", "Lumen64"):
             directory = ROOT / "ios/shaderpacks" / pack
