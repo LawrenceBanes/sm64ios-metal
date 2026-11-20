@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `e9f350b279a24a6d05e1f8151d7056e6ce1dbee2` (compute pass combining pack textures, depth, and normals; Apple workflow `44822697079` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `d032d2debc7eb51b45334d8dc5600629e5ce74d8` (combined compute-resource validation; Apple workflow `44822697079` passed). Current working slice adds configured directional-light input to compute nodes; host importer checks pass, Apple CI pending.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -131,5 +131,11 @@
 - Focused Shader64 tests pass (29), including ASan/UBSan ZIP smoke and the full reference-pack import matrix. `CC=clang tests/run_linux_checks.sh`, Metal codegen, project wiring, shell syntax, and `git diff --check` all pass. No GPU execution or device output is claimed.
 
 - Apple workflow `44822697079` passed both Linux regressions and Xcode 27 backend/MSL compile-link, including the combined texture/depth/normal compute kernel. This verifies the ABI source compiles and links but does not execute it on a GPU. No final `main` merge.
+
+## Current working increment — directional lighting for compute nodes
+
+- Added optional API 2 `sceneLighting:true` compute input. It binds the configured world-space sun direction/intensity at buffer 5 and inverse-view transform at buffer 4. Validation requires `sceneDepth:true` and `sceneNormals:true` with lighting, and the runtime uses the existing captured camera and sun settings rather than fabricating scene data.
+- Extended `SceneDataCompute64` to use the reconstructed surface normal transformed into world space against the real configured sun, while retaining depth fog and the pack-owned texture. The pass remains an illustrative screen-space shader; it is not physical-device verified.
+- Focused pack tests pass (29), including the reference pack with `sceneLighting`, graph-resource rejection for lighting without both depth and normals, and ASan/UBSan ZIP smoke. Full `CC=clang tests/run_linux_checks.sh`, Metal codegen, Xcode wiring, shell syntax, and diff checks pass; familiar fixture warnings/invalid-input messages remain. No GPU execution or device output is claimed.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

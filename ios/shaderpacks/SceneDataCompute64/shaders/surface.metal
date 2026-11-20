@@ -15,6 +15,8 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
                              constant float4x4 &inverseProjection [[buffer(3)]],
                              texture2d<float> sceneNormals [[texture(7)]],
                              sampler normalSampler [[sampler(7)]],
+                             constant float4x4 &inverseView [[buffer(4)]],
+                             constant float4 &sunDirectionAndIntensity [[buffer(5)]],
                              uint2 tid [[thread_position_in_grid]]) {
     uint2 outputSize = uint2(output.get_width(), output.get_height());
     if (tid.x >= outputSize.x || tid.y >= outputSize.y) return;
@@ -34,7 +36,9 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
     float4 view = inverseProjection * clip;
     float distance = length(view.xyz / max(abs(view.w), 0.0001));
     float3 normal = normalize(sceneNormals.sample(normalSampler, uv).xyz * 2.0 - 1.0);
-    float diffuse = 0.38 + 0.62 * max(normal.z, 0.0);
+    float3 worldNormal = normalize((inverseView * float4(normal, 0.0)).xyz);
+    float diffuse = 0.38 + 0.62 * max(dot(worldNormal, normalize(sunDirectionAndIntensity.xyz)), 0.0) *
+                    clamp(sunDirectionAndIntensity.w, 0.0, 1.0);
 
     float4 pattern = float4(1.0);
     uint2 textureSize = uint2(packTexture0.get_width(), packTexture0.get_height());

@@ -91,7 +91,7 @@ class ShaderPackTests(unittest.TestCase):
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_compute_depth_textured_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_compute_resource_pass_source.argtypes = [
-            ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_compute_resource_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_lit_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
@@ -416,7 +416,7 @@ class ShaderPackTests(unittest.TestCase):
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resources, 2, 1920, 1080, order, error, len(error)))
         normals_compute = (self.GraphPass * 2)(
-            self.GraphPass(b"normals", b"sceneColor", b"shaded", 0.5, 2, 17),
+            self.GraphPass(b"normals", b"sceneColor", b"shaded", 0.5, 2, 19),
             self.GraphPass(b"present", b"shaded", b"present", 1.0, 1, 0))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             normals_compute, 2, 1920, 1080, order, error, len(error)), error.value)
@@ -489,22 +489,28 @@ class ShaderPackTests(unittest.TestCase):
                   b'depth2d<float> sceneDepth [[texture(6)]], sampler depthSampler [[sampler(6)]], '
                   b'constant float4x4 &inverseProjection [[buffer(3)]], '
                   b'texture2d<float> sceneNormals [[texture(7)]], sampler normalSampler [[sampler(7)]], '
+                  b'constant float4x4 &inverseView [[buffer(4)]], '
+                  b'constant float4 &sunDirectionAndIntensity [[buffer(5)]], '
                   b'uint2 tid [[thread_position_in_grid]]) { '
                   b'float2 uv=(float2(tid)+0.5)/float2(output.get_width(),output.get_height()); '
                   b'float d=sceneDepth.sample(depthSampler,uv); '
                   b'float3 n=sceneNormals.sample(normalSampler,uv).xyz; '
                   b'float3 p=(inverseProjection*float4(uv*2.0-1.0,d*2.0-1.0,1.0)).xyz; '
-                  b'float4 c=image.read(tid); output.write(float4(c.rgb*max(n.z,0.0)+p*0.0+'
-                  b'frameInfo.xyz*0.0+params.xyz*0.0,c.a),tid); }')
+                  b'float3 wn=normalize((inverseView*float4(n,0.0)).xyz); '
+                  b'float diffuse=max(dot(wn,normalize(sunDirectionAndIntensity.xyz)),0.0); '
+                  b'float4 c=image.read(tid); output.write(float4(c.rgb*(0.4+diffuse*sunDirectionAndIntensity.w)+'
+                  b'p*0.0+frameInfo.xyz*0.0+params.xyz*0.0,c.a),tid); }')
         error = ctypes.create_string_buffer(256)
         self.assertTrue(self.api.gfx_shader64_validate_compute_resource_pass_source(
-            source, len(source), 0, 1, 1, error, len(error)), error.value)
+            source, len(source), 0, 1, 1, 1, error, len(error)), error.value)
         missing_normal = source.replace(b"sceneNormals [[texture(7)]]", b"unusedNormals [[texture(7)]]")
         self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
-            missing_normal, len(missing_normal), 0, 1, 1, error, len(error)))
+            missing_normal, len(missing_normal), 0, 1, 1, 1, error, len(error)))
+        self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
+            source, len(source), 0, 1, 0, 1, error, len(error)))
         graph_order = (ctypes.c_ubyte * 4)()
         graph = (self.GraphPass * 2)(
-            self.GraphPass(b"depth_normal", b"sceneColor", b"shade", 0.5, 2, 17),
+            self.GraphPass(b"depth_normal", b"sceneColor", b"shade", 0.5, 2, 19),
             self.GraphPass(b"present", b"shade", b"present", 1.0, 1, 0))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             graph, 2, 1920, 1080, graph_order, error, len(error)), error.value)
@@ -624,6 +630,7 @@ class ShaderPackTests(unittest.TestCase):
                     if compute_pass:
                         self.assertTrue(self.api.gfx_shader64_validate_compute_resource_pass_source(
                             source, len(source), int(texture_pass), int(depth_pass), int(normals_pass),
+                            int(lighting_pass),
                             error, len(error)), f"{pack_id}: {error.value!r}")
                         validator = None
                     elif frame_info_pass:
@@ -724,6 +731,8 @@ class ShaderPackTests(unittest.TestCase):
                       "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures",
                       "compute_scene_normals", "metal_scene_normals_texture atIndex:7",
                       "argument.index == 7u) scene_normals_bound = YES",
+                      "compute_scene_lighting", "inverse_view length:sizeof(inverse_view) atIndex:4",
+                      "sun_direction_and_intensity) atIndex:5", "argument.index == 5u)\n                        sun_direction_bound = YES",
                       "material_pack_textures", "material_pack_texture_count"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()

@@ -1810,6 +1810,10 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
                 [compute setTexture:metal_scene_normals_texture atIndex:7];
                 [compute setSamplerState:metal_present_sampler atIndex:7];
             }
+            if (p->resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) {
+                [compute setBytes:inverse_view length:sizeof(inverse_view) atIndex:4];
+                [compute setBytes:&sun_direction_and_intensity length:sizeof(sun_direction_and_intensity) atIndex:5];
+            }
             if (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) {
                 for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index) {
                     id<MTLTexture> texture = graph->pack_textures[MIN(texture_index,
@@ -1947,10 +1951,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             bool compute_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
             bool compute_scene_depth = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) != 0u;
             bool compute_scene_normals = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) != 0u;
+            bool compute_scene_lighting = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) != 0u;
             char validation[192] = {0};
             bool compute_valid = gfx_shader64_validate_compute_resource_pass_source(
                 passes[i].source, passes[i].source_size, compute_pack_textures,
-                compute_scene_depth, compute_scene_normals, validation, sizeof(validation));
+                compute_scene_depth, compute_scene_normals, compute_scene_lighting,
+                validation, sizeof(validation));
             if (!compute_valid) {
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s: %.150s", passes[i].id ?: "?", validation);
                 gfx_metal_shader64_graph_release(graph); return false;
@@ -1972,10 +1978,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             BOOL texture_count_bound = NO, scene_depth_bound = NO, depth_sampler_bound = NO;
             BOOL inverse_projection_bound = NO;
             BOOL scene_normals_bound = NO, normals_sampler_bound = NO;
+            BOOL inverse_view_bound = NO, sun_direction_bound = NO;
             BOOL pack_texture_bound[GFX_SHADER64_MAX_PACK_TEXTURES] = { NO };
             if (pipeline && reflection.arguments.count == (compute_pack_textures ? 9u : 4u) +
                                                                (compute_scene_depth ? 3u : 0u) +
-                                                               (compute_scene_normals ? 2u : 0u)) {
+                                                               (compute_scene_normals ? 2u : 0u) +
+                                                               (compute_scene_lighting ? 2u : 0u)) {
                 for (MTLArgument *argument in reflection.arguments) {
                     if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                         argument.index == 0u && argument.access == MTLArgumentAccessReadOnly) input_bound = YES;
@@ -2001,6 +2009,10 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                              argument.index == 7u) scene_normals_bound = YES;
                     else if (compute_scene_normals && argument.type == MTLArgumentTypeSampler && argument.index == 7u)
                         normals_sampler_bound = YES;
+                    else if (compute_scene_lighting && argument.type == MTLArgumentTypeBuffer && argument.index == 4u)
+                        inverse_view_bound = YES;
+                    else if (compute_scene_lighting && argument.type == MTLArgumentTypeBuffer && argument.index == 5u)
+                        sun_direction_bound = YES;
                 }
             }
             BOOL abi_valid = input_bound && output_bound && parameters_bound && frame_info_bound;
@@ -2013,6 +2025,8 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                 abi_valid = abi_valid && scene_depth_bound && depth_sampler_bound && inverse_projection_bound;
             if (compute_scene_normals)
                 abi_valid = abi_valid && scene_normals_bound && normals_sampler_bound;
+            if (compute_scene_lighting)
+                abi_valid = abi_valid && inverse_view_bound && sun_direction_bound;
             if (!library || !pipeline) {
                 const char *message = (pipeline_error ?: compile_error).localizedDescription.UTF8String ?: "Metal rejected compute pass";
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s failed: %.300s", passes[i].id, message);

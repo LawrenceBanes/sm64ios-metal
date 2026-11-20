@@ -342,8 +342,14 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
             (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
              (p->resource_flags & ~(GFX_SHADER64_RESOURCE_PACK_TEXTURES |
                                     GFX_SHADER64_RESOURCE_SCENE_DEPTH |
+                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                     GFX_SHADER64_RESOURCE_SCENE_NORMALS |
                                     GFX_SHADER64_RESOURCE_FRAME_INFO)) != 0u) ||
+            (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
+             (p->resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) &&
+             (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
+                                   GFX_SHADER64_RESOURCE_SCENE_NORMALS)) !=
+                 (GFX_SHADER64_RESOURCE_SCENE_DEPTH | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
              (p->resource_flags & GFX_SHADER64_RESOURCE_FRAME_INFO) != 0u) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE && p->output &&
@@ -637,7 +643,7 @@ int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_
 }
 
 static int validate_compute_source(const char *source, size_t size, int pack_textures, int scene_depth,
-                                   int scene_normals,
+                                   int scene_normals, int scene_lighting,
                                    char *error, size_t error_size) {
     static const char *const required[] = {
         "kernel void shader64_compute(",
@@ -664,6 +670,10 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
         "texture2d<float> sceneNormals [[texture(7)]]",
         "sampler normalSampler [[sampler(7)]]"
     };
+    static const char *const lighting_required[] = {
+        "constant float4x4 &inverseView [[buffer(4)]]",
+        "constant float4 &sunDirectionAndIntensity [[buffer(5)]]"
+    };
     if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
         err(error, error_size, "compute pass source is missing, oversized, or contains NUL"); return 0;
     }
@@ -686,6 +696,14 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
             if (!contains(source, size, normals_required[i])) {
                 err(error, error_size, "compute source is missing the bounded scene-normal resource"); return 0;
             }
+    if (scene_lighting && (!scene_depth || !scene_normals)) {
+        err(error, error_size, "compute lighting requires scene depth and scene normals"); return 0;
+    }
+    if (scene_lighting)
+        for (size_t i = 0; i < sizeof(lighting_required) / sizeof(lighting_required[0]); ++i)
+            if (!contains(source, size, lighting_required[i])) {
+                err(error, error_size, "compute source is missing the directional-light resource contract"); return 0;
+            }
     /* API 2 compute has two core texture inputs and one parameter buffer;
      * optional pack textures occupy fixed additional slots. Reject undeclared
      * bindings rather than compiling with unbound resources. This is a
@@ -698,7 +716,7 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
     for (size_t i = 0; i + 10u <= size; ++i)
         if (!memcmp(source + i, "[[sampler(", 10u)) ++sampler_bindings;
     if (texture_bindings != (pack_textures ? 6u : 2u) + (scene_depth ? 1u : 0u) + (scene_normals ? 1u : 0u) ||
-        buffer_bindings != (pack_textures ? 3u : 2u) + (scene_depth ? 1u : 0u) ||
+        buffer_bindings != (pack_textures ? 3u : 2u) + (scene_depth ? 1u : 0u) + (scene_lighting ? 2u : 0u) ||
         sampler_bindings != (scene_depth ? 1u : 0u) + (scene_normals ? 1u : 0u)) {
         err(error, error_size, "compute pass resource bindings do not match its declared texture contract"); return 0;
     }
@@ -711,30 +729,30 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
 
 int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size) {
-    return validate_compute_source(source, size, 0, 0, 0, error, error_size);
+    return validate_compute_source(source, size, 0, 0, 0, 0, error, error_size);
 }
 
 int gfx_shader64_validate_compute_textured_pass_source(const char *source, size_t size,
                                                        char *error, size_t error_size) {
-    return validate_compute_source(source, size, 1, 0, 0, error, error_size);
+    return validate_compute_source(source, size, 1, 0, 0, 0, error, error_size);
 }
 
 int gfx_shader64_validate_compute_depth_pass_source(const char *source, size_t size,
                                                     char *error, size_t error_size) {
-    return validate_compute_source(source, size, 0, 1, 0, error, error_size);
+    return validate_compute_source(source, size, 0, 1, 0, 0, error, error_size);
 }
 
 int gfx_shader64_validate_compute_depth_textured_pass_source(const char *source, size_t size,
                                                              char *error, size_t error_size) {
-    return validate_compute_source(source, size, 1, 1, 0, error, error_size);
+    return validate_compute_source(source, size, 1, 1, 0, 0, error, error_size);
 }
 
 int gfx_shader64_validate_compute_resource_pass_source(const char *source, size_t size,
                                                        int pack_textures, int scene_depth,
-                                                       int scene_normals,
+                                                       int scene_normals, int scene_lighting,
                                                        char *error, size_t error_size) {
     return validate_compute_source(source, size, !!pack_textures, !!scene_depth,
-                                   !!scene_normals, error, error_size);
+                                   !!scene_normals, !!scene_lighting, error, error_size);
 }
 
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
