@@ -7,9 +7,12 @@
 int main(int argc, char **argv) {
     if (argc != 3) return 64;
     bool positions = strcmp(argv[2], "positions") == 0;
+    bool position_lighting = strcmp(argv[2], "position-lit") == 0;
     bool lighting = strcmp(argv[2], "lighting") == 0;
     bool normals = lighting || strcmp(argv[2], "normals") == 0;
-    if (!positions && !normals) return 64;
+    positions = positions || position_lighting;
+    lighting = lighting || position_lighting;
+    if (!positions && !position_lighting && !normals) return 64;
     FILE *file = fopen(argv[1], "rb");
     if (!file || fseek(file, 0, SEEK_END) != 0) return 65;
     long length = ftell(file);
