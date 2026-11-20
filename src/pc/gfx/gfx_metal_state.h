@@ -43,6 +43,11 @@ struct GfxMetalTargetSize {
     uint32_t height;
 };
 
+struct GfxMetalBloomSettings {
+    float threshold;
+    float intensity;
+};
+
 struct GfxMetalPerformanceStats {
     double cpu_frame_ms;
     double gpu_frame_ms;
@@ -82,5 +87,6 @@ bool gfx_metal_target_size(uint32_t drawable_width, uint32_t drawable_height,
                            struct GfxMetalTargetSize *target_size);
 uint32_t gfx_metal_pipeline_cache_index(uint32_t sample_count,
                                         uint32_t render_state_key);
+struct GfxMetalBloomSettings gfx_metal_bloom_settings(uint32_t profile);
 
 #endif

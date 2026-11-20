@@ -745,8 +745,10 @@ static int sm64RenderDiagnosticMode;
                           forState:UIControlStateNormal];
     [self.fogButton setTitle:gfx_metal_fog_enabled() ? @"Fog: On" : @"Fog: Off"
                     forState:UIControlStateNormal];
-    [self.bloomButton setTitle:gfx_metal_bloom_enabled() ? @"Bloom: On" : @"Bloom: Off"
-                       forState:UIControlStateNormal];
+    static NSString *const bloom_names[] = { @"Low", @"Standard", @"High" };
+    [self.bloomButton setTitle:[NSString stringWithFormat:@"Bloom: %@ %@",
+        gfx_metal_bloom_enabled() ? @"On" : @"Off",
+        bloom_names[MIN(gfx_metal_bloom_profile(), 2u)]] forState:UIControlStateNormal];
     static NSString *const grade_names[] = { @"Neutral", @"Warm", @"Vivid", @"Cinematic" };
     [self.gradeButton setTitle:[NSString stringWithFormat:@"Grade: %@", grade_names[MIN(gfx_metal_color_grade(), 3u)]]
                        forState:UIControlStateNormal];
@@ -848,9 +850,28 @@ static int sm64RenderDiagnosticMode;
 
 - (void)toggleBloom {
 #if defined(RAPI_METAL)
-    gfx_metal_set_bloom_enabled(!gfx_metal_bloom_enabled());
-    [self refreshGraphicsSettings];
-    [self appendStatus:gfx_metal_bloom_enabled() ? @"Bloom enabled (quarter-resolution bright pass)" : @"Bloom disabled"];
+    static NSString *const names[] = { @"Low", @"Standard", @"High" };
+    struct GfxMetalBloomSettings current = gfx_metal_bloom_settings(gfx_metal_bloom_profile());
+    NSString *message = [NSString stringWithFormat:@"Quarter-resolution bloom. Threshold %.2f, intensity %.2f.",
+        current.threshold, current.intensity];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Bloom Settings"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    BOOL enabled = gfx_metal_bloom_enabled();
+    [alert addAction:[UIAlertAction actionWithTitle:enabled ? @"Turn Off" : @"Turn On"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            gfx_metal_set_bloom_enabled(!enabled);
+            [self refreshGraphicsSettings];
+        }]];
+    for (uint32_t profile = 0; profile < 3u; ++profile) {
+        uint32_t selected = profile;
+        [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ intensity", names[profile]]
+            style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                gfx_metal_set_bloom_profile(selected);
+                [self refreshGraphicsSettings];
+            }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 
@@ -913,6 +934,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_post_enabled(false);
             gfx_metal_set_fxaa_enabled(false);
             gfx_metal_set_bloom_enabled(false);
+            gfx_metal_set_bloom_profile(1u);
             gfx_metal_set_fog_enabled(false);
             gfx_metal_set_fog_profile(0u);
             gfx_metal_set_color_grade(0u);
@@ -945,6 +967,8 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_post_enabled(true);
             gfx_metal_set_fxaa_enabled(preset != GFX_METAL_PRESET_PERFORMANCE);
             gfx_metal_set_bloom_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
+            gfx_metal_set_bloom_profile(preset == GFX_METAL_PRESET_PERFORMANCE ? 0u :
+                                        (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
             gfx_metal_set_fog_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_fog_profile(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
             gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
@@ -1011,6 +1035,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_fxaa_enabled(false);
     gfx_metal_set_fog_enabled(false);
     gfx_metal_set_bloom_enabled(false);
+    gfx_metal_set_bloom_profile(1u);
     gfx_metal_set_color_grade(0u);
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);

@@ -50,6 +50,7 @@ def main() -> None:
     for token in (
         "gfx_metal_enhanced_settings()", "classic_only", "no_4x",
         "gfx_metal_target_size(2796, 1290, 75", "gfx_metal_pipeline_cache_index(4, 15) == 47",
+        "gfx_metal_bloom_settings(0u)", "bloom_low.threshold > bloom_standard.threshold",
     ):
         require(token in state_test, f"missing host regression case: {token}")
     for token in (
@@ -103,6 +104,9 @@ def main() -> None:
     require("CGFloat rowWidth = inner - gap * 4.0" in uikit and "UIButton *row1[]" in uikit and
             "UIButton *row3[]" in uikit and "settingsWidth - 28.0" in uikit,
             "graphics controls must reflow within the available iPhone panel width")
+    require("Bloom Settings" in uikit and "gfx_metal_set_bloom_profile(selected)" in uikit and
+            "bloom_settings.threshold" in metal and "bloom_settings.intensity" in metal,
+            "bloom UI must expose real threshold/intensity profiles used by compute and composite passes")
     require("enhanced effects suspended (direct path)" in uikit and
             "gfx_metal_offscreen_fallback_active()" in uikit,
             "developer performance panel must disclose enhanced-path fallback")

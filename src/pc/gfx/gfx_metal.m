@@ -113,6 +113,7 @@ static bool metal_fog_is_enabled;
 static uint32_t metal_fog_profile;
 static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
+static uint32_t metal_bloom_profile = 1u;
 static bool metal_shadows_is_enabled;
 static uint32_t metal_shadow_resolution = 512u;
 static uint32_t metal_sun_preset;
@@ -304,6 +305,8 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_fog_profile = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalFogProfile"]));
     metal_sky_preset = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSkyPreset"]));
     metal_bloom_is_enabled = [defaults boolForKey:@"SM64MetalBloomEnabled"];
+    if ([defaults objectForKey:@"SM64MetalBloomProfile"])
+        metal_bloom_profile = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalBloomProfile"]));
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -545,6 +548,14 @@ void gfx_metal_set_bloom_enabled(bool enabled) {
         if (!enabled) metal_performance_stats.bloom_pixels = 0;
     }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalBloomEnabled"];
+}
+uint32_t gfx_metal_bloom_profile(void) {
+    @synchronized ([NSObject class]) { return metal_bloom_profile; }
+}
+void gfx_metal_set_bloom_profile(uint32_t profile) {
+    uint32_t sanitized = MIN(profile, 2u);
+    @synchronized ([NSObject class]) { metal_bloom_profile = sanitized; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalBloomProfile"];
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -1480,7 +1491,9 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         }
     }
     vector_float4 fog_color = fog_colors[fog_profile];
-    vector_float4 bloom_params = { gfx_metal_bloom_enabled() ? 1.0f : 0.0f, 0.65f, 0.8f, 0.0f };
+    struct GfxMetalBloomSettings bloom_settings = gfx_metal_bloom_settings(gfx_metal_bloom_profile());
+    vector_float4 bloom_params = { gfx_metal_bloom_enabled() ? 1.0f : 0.0f,
+                                   bloom_settings.intensity, bloom_settings.threshold, 0.0f };
     /* saturation, contrast, warm/cool red-blue bias, brightness offset */
     static const vector_float4 grades[4] = {
         { 1.00f, 1.00f, 0.00f, 0.00f }, /* neutral */
@@ -1810,7 +1823,8 @@ static bool gfx_metal_encode_bloom(id<MTLCommandBuffer> command) {
         !gfx_metal_ensure_bloom_pipeline()) return false;
     id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
     if (!encoder) return false;
-    float threshold = 0.8f;
+    struct GfxMetalBloomSettings bloom_settings = gfx_metal_bloom_settings(gfx_metal_bloom_profile());
+    float threshold = bloom_settings.threshold;
     gfx_metal_dispatch_bloom(encoder, metal_bloom_extract_pipeline, source, metal_bloom_extract_texture,
                              &threshold, sizeof(threshold));
     uint32_t axis = 0;

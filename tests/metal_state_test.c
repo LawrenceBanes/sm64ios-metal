@@ -5,6 +5,13 @@
 #include <string.h>
 
 int main(void) {
+    struct GfxMetalBloomSettings bloom_low = gfx_metal_bloom_settings(0u);
+    struct GfxMetalBloomSettings bloom_standard = gfx_metal_bloom_settings(1u);
+    struct GfxMetalBloomSettings bloom_high = gfx_metal_bloom_settings(2u);
+    struct GfxMetalBloomSettings bloom_invalid = gfx_metal_bloom_settings(99u);
+    assert(bloom_low.threshold > bloom_standard.threshold && bloom_standard.threshold > bloom_high.threshold);
+    assert(bloom_low.intensity < bloom_standard.intensity && bloom_standard.intensity < bloom_high.intensity);
+    assert(bloom_invalid.threshold == bloom_standard.threshold && bloom_invalid.intensity == bloom_standard.intensity);
     assert(gfx_metal_sampler_address_mode(0) == GFX_SAMPLER_REPEAT);
     assert(gfx_metal_sampler_address_mode(0x1u) == GFX_SAMPLER_MIRROR);
     assert(gfx_metal_sampler_address_mode(0x2u) == GFX_SAMPLER_CLAMP);

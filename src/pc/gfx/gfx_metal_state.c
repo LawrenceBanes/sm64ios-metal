@@ -125,3 +125,13 @@ uint32_t gfx_metal_pipeline_cache_index(uint32_t sample_count,
     if (render_state_key >= 16u) return UINT32_MAX;
     return sample_index * 16u + render_state_key;
 }
+
+struct GfxMetalBloomSettings gfx_metal_bloom_settings(uint32_t profile) {
+    static const struct GfxMetalBloomSettings profiles[] = {
+        { 1.25f, 0.35f }, /* low */
+        { 0.80f, 0.65f }, /* standard */
+        { 0.55f, 1.00f }, /* high */
+    };
+    if (profile > 2u) profile = 1u;
+    return profiles[profile];
+}
