@@ -75,9 +75,11 @@ def main() -> None:
             "directional depth pass must feed the production final-pass receiver bindings")
     require("shadowMap.sample(shadowSampler" in shader_c and "shadowRanges.w>0.0" in shader_c,
             "receiver shader must sample the depth map with bounded PCF only when a valid fit exists")
-    require("kernel void sm64_god_rays" in shader_c and "depthTex.read(p).r>=0.999999" in shader_c and
+    require("kernel void sm64_god_rays" in shader_c and "depthTex.read(p)>=0.999999" in shader_c and
             "gfx_postprocess_project_direction" in metal,
             "light shafts must use depth occlusion and project the directional source through the camera")
+    require("smoothstep(0.014,0.021,sd)" in shader_c and "sky_params.y = 1.0f" in metal,
+            "day/sunset sky modes must draw a depth-masked, camera-projected sun disk")
     require("openShadowSettings" in uikit and "gfx_metal_cycle_shadow_resolution" in uikit,
             "developer UI must expose a shadow toggle and resolution control")
     require("openGodRaySettings" in uikit and "gfx_metal_cycle_god_ray_quality" in uikit and

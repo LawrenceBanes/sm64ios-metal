@@ -1433,7 +1433,19 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         { 1.08f, 1.12f, 0.015f, -0.015f } /* cinematic */
     };
     vector_float4 grade_style = grades[gfx_metal_color_grade() % 4u];
-    vector_float4 sky_params = { (float)gfx_metal_sky_preset(), 0.0f, 0.0f, 0.0f };
+    vector_float4 sky_params = { (float)gfx_metal_sky_preset(), 0.0f, -2.0f, -2.0f };
+    if (gfx_metal_sky_preset() != 0u) {
+        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+        const float sun_direction[3] = { 0.35f, 1.0f, 0.25f };
+        float sun_uv[2];
+        if (capture.has_view_matrix && capture.has_projection_matrix &&
+            gfx_postprocess_project_direction(capture.view_matrix, capture.projection_matrix,
+                                              sun_direction, sun_uv)) {
+            sky_params.y = 1.0f;
+            sky_params.z = sun_uv[0];
+            sky_params.w = sun_uv[1];
+        }
+    }
     [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
     [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
     [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:2];
