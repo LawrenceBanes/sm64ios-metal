@@ -5,7 +5,8 @@
 - Branch: `mission-79-shader64`
 - Base checkpoint: `24b757afec596d883ad5aee09719f75d8eba15ff`
 - Runtime postprocess shader pack vertical slice: `9f47ddf3aefb8ab53542c067d868a3ee4af698f8`
-- Current work: API v1 postprocess-only pack support; broader render stages remain unfinished
+- Precompiled `.metallib` support: `78af713088347b1210bb2302e8e64e7e12f2f685`, loader lifetime fix `6cb36ad8`
+- Current work: API v1 postprocess-only source or compiled-library pack support; broader render stages remain unfinished
 - Physical Apple device output: not tested
 
 ## Implemented in this increment
@@ -26,9 +27,11 @@
 - `tests/run_linux_checks.sh`: passed on 2026-11-20. Existing unrelated platform/action warnings were printed; no suite failure.
 - `git diff --check`: passed.
 - Apple Metal/Xcode validation: [workflow 44772126993](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44772126993) passed Linux checks and iOS device/simulator Metal backend compile/link, including wrapped reference pack MSL.
+- Follow-up Apple validation: [workflow 44775116342](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44775116342) passed both jobs. Xcode 27 compiled and linked the iOS device and simulator backends and built the precompiled-library ABI reference `.metallib` for iPhoneOS.
 - Full IPA workflow: [run 44772390342](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44772390342) passed Linux checks, Xcode 27 Metal/MSL validation, full iPhoneOS arm64 app build, packaging and private upload. The IPA was built from commit `9f47ddf3aefb8ab53542c067d868a3ee4af698f8`.
 - Private draft release: [unsigned build 44772390342.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-9f1ed7aa4c78936135a2). Asset `sm64ios-connected-world-arm64-unsigned.ipa`, 9,375,182 bytes, SHA-256 `c1074ab3e43242e209515c89f24e430e73a1e92c7955ff9167e467802d96d9ef`.
 - `xcrun` is unavailable locally; Apple build evidence comes from the GitHub-hosted Xcode 27 workflows. No physical iPhone rendering, visual parity, performance, thermal, or GPU-workload safety has been verified.
+- The current `.metallib` change has passed Apple validation, but the first IPA predates that increment; rebuild the private IPA from the latest code checkpoint before treating compiled-library import as included in a device-test candidate.
 
 ## Explicit current API 1 limitations
 
