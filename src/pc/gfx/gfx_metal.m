@@ -66,6 +66,13 @@ struct MetalFragmentParams {
     float frame_count;
 };
 
+struct MetalShader64FrameInfo {
+    float time_seconds;
+    float delta_seconds;
+    float frame_index;
+    float aspect_ratio;
+};
+
 struct MetalShader64GraphPass {
     char id[33], input[33], output[33];
     float scale;
@@ -191,6 +198,8 @@ static size_t program_count;
 static struct MetalTexture textures[METAL_TEXTURE_CAP];
 static size_t texture_count;
 static uint32_t frame_count;
+static double shader64_start_time;
+static double shader64_previous_time;
 static bool metal_scene_active;
 static bool logged_first_completed_frame;
 static bool logged_first_presented_frame;
@@ -1662,6 +1671,15 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     }
     if (!graph) return false;
     bool ok = scene_source != nil;
+    double now = CACurrentMediaTime();
+    if (shader64_start_time == 0.0) shader64_start_time = now;
+    float delta_time = shader64_previous_time > 0.0 ?
+        (float)fmin(fmax(now - shader64_previous_time, 0.0), 0.1) : 0.0f;
+    shader64_previous_time = now;
+    struct MetalShader64FrameInfo frame_info = {
+        (float)(now - shader64_start_time), delta_time, (float)frame_count,
+        drawable.texture.height ? (float)drawable.texture.width / (float)drawable.texture.height : 1.0f
+    };
     bool requires_scene_depth = false;
     bool requires_lighting = false;
     bool requires_shadows = false;
@@ -1780,6 +1798,7 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             [compute setTexture:input atIndex:0];
             [compute setTexture:output atIndex:1];
             [compute setBytes:&parameters length:sizeof(parameters) atIndex:0];
+            [compute setBytes:&frame_info length:sizeof(frame_info) atIndex:2];
             if (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) {
                 for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index) {
                     id<MTLTexture> texture = graph->pack_textures[MIN(texture_index,
@@ -1936,15 +1955,17 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                                         reflection:&reflection
                                                              error:&pipeline_error] : nil;
             [function release];
-            BOOL input_bound = NO, output_bound = NO, parameters_bound = NO, texture_count_bound = NO;
+            BOOL input_bound = NO, output_bound = NO, parameters_bound = NO, frame_info_bound = NO;
+            BOOL texture_count_bound = NO;
             BOOL pack_texture_bound[GFX_SHADER64_MAX_PACK_TEXTURES] = { NO };
-            if (pipeline && reflection.arguments.count == (compute_pack_textures ? 8u : 3u)) {
+            if (pipeline && reflection.arguments.count == (compute_pack_textures ? 9u : 4u)) {
                 for (MTLArgument *argument in reflection.arguments) {
                     if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                         argument.index == 0u && argument.access == MTLArgumentAccessReadOnly) input_bound = YES;
                     else if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                              argument.index == 1u && argument.access == MTLArgumentAccessWriteOnly) output_bound = YES;
                     else if (argument.type == MTLArgumentTypeBuffer && argument.index == 0u) parameters_bound = YES;
+                    else if (argument.type == MTLArgumentTypeBuffer && argument.index == 2u) frame_info_bound = YES;
                     else if (compute_pack_textures && argument.type == MTLArgumentTypeBuffer && argument.index == 1u)
                         texture_count_bound = YES;
                     else if (compute_pack_textures && argument.type == MTLArgumentTypeTexture &&
@@ -1953,7 +1974,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                         pack_texture_bound[argument.index - 2u] = YES;
                 }
             }
-            BOOL abi_valid = input_bound && output_bound && parameters_bound;
+            BOOL abi_valid = input_bound && output_bound && parameters_bound && frame_info_bound;
             if (compute_pack_textures) {
                 abi_valid = abi_valid && texture_count_bound;
                 for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index)
@@ -3517,6 +3538,8 @@ static void gfx_metal_shutdown(void) {
     memset(programs, 0, sizeof(programs)); memset(textures, 0, sizeof(textures));
     program_count = 0; texture_count = 0; memset(depth_states, 0, sizeof(depth_states));
     frame_count = 0;
+    shader64_start_time = 0.0;
+    shader64_previous_time = 0.0;
     drawable_unavailable_count = 0;
     logged_pipeline_failures = 0;
     logged_pipeline_successes = 0;

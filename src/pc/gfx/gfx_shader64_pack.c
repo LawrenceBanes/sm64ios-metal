@@ -608,6 +608,7 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
         "texture2d<float, access::read> image [[texture(0)]]",
         "texture2d<float, access::write> output [[texture(1)]]",
         "constant float4 &params [[buffer(0)]]",
+        "constant float4 &frameInfo [[buffer(2)]]",
         "uint2 tid [[thread_position_in_grid]]",
         "#include <metal_stdlib>", "using namespace metal;"
     };
@@ -639,7 +640,7 @@ static int validate_compute_source(const char *source, size_t size, int pack_tex
         if (!memcmp(source + i, "[[texture(", 10u)) ++texture_bindings;
     for (size_t i = 0; i + 9u <= size; ++i)
         if (!memcmp(source + i, "[[buffer(", 9u)) ++buffer_bindings;
-    if (texture_bindings != (pack_textures ? 6u : 2u) || buffer_bindings != (pack_textures ? 2u : 1u)) {
+    if (texture_bindings != (pack_textures ? 6u : 2u) || buffer_bindings != (pack_textures ? 3u : 2u)) {
         err(error, error_size, "compute pass resource bindings do not match its declared texture contract"); return 0;
     }
     if (contains(source, size, "#include \"")) {

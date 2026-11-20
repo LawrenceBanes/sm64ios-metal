@@ -371,13 +371,17 @@ class ShaderPackTests(unittest.TestCase):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
                   b'kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]], '
                   b'texture2d<float, access::write> output [[texture(1)]], constant float4 &params [[buffer(0)]], '
-                  b'uint2 tid [[thread_position_in_grid]]) { output.write(image.read(tid),tid); }')
+                  b'constant float4 &frameInfo [[buffer(2)]], '
+                  b'uint2 tid [[thread_position_in_grid]]) { output.write(image.read(tid) + frameInfo * params.x,tid); }')
         error = ctypes.create_string_buffer(256)
         self.assertTrue(self.api.gfx_shader64_validate_compute_pass_source(
             source, len(source), error, len(error)), error.value)
         invalid = source.replace(b'access::write', b'access::read')
         self.assertFalse(self.api.gfx_shader64_validate_compute_pass_source(
             invalid, len(invalid), error, len(error)))
+        missing_frame_info = source.replace(b", constant float4 &frameInfo [[buffer(2)]]", b"")
+        self.assertFalse(self.api.gfx_shader64_validate_compute_pass_source(
+            missing_frame_info, len(missing_frame_info), error, len(error)))
         wrong_slot = source.replace(b"[[texture(1)]]", b"[[texture(2)]]")
         self.assertFalse(self.api.gfx_shader64_validate_compute_pass_source(
             wrong_slot, len(wrong_slot), error, len(error)))
@@ -394,7 +398,8 @@ class ShaderPackTests(unittest.TestCase):
                   b'texture2d<float> packTexture0 [[texture(2)]], texture2d<float> packTexture1 [[texture(3)]], '
                   b'texture2d<float> packTexture2 [[texture(4)]], texture2d<float> packTexture3 [[texture(5)]], '
                   b'constant float4 &params [[buffer(0)]], constant uint &packTextureCount [[buffer(1)]], '
-                  b'uint2 tid [[thread_position_in_grid]]) { output.write(image.read(tid) * params.x + '
+                  b'constant float4 &frameInfo [[buffer(2)]], '
+                  b'uint2 tid [[thread_position_in_grid]]) { output.write(image.read(tid) * params.x + frameInfo + '
                   b'packTexture0.read(tid) + packTexture1.read(tid) + packTexture2.read(tid) + '
                   b'packTexture3.read(tid) + float(packTextureCount), tid); }')
         error = ctypes.create_string_buffer(256)

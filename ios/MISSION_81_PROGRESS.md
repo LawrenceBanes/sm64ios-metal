@@ -97,6 +97,13 @@
 - Added ComputeTexture64 using the existing locally authored checker PNG. Its kernel modulates the actual input image from a user texture and routes it through a generic fullscreen presenter.
 - Focused Shader64 tests pass (26 tests), including production ZIP-importer checks and ASan/UBSan archive smoke. Metal source-generation, project wiring, shell syntax, and diff checks pass. Full `CC=clang tests/run_linux_checks.sh` passed with the usual fixture diagnostics and unrelated existing compiler warnings.
 - Commit `dfcb0bbe` was pushed. Apple workflow [44816848250](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44816848250) passed the full Linux suite and Xcode 27 iOS Metal backend plus both compute MSL examples. The GPU kernels were compiled, not run; no device screenshot exists.
-- The pack-texture compute increment is therefore host- and Apple-compiled, but not GPU/runtime-verified. Continue into the next scene-data capability; no final `main` merge yet.
+- The pack-texture compute increment is therefore host- and Apple-compiled, but not GPU/runtime-verified.
+
+## Current working increment — animated compute inputs
+
+- Added a shared compute `frameInfo` uniform with elapsed seconds, clamped frame delta, frame index, and output aspect ratio. It is bound at buffer 2 for every compute node; pipeline reflection requires the declared ABI.
+- Updated the reference compute filters to consume time: ComputeBlur64 varies its blend slightly, and ComputeTexture64 scrolls the imported checker texture. This validates that animation can be authored in a pack kernel without an engine-specific effect implementation.
+- Focused Shader64 validation (26 tests, including importer and ASan/UBSan archive smoke), Metal codegen, project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh` pass. Apple compile-only validation is pending; even after it passes, runtime timing and image output remain unverified.
+- No final `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

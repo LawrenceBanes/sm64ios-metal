@@ -4,6 +4,7 @@ using namespace metal;
 kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]],
                              texture2d<float, access::write> output [[texture(1)]],
                              constant float4 &params [[buffer(0)]],
+                             constant float4 &frameInfo [[buffer(2)]],
                              uint2 tid [[thread_position_in_grid]]) {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
     uint2 inputSize = uint2(image.get_width(), image.get_height());
@@ -16,5 +17,6 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
             blurred += image.read(point) * (1.0 / 9.0);
         }
     }
-    output.write(mix(image.read(center), blurred, clamp(params.x, 0.0, 1.0)), tid);
+    float strength = clamp(params.x + 0.05 * sin(frameInfo.x), 0.0, 1.0);
+    output.write(mix(image.read(center), blurred, strength), tid);
 }
