@@ -14,6 +14,7 @@ uint32_t gfx_metal_ssao_debug_mode(void);
 void gfx_metal_cycle_ssao_mode(void);
 bool gfx_metal_effects_enabled(void);
 void gfx_metal_set_effects_enabled(bool enabled);
+bool gfx_metal_offscreen_fallback_active(void);
 bool gfx_metal_shadows_enabled(void);
 void gfx_metal_set_shadows_enabled(bool enabled);
 uint32_t gfx_metal_shadow_resolution(void);

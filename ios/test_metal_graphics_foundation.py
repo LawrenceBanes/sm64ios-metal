@@ -95,6 +95,9 @@ def main() -> None:
     require("CGFloat rowWidth = inner - gap * 4.0" in uikit and "UIButton *row1[]" in uikit and
             "UIButton *row3[]" in uikit and "settingsWidth - 28.0" in uikit,
             "graphics controls must reflow within the available iPhone panel width")
+    require("enhanced effects suspended (direct path)" in uikit and
+            "gfx_metal_offscreen_fallback_active()" in uikit,
+            "developer performance panel must disclose enhanced-path fallback")
 
     for token in (
         "supportsTextureSampleCount:2", "supportsTextureSampleCount:4",
@@ -116,6 +119,7 @@ def main() -> None:
         "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled", "gfx_metal_cycle_ssao_mode",
         "gfx_metal_set_post_enabled", "gfx_metal_set_fxaa_enabled", "gfx_metal_step_exposure",
         "gfx_metal_effects_enabled", "gfx_metal_set_effects_enabled",
+        "gfx_metal_offscreen_fallback_active",
         "SM64MetalEffectsEnabled", "metal_performance_stats.ssao_pixels = 0",
         "gfx_metal_set_fog_enabled", "gfx_metal_set_bloom_enabled",
         "gfx_metal_set_ssao_quality", "gfx_metal_cycle_ssao_quality",

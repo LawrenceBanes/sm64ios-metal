@@ -371,6 +371,9 @@ void gfx_metal_cycle_ssao_quality(void) {
 }
 
 bool gfx_metal_effects_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled; } }
+bool gfx_metal_offscreen_fallback_active(void) {
+    @synchronized ([NSObject class]) { return metal_offscreen_runtime_failed; }
+}
 void gfx_metal_set_effects_enabled(bool enabled) {
     @synchronized ([NSObject class]) {
         metal_effects_enabled = enabled;

@@ -986,8 +986,9 @@ static int sm64RenderDiagnosticMode;
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = [NSString stringWithUTF8String:gfx_metal_preset_name(stats.preset)];
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | Shadows %@ %llu tris | Rays %@ %llu px | targets ~%.1f MiB",
-        preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
+        @"%@%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | Shadows %@ %llu tris | Rays %@ %llu px | targets ~%.1f MiB",
+        preset, gfx_metal_offscreen_fallback_active() ? @" • enhanced effects suspended (direct path)" : @"",
+        stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
         stats.sample_count, stats.anisotropy,

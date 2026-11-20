@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `aa7c92c1` (responsive Graphics panel layout); Apple backend/MSL validation passed in [run 44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) passed for source `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; it predates the responsive layout and latest direct-fallback repair.
+- Current pushed source commit: `aa7c92c1` (responsive Graphics panel layout); Apple backend/MSL validation passed in [run 44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490), and regression/backend validation passed again in [run 44705969874](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705969874). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) passed for source `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; it predates the responsive layout and latest direct-fallback repair.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -125,7 +125,7 @@
 - `07728beb` Apple backend/MSL validation and Linux jobs passed in [run 44704150806](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704150806).
 - Optional sunlight intensity control (Off/Low/Medium/High) uses depth-neighbor reconstructed view normals transformed to world space, Lambert diffuse, and shadow-map PCF visibility. A demonstrated integration defect was fixed: inverse projection had only been computed when fog was active, leaving the shadow receiver's depth reconstruction matrix zero with shadows alone. Apple backend/MSL and Linux checks passed in run [44704797589](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704797589).
 - Graphics panel controls reflow against the current iPhone/iPad panel width rather than keeping the 520-point desktop layout. This change is included in `aa7c92c1`; focused and full Linux tests plus Apple backend/MSL validation passed, but it is not in the current IPA.
-- The offscreen renderer now latches to direct drawable rendering after allocation/compositor failure and does not retry every frame. A deliberate graphics setting change clears the latch. Focused source checks pass; full regression and Apple validation are in progress.
+- The offscreen renderer now latches to direct drawable rendering after allocation/compositor failure and does not retry every frame. A deliberate graphics setting change clears the latch. The developer performance panel reports when enhanced effects are suspended on the direct fallback. Focused source checks and full local Clang Linux regressions pass; Apple validation is pending for this follow-up.
 
 ## Next task
 
