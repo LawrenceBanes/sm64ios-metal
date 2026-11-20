@@ -30,7 +30,7 @@ The v1 installer accepts ZIP stored or deflate entries, up to 8 MiB compressed/e
 }
 ```
 
-The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four parameters are allowed. A `float` declares finite `min`, `default`, and `max` within `[-8, 8]` with `min <= default <= max`; the Graphics UI renders a bounded slider. A `boolean` uses default `0` or `1` and renders a toggle. A `select` uses an integer default index and 2–8 non-empty option labels (up to 48 characters each), and renders a segmented selector. In the shader these map to floats: the scalar value, 0/1, or selected option index. API version mismatches are rejected. `source` may be `shaders/postprocess.metal` or `shaders/postprocess.metallib`; both forms use the same API v1 postprocess contract.
+The ID is 1–64 ASCII letters, digits, underscore, or hyphen. At most four parameters are allowed. A `float` declares finite `min`, `default`, and `max` within `[-8, 8]` with `min <= default <= max`; the Graphics UI renders a bounded slider. A `boolean` uses default `0` or `1` and renders a toggle. A `select` uses an integer default index and 2–8 non-empty option labels (up to 48 characters each), and renders a segmented selector. In the shader these map to floats: the scalar value, 0/1, or selected option index. Values persist per pack, and the parameter UI can restore declared defaults. The pack list shows author, version, shader API, stage, and entry point. API version mismatches are rejected. `source` may be `shaders/postprocess.metal` or `shaders/postprocess.metallib`; both forms use the same API v1 postprocess contract.
 
 ## Metal entry point
 

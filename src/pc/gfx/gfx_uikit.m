@@ -210,6 +210,10 @@ static int sm64RenderDiagnosticMode;
     [apply setTitle:@"Apply" forState:UIControlStateNormal];
     [apply addTarget:self action:@selector(applyValues) forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:apply];
+    UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem];
+    [reset setTitle:@"Reset to Defaults" forState:UIControlStateNormal];
+    [reset addTarget:self action:@selector(resetValues) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:reset];
     UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
     [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
     [cancel addTarget:self action:@selector(cancelChanges) forControlEvents:UIControlEventTouchUpInside];
@@ -246,6 +250,19 @@ static int sm64RenderDiagnosticMode;
 - (void)applyValues {
     if (self.onApply) self.onApply([[self.values copy] autorelease]);
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)resetValues {
+    for (NSUInteger index = 0; index < self.definitions.count; ++index) {
+        NSDictionary *definition = self.definitions[index];
+        NSNumber *value = definition[@"default"];
+        self.values[index] = value;
+        id control = self.controls[index];
+        if ([control isKindOfClass:[UISlider class]]) [(UISlider *)control setValue:value.floatValue animated:YES];
+        else if ([control isKindOfClass:[UISwitch class]]) [(UISwitch *)control setOn:value.boolValue animated:YES];
+        else [(UISegmentedControl *)control setSelectedSegmentIndex:value.integerValue];
+        [self refreshLabelAtIndex:index];
+    }
 }
 
 - (void)cancelChanges { [self dismissViewControllerAnimated:YES completion:nil]; }
@@ -1388,6 +1405,17 @@ static int sm64RenderDiagnosticMode;
         NSDictionary *manifest = [self shaderManifestForID:packID root:root error:nil];
         if (!manifest) continue;
         NSString *name = [manifest[@"name"] isKindOfClass:[NSString class]] ? manifest[@"name"] : packID;
+        [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"About %@", name]
+            style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                (void)action;
+                NSString *details = [NSString stringWithFormat:@"%@ %@\nBy %@\nShader API %@\nStage %@\nEntry %@",
+                    manifest[@"name"], manifest[@"version"], manifest[@"author"],
+                    manifest[@"shaderApiVersion"], manifest[@"stage"], manifest[@"entryPoint"]];
+                UIAlertController *about = [UIAlertController alertControllerWithTitle:@"Shader Pack Details"
+                    message:details preferredStyle:UIAlertControllerStyleAlert];
+                [about addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:about animated:YES completion:nil];
+            }]];
         [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault
             handler:^(UIAlertAction *action) { (void)action; [self activateShaderPack:packID]; }]];
         if ([manifest[@"parameters"] isKindOfClass:[NSArray class]] && [manifest[@"parameters"] count]) {

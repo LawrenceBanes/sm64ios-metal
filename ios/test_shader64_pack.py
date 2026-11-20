@@ -132,7 +132,8 @@ class ShaderPackTests(unittest.TestCase):
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",
                       "gfx_shader64_install_zip", "shader64_post", "Delete an installed pack",
                       "Configure %@", "gfx_metal_use_classic_shader", "UISlider", "UISwitch",
-                      "UISegmentedControl", "type must be float, boolean, or select"):
+                      "UISegmentedControl", "type must be float, boolean, or select",
+                      "Reset to Defaults", "About %@", "Shader API %@"):
             self.assertIn(token, ui)
         importer_start = ui.index("- (void)installShaderArchiveAtURL:(NSURL *)url {")
         importer = ui[importer_start:ui.index("\n}", importer_start) + 2]
