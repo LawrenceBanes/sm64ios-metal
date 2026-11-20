@@ -267,7 +267,7 @@ xcrun --sdk macosx clang -std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 \
     "$repo_dir/tests/shader64_material_codegen_emit.c" \
     "$repo_dir/src/pc/gfx/gfx_metal_shader.c" "$repo_dir/src/pc/gfx/gfx_cc.c" \
     -o "$material_codegen_tool"
-for mode_pack in "positions SurfacePosition64" "normals VertexNormal64" "lighting SunlitMaterial64"; do
+for mode_pack in "positions SurfacePosition64" "positions GeometryNormal64" "normals VertexNormal64" "lighting SunlitMaterial64"; do
     read -r mode pack <<< "$mode_pack"
     source="$repo_dir/ios/shaderpacks/$pack/shaders/material.metal"
     name="shader64-generated-material-$pack"

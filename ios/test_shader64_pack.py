@@ -655,7 +655,8 @@ class ShaderPackTests(unittest.TestCase):
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
-                         "VertexNormal64", "SunlitMaterial64", "SurfacePosition64")
+                         "VertexNormal64", "SunlitMaterial64", "SurfacePosition64",
+                         "GeometryNormal64")
         reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id

@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `64e4df5c` (adds optional camera-space sun lighting to normal-aware material shaders; Apple workflow `44830456738` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `d7dafb22` (adds opt-in view-space vertex positions to API 2 material shaders; Apple workflow `44832579016` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -172,4 +172,10 @@ Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary 
 - The interface is independently selectable from normals and directional light. Generated MSL, the packed vertex descriptor, Fast3D VBO data, UIKit manifest validation, API 2 restore, Classic fallback, and production ZIP import now share the flag. WSC geometry goes through the same Fast3D vertex loader and keeps the same view-space convention.
 - Added `SurfacePosition64`, a minimal source pack that applies a position-dependent color modulation, plus generated MSL compile/link coverage for position, normal, and sunlit material variants. The default renderer and existing API 1 packs remain on their previous path.
 - Validation: 31 focused Shader64 tests pass, including production import of all reference packs; `CC=clang tests/run_linux_checks.sh` passes the complete Linux suite. `tests/run_metal_shader_codegen_test.sh`, `tests/run_scene_capture_test.sh`, `tests/check_metal_project_wiring.sh`, `bash -n ios/validate-metal-apple.sh`, and `git diff --check` pass. Targeted ASan/UBSan runs for shader code generation and scene capture pass.
-- Apple MSL compile/link is pending for this increment. No GPU execution, visual result, or physical-device behavior is claimed. Next: Apple validation, then continue with the next useful renderer resource interface without merging to `main`.
+- Apple workflow [44832579016](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44832579016) passed both the complete Linux regression job and Xcode 27 iOS Metal backend plus generated MSL compile/link, including SurfacePosition64 and generated Fast3D variants for SurfacePosition64, VertexNormal64, and SunlitMaterial64. This is compile/link validation, not GPU execution or visual proof. No physical-device behavior is claimed; next: continue with the next useful renderer resource interface without merging to `main`.
+
+## Current working increment — derivative-derived geometric normals example
+
+- Added GeometryNormal64 as an API 2 reference pack that uses actual interpolated view-space positions and Metal fragment derivatives to derive and visualize per-triangle face normals. The effect is authored entirely in the pack shader; it does not add engine-side normal fabrication or change original Fast3D lighting.
+- The result is a flat derivative normal, not a smooth vertex normal; discontinuities, triangle orientation, invalid transforms, or degenerate screen-space triangles can affect the output. Invalid data preserves the original combiner color.
+- Added the pack to the production-importer matrix and Apple generated-Fast3D MSL compile/link workload. Runtime visual testing is pending.
