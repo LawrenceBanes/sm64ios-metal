@@ -87,6 +87,7 @@ Inspected local archive: `Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip`, SHA-256 `
 | Configured directional sun and camera transforms | Optional `sceneLighting` resource on API 2 fullscreen nodes | Implemented for Lumen64Graph; depth-derived screen-space diffuse with edge artifacts |
 | Native directional shadow depth and fitted world-to-shadow basis | Optional `sceneShadows` resource on API 2 fullscreen nodes | Implemented by reusing the bounded native map; Lumen64ShadowGraph includes 3×3 PCF; one map, up to 8192 captured source triangles, device appearance unverified |
 | Pack-owned textures | Manifest-ordered PNGs bound to opted-in API 2 fullscreen passes | Implemented for four PNGs maximum with bounded ZIP/decode/upload and TextureDemo64; GPU output remains device-unverified |
+| Paper64 material-level toon style | Optional API 2 material hook on actual Fast3D draws | Paper64MaterialGraph quantizes combiner-color luminance and warms Mario independently; no normal-driven light bands/outlines, render appearance unverified |
 | Material categories and post-combiner shading | Optional API 2 material hook with world/object/character category | Implemented; MaterialDebug64 exposes categories as actual surface colors. No normals, world position, or full albedo/roughness G-buffer |
 | Setup compute and voxel lighting | Needs compute nodes, storage buffers, atomic/resource contracts | Not available |
 | Minecraft time/weather/biome/entity/player uniforms | Needs generic world state API and per-game adapters | Not available; no Minecraft concepts in core API |

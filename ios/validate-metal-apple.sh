@@ -153,7 +153,8 @@ xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx"
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$material_wrapper_tool"
 for material_source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/material.metal \
-                      "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/material.metal; do
+                      "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/material.metal \
+                      "$repo_dir"/ios/shaderpacks/Paper64MaterialGraph/shaders/material.metal; do
     pack=$(basename "$(dirname "$(dirname "$material_source")")")
     name="shader64-$pack-material"
     "$material_wrapper_tool" "$material_source" > "$shader_dir/$name.metal"

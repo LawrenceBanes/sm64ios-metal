@@ -348,7 +348,7 @@ class ShaderPackTests(unittest.TestCase):
     def test_production_importer_accepts_every_reference_pack(self):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
-                         "Lumen64ShadowGraph", "TextureDemo64")
+                         "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())

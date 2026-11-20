@@ -1,0 +1,18 @@
+{
+  "formatVersion": 2,
+  "id": "Paper64MaterialGraph",
+  "name": "Paper64 2.0 Material Toon",
+  "author": "SHITBOX LABZ INC.",
+  "version": "2.0.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "levels", "label": "Shade bands", "type": "float", "default": 4, "min": 2, "max": 8 },
+    { "name": "toonStrength", "label": "Toon strength", "type": "float", "default": 0.8, "min": 0, "max": 1 },
+    { "name": "characterWarmth", "label": "Character warmth", "type": "float", "default": 0.12, "min": -0.5, "max": 0.5 }
+  ],
+  "materialShader": { "source": "shaders/material.metal" },
+  "passes": [
+    { "id": "native_scene", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/passthrough.metal", "scale": 1.0 }
+  ]
+}

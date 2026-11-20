@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest committed code checkpoint: `fa481b40` (API 2 directional-light input and Lumen64Graph); current working tree adds an opt-in API 2 binding to the existing native shadow map.
+- Latest committed code checkpoint: `d1199114` (bounded API 2 pack-owned PNG textures and TextureDemo64); current working tree adds Paper64 2.0 material-class toon shading.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -46,6 +46,9 @@
 - Added C wrapper and reference-pack importer tests for the shadow resource. `python3 ios/test_shader64_pack.py` passes 18 tests (including ASan/UBSan ZIP smoke); `CC=clang tests/run_linux_checks.sh` passed. `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, and `git diff --check` passed. Local `xcrun` is unavailable, so actual MSL compilation is pending Apple CI.
 - Previous Apple workflow `44800637968` completed successfully for `fa481b40c5c0107161cca4ed469d575e495fee46`; it predates this shadow-map binding and does not validate the current working tree.
 - Commit `885909b489cc747fb42623d8d147bc3c98608d36` was pushed. Apple validation workflow `44802320437` passed its full Linux regression job and Xcode 27 iOS device/simulator compile/link plus all wrapped MSL validation, including Lumen64ShadowGraph. This confirms compile/link only, not runtime GPU execution or visual correctness.
+- Added bounded pack-owned PNG resources to API 2. ZIP import accepts direct `textures/*.png` files (4 MiB per file; 8 MiB whole pack); runtime checks dimensions (2048 maximum per side, 4 megapixels total), decodes to premultiplied RGBA8, binds up to four manifest-ordered slots on `packTextures` passes, and retains Metal textures through command completion. TextureDemo64 exercises the public contract. Texture passes are kept separate from scene-depth/light/shadow passes for this first binding version.
+- Commit `d1199114b28f5cd563e5b9639a48172a1785a50f` was pushed after all 20 focused Shader64 tests, importer/sanitizer smoke tests, full `CC=clang tests/run_linux_checks.sh`, and wrapper generation passed. Apple workflow `44804504596` passed full Linux and Xcode 27 backend plus wrapped MSL validation, including TextureDemo64. No runtime GPU result is established.
+- Paper64MaterialGraph is added in the current working tree: it quantizes the post-combiner Fast3D color and warms Mario independently using material classification. It does not use geometric normals or produce directional toon bands; importer tests pass and Apple MSL CI is pending.
 - Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
 - Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
 - IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
@@ -54,8 +57,8 @@
 
 ## Remaining work / next
 
-1. Device-test material class separation, depth, reconstructed normals, Lumen64 lighting, and Lumen64ShadowGraph against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
-2. Extend API 2 with pack-owned textures and better material geometry inputs only after defining bounded resource/attribute contracts; then add temporal history/compute if the renderer supports a safe resource lifecycle.
-3. Continue with pack-owned textures and additional material data/history only after clear bounded binding contracts. Native vertex normals, general G-buffers, arbitrary shadow cameras/passes, compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
+1. Validate and commit Paper64MaterialGraph, then compile its public material hook with Apple CI.
+2. Device-test material class separation, depth, reconstructed normals, Lumen64 lighting/shadows, TextureDemo64, and Paper64MaterialGraph against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
+3. Improve geometry/material inputs with actual normal and transform data only after tracing what Fast3D provides; temporal history/compute still require bounded resource-lifecycle contracts. Native vertex normals, general G-buffers, arbitrary shadow cameras/passes, compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
