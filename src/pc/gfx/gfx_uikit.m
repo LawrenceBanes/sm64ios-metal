@@ -809,7 +809,7 @@ static int sm64RenderDiagnosticMode;
 
 - (void)openGodRaySettings {
 #if defined(RAPI_METAL)
-    NSString *message = @"Depth-occluded radial light shafts are a quarter-resolution screen-space approximation. The source is projected from the renderer's directional sun vector; this is not volumetric scattering.";
+    NSString *message = [NSString stringWithFormat:@"Depth-occluded radial light shafts are a quarter-resolution screen-space approximation, not volumetric scattering. Intensity %.2f×.", gfx_metal_god_ray_intensity()];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Screen-Space Light Shafts"
         message:message preferredStyle:UIAlertControllerStyleAlert];
     BOOL enabled = gfx_metal_god_rays_enabled();
@@ -822,6 +822,12 @@ static int sm64RenderDiagnosticMode;
         }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cycle quality" style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) { gfx_metal_cycle_god_ray_quality(); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reduce intensity" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_god_ray_intensity(-1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Increase intensity" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_god_ray_intensity(1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reset intensity" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { gfx_metal_reset_god_ray_intensity(); [self refreshGraphicsSettings]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 #endif
@@ -1076,6 +1082,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_sky_preset(0u);
             gfx_metal_set_shadows_enabled(false);
             gfx_metal_set_god_rays_enabled(false);
+            gfx_metal_reset_god_ray_intensity();
             gfx_metal_set_sun_preset(0u);
             gfx_metal_set_sun_intensity(0u);
             gfx_metal_set_effects_enabled(false);
@@ -1120,6 +1127,7 @@ static int sm64RenderDiagnosticMode;
                                           preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_god_rays_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_god_ray_quality(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u);
+            gfx_metal_reset_god_ray_intensity();
             gfx_metal_set_effects_enabled(true);
         }
     } else {
@@ -1186,6 +1194,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_sky_preset(0u);
     gfx_metal_set_shadows_enabled(false);
     gfx_metal_set_god_rays_enabled(false);
+    gfx_metal_reset_god_ray_intensity();
     gfx_metal_set_shadow_resolution(512u);
     gfx_metal_set_sun_preset(0u);
     gfx_metal_set_sun_intensity(0u);

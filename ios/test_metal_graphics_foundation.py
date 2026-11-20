@@ -59,6 +59,7 @@ def main() -> None:
         "gfx_metal_fog_adjustments_step", "GFX_METAL_FOG_START",
         "gfx_metal_tone_mapping_sanitize", "gfx_metal_tone_mapping_name_for_mode",
         "gfx_metal_exposure_sanitize", "gfx_metal_exposure_step",
+        "gfx_metal_god_ray_intensity_sanitize", "gfx_metal_god_ray_intensity_step",
     ):
         require(token in state_test, f"missing host regression case: {token}")
     for token in (
@@ -195,6 +196,8 @@ def main() -> None:
         "gfx_metal_tone_mapping_mode", "gfx_metal_set_tone_mapping_mode", "SM64MetalToneMappingMode",
         "Tone Mapping", "Reinhard curve", "ACES-inspired curve", "x/(1.0+x)",
         "gfx_metal_adjust_exposure", "gfx_metal_reset_exposure", "−0.25 EV", "+0.25 EV",
+        "gfx_metal_god_ray_intensity", "gfx_metal_adjust_god_ray_intensity",
+        "SM64MetalGodRayIntensity", "Increase intensity", "quarter-resolution screen-space approximation",
         "SM64MetalAORadius", "SM64MetalAOBias", "SM64MetalAOIntensity", "AO quality: %@",
         "Ambient Occlusion", "Reset AO tuning", "parameters.x *= adjustments.radius_scale",
         "SM64MetalBrightness", "SM64MetalContrast", "SM64MetalSaturation", "SM64MetalTemperature",

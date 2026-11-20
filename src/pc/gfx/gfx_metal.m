@@ -124,6 +124,7 @@ static uint32_t metal_sun_preset;
 static uint32_t metal_sun_intensity;
 static bool metal_god_rays_is_enabled;
 static uint32_t metal_god_ray_quality = 1u;
+static float metal_god_ray_intensity = 1.0f;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -304,6 +305,8 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     NSInteger saved_ray_quality = [defaults integerForKey:@"SM64MetalGodRayQuality"];
     metal_god_ray_quality = [defaults objectForKey:@"SM64MetalGodRayQuality"] ?
         (uint32_t)MIN(2, MAX(0, saved_ray_quality)) : 1u;
+    metal_god_ray_intensity = gfx_metal_god_ray_intensity_sanitize(
+        [defaults objectForKey:@"SM64MetalGodRayIntensity"] ? (float)[defaults doubleForKey:@"SM64MetalGodRayIntensity"] : 1.0f);
     NSInteger saved_shadow_resolution = [defaults integerForKey:@"SM64MetalShadowResolution"];
     metal_shadow_resolution = saved_shadow_resolution == 1024 || saved_shadow_resolution == 2048 ?
                               (uint32_t)saved_shadow_resolution : 512u;
@@ -527,6 +530,22 @@ void gfx_metal_set_god_rays_enabled(bool enabled) {
 }
 uint32_t gfx_metal_god_ray_quality(void) {
     @synchronized ([NSObject class]) { return metal_god_ray_quality; }
+}
+float gfx_metal_god_ray_intensity(void) {
+    @synchronized ([NSObject class]) { return metal_god_ray_intensity; }
+}
+void gfx_metal_adjust_god_ray_intensity(int direction) {
+    float intensity;
+    @synchronized ([NSObject class]) {
+        metal_god_ray_intensity = gfx_metal_god_ray_intensity_step(metal_god_ray_intensity, direction);
+        metal_offscreen_runtime_failed = false;
+        intensity = metal_god_ray_intensity;
+    }
+    [[NSUserDefaults standardUserDefaults] setDouble:intensity forKey:@"SM64MetalGodRayIntensity"];
+}
+void gfx_metal_reset_god_ray_intensity(void) {
+    @synchronized ([NSObject class]) { metal_god_ray_intensity = 1.0f; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setDouble:1.0 forKey:@"SM64MetalGodRayIntensity"];
 }
 void gfx_metal_set_god_ray_quality(uint32_t quality) {
     uint32_t sanitized = MIN(quality, 2u);
@@ -1774,7 +1793,8 @@ static bool gfx_metal_encode_god_rays(id<MTLCommandBuffer> command) {
     if (!encoder) return false;
     static const uint32_t quality_samples[] = { 4u, 8u, 12u };
     uint32_t quality = gfx_metal_god_ray_quality();
-    float strength = quality == 0 ? 0.35f : (quality == 1 ? 0.55f : 0.75f);
+    float strength = (quality == 0 ? 0.35f : (quality == 1 ? 0.55f : 0.75f)) *
+                     gfx_metal_god_ray_intensity();
     uint32_t sample_count = quality_samples[quality];
     [encoder setComputePipelineState:metal_god_ray_pipeline];
     [encoder setTexture:metal_depth_texture atIndex:0];

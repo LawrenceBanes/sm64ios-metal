@@ -248,3 +248,15 @@ float gfx_metal_exposure_step(float stops, int direction) {
     return gfx_metal_exposure_sanitize(gfx_metal_exposure_sanitize(stops) +
                                         (direction < 0 ? -0.25f : 0.25f));
 }
+
+float gfx_metal_god_ray_intensity_sanitize(float intensity) {
+    if (!isfinite(intensity)) return 1.0f;
+    if (intensity < 0.0f) return 0.0f;
+    if (intensity > 2.0f) return 2.0f;
+    return intensity;
+}
+
+float gfx_metal_god_ray_intensity_step(float intensity, int direction) {
+    return gfx_metal_god_ray_intensity_sanitize(gfx_metal_god_ray_intensity_sanitize(intensity) +
+                                                 (direction < 0 ? -0.25f : 0.25f));
+}

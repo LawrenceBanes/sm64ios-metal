@@ -54,6 +54,11 @@ int main(void) {
     assert(gfx_metal_exposure_step(0.0f, -1) == -0.25f);
     assert(gfx_metal_exposure_step(2.0f, 1) == 2.0f);
     assert(gfx_metal_exposure_sanitize(NAN) == 0.0f);
+    assert(gfx_metal_god_ray_intensity_sanitize(3.0f) == 2.0f);
+    assert(gfx_metal_god_ray_intensity_sanitize(-1.0f) == 0.0f);
+    assert(gfx_metal_god_ray_intensity_step(1.0f, 1) == 1.25f);
+    assert(gfx_metal_god_ray_intensity_step(0.0f, -1) == 0.0f);
+    assert(gfx_metal_god_ray_intensity_sanitize(NAN) == 1.0f);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_DENSITY, -1);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_START, 1);
     assert(fog.density_scale == 0.75f && fog.start_scale == 1.25f);
