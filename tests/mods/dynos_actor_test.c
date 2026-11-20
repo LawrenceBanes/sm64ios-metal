@@ -96,13 +96,18 @@ int main(int argc, char **argv) {
             const uintptr_t *geo = dynos_actor_native_find(&bundle, &native, 5, "test_geo");
             bool uses_offsets = strstr(argv[arg], "offsets.bin") != NULL;
             bool direct_root = strstr(argv[arg], "direct-root.bin") != NULL;
+            bool bad_root_order = strstr(argv[arg], "bad-root-order.bin") != NULL;
             assert(display_list && vertices && geo);
             assert(display_list[0].words.w1 == (uintptr_t)(vertices + (uses_offsets ? 1 : 0)));
-            assert(geo[direct_root ? 1 : 3] == (uintptr_t)(display_list + (uses_offsets ? 1 : 0)));
+            if (!bad_root_order)
+                assert(geo[direct_root ? 1 : 3] == (uintptr_t)(display_list + (uses_offsets ? 1 : 0)));
         }
         bool root_valid = dynos_actor_native_validate_root_geo(&bundle, &native,
                                                                 root->name, error, sizeof(error));
-        if (strstr(root->name, "sparkle") || !strcmp(root->name, "test_geo") ||
+        if (strstr(argv[arg], "bad-root-order.bin")) {
+            assert(!root_valid);
+            assert(strstr(error, "root geolayout opens a node before creating its graph root"));
+        } else if (strstr(root->name, "sparkle") || !strcmp(root->name, "test_geo") ||
             !strcmp(root->name, "omm_peachy_geo")) {
             if (!root_valid) fprintf(stderr, "expected supported GeoLayout: %s\n", error);
             assert(root_valid);
