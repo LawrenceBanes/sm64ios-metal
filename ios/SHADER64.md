@@ -2,7 +2,7 @@
 
 SHADER64 is an optional user shader interface layered on the existing Metal renderer. The built-in Classic64 path remains the recovery/default path. The initial runtime contract supports one replaceable stage: **postprocess**, after the scene has been rasterized and before the native HUD is drawn. SM64 Fast3D material combiners, world geometry, shadow generation, and HUD rendering continue to use the engine's native code.
 
-Mission 81 adds an incremental API 2 option: a bounded Metal fullscreen render graph with up to four source-compiled raster passes and named sampled intermediate images. API 1 remains supported unchanged. API 2 can optionally expose a post-combiner character/world material hook and per-pass raw scene depth with inverse projection. Geometry-stage control, normals, world-space geometry inputs, shadow maps for custom graphs, full G-buffers, compute, history, and custom texture bindings remain unavailable; see [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md) for the current resource map, graph contract, Bliss workload audit, and limitations.
+Mission 81 adds an incremental API 2 option: a bounded Metal fullscreen render graph with up to four source-compiled raster passes and named sampled intermediate images. API 1 remains supported unchanged. API 2 can optionally expose a post-combiner material hook, scene depth, camera/light transforms, and the existing native directional shadow map. Geometry-stage control, per-vertex normals/world positions, general G-buffers, compute, history, and pack-owned texture bindings remain unavailable; see [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md) for the resource map, graph contracts, Bliss workload audit, and limitations.
 
 ## Installing a pack
 
@@ -81,7 +81,7 @@ An individual API 2 pass can declare `"sceneDepth":true` and implement the `shad
 
 Reference packs include **DepthDebug64** (raw depth), **NormalDebug64** (screen-space normals reconstructed from neighboring depth samples), and **MaterialDebug64** (world/object/character class colors). Reconstructed normals are an approximation derived from depth discontinuities; the engine does not yet export a native normal attachment.
 
-An API 2 pass can request `"sceneLighting":true` for scene depth, inverse projection/view, and the configured world-space sun direction/intensity. `Lumen64Graph` demonstrates depth-derived directional diffuse lighting. It is a screen-space approximation and does not include custom shadow-map sampling, material-specific BRDFs, or GI.
+An API 2 pass can request `"sceneLighting":true` for scene depth, inverse projection/view, and the configured world-space sun direction/intensity. `Lumen64Graph` demonstrates depth-derived directional diffuse lighting. It is a screen-space approximation and does not include material-specific BRDFs or GI. `Lumen64ShadowGraph` can additionally request `"sceneShadows":true` to sample the existing engine directional shadow map. See the versioned resource contract in [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md); runtime GPU appearance is not yet device-verified.
 
 An API 2 pass may instead request `"sceneShadows":true` to receive the engine's existing bounded directional shadow map plus scene depth, camera transforms, fitted shadow basis, and sun data. See `Lumen64ShadowGraph` and the full binding contract in [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md). It uses reconstructed screen-space normals and a single native shadow map; geometry coverage is bounded, and physical-device appearance remains unverified.
 
