@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint before the current increment: `38dc27ceab01b7379d295408127c9491991a2780` (compute scene-depth contract, DepthCompute64, CI `44820115264`). Current working tree adds compute scene normals and corrects imported compute-node type dispatch; host validation passes, Apple CI pending.
+- Latest pushed checkpoint: `3bb599b1fa79392cca4fc9a68358cb2b0f8ba8d3` (compute scene normals and imported compute-node dispatch fix; Apple workflow `44821966525` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -122,6 +122,6 @@
 - Added `DepthNormalsCompute64`, which samples the real scene-depth and depth-derived normal resources in a generic compute kernel and forwards its result through the common fullscreen presenter. This is MSL/source and host-contract evidence only; no GPU execution or visual result is established.
 - Fixed a production iOS pack activation defect discovered during the trace: `activateShaderPack` had hard-coded every API 2 pass as fullscreen, so imported compute passes could not reach their compute pipeline. The manifest `type` now maps to the corresponding bounded graph node type, with a regression assertion.
 - `python3 ios/test_shader64_pack.py`: passed, 29 tests including the new combined-resource contract, reference-pack import, and ASan/UBSan ZIP smoke. `CC=clang tests/run_linux_checks.sh` passed. Metal codegen, Xcode wiring, shell syntax, and diff checks passed before the final documentation refresh; rerun diff checks before commit.
-- Apple MSL/backend CI is pending. Physical GPU output remains unverified. No final `main` merge.
+- Apple workflow `44821966525` passed Linux regression and Xcode 27 device/simulator Metal backend compile/link plus MSL compile/link for `DepthNormalsCompute64`. This is compile-time validation only: no GPU kernel execution, visual test, or device rendering. No final `main` merge.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
