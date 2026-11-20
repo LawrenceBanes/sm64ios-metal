@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Asset-free Metal/SDL2 validation, with an optional private full-game build.
+source "$(dirname -- "${BASH_SOURCE[0]}")/github_api.sh"
+
+private_repository_verified=0
 
 cleanup() {
     local result=$?
@@ -99,17 +102,21 @@ download_private_assets() {
         return 1
     }
     local visibility metadata expected actual
-    visibility=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh api \
-        "repos/$SM64_ASSET_PRIVATE_REPOSITORY" --jq '.private')
+    github_api_preflight "$SM64_PRIVATE_BUILD_GH_TOKEN" 12 || return $?
+    visibility=$(github_api_call "private asset repository visibility" \
+        "$SM64_PRIVATE_BUILD_GH_TOKEN" gh api \
+        "repos/$SM64_ASSET_PRIVATE_REPOSITORY" --jq '.private') || return $?
     [[ "$visibility" == true ]] || { echo 'Asset repository is not private' >&2; return 1; }
-    metadata=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
+    private_repository_verified=1
+    metadata=$(github_api_call "private asset bundle release metadata" \
+        "$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
         "$ASSET_BUNDLE_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
-        --json isDraft,assets)
+        --json isDraft,assets) || return $?
     python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and {"sm64-assets.tar.gz", "sm64-assets.sha256"} <= {a["name"] for a in d["assets"]}' "$metadata"
-    GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
+    github_api_call "private asset bundle download" "$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
         "$ASSET_BUNDLE_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --pattern 'sm64-assets.tar.gz' --pattern 'sm64-assets.sha256' \
-        --dir "$private_dir" >/dev/null
+        --dir "$private_dir" >/dev/null || return $?
     expected=$(python3 ios/asset_checksum.py "$private_dir/sm64-assets.sha256" sm64-assets.tar.gz)
     actual=$(shasum -a 256 "$private_dir/sm64-assets.tar.gz" | awk '{print $1}')
     [[ "$actual" == "$expected" ]] || { echo 'Private asset checksum mismatch' >&2; return 1; }
@@ -127,14 +134,14 @@ download_private_hyrule_archive() {
         return 1
     }
     local metadata expected actual
-    metadata=$(GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
+    metadata=$(github_api_call "private O2R release metadata" "$SM64_PRIVATE_BUILD_GH_TOKEN" gh release view \
         "$HYRULE_O2R_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
-        --json isDraft,assets)
+        --json isDraft,assets) || return $?
     python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["isDraft"] and {"oot.o2r", "oot.o2r.sha256"} <= {a["name"] for a in d["assets"]}' "$metadata"
-    GH_TOKEN="$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
+    github_api_call "private O2R download" "$SM64_PRIVATE_BUILD_GH_TOKEN" gh release download \
         "$HYRULE_O2R_RELEASE_TAG" --repo "$SM64_ASSET_PRIVATE_REPOSITORY" \
         --pattern 'oot.o2r' --pattern 'oot.o2r.sha256' \
-        --dir "$private_dir" >/dev/null
+        --dir "$private_dir" >/dev/null || return $?
     expected=$(python3 ios/asset_checksum.py "$private_dir/oot.o2r.sha256" oot.o2r)
     actual=$(shasum -a 256 "$private_dir/oot.o2r" | awk '{print $1}')
     [[ "$actual" == "$expected" ]] || { echo 'Private O2R checksum mismatch' >&2; return 1; }
@@ -275,8 +282,10 @@ upload_private_ipa() {
         return 1
     }
     repository=$SM64_IPA_PRIVATE_REPOSITORY
-    visibility=$(GH_TOKEN="$token" gh api "repos/$repository" --jq '.private')
-    [[ "$visibility" == true ]] || { echo 'IPA destination repository is not private' >&2; return 1; }
+    [[ "$private_repository_verified" == 1 && "$repository" == "$SM64_ASSET_PRIVATE_REPOSITORY" ]] || {
+        echo 'IPA destination must be the private repository already verified for asset access' >&2
+        return 1
+    }
     [[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ && ${GITHUB_RUN_ATTEMPT:-} =~ ^[0-9]+$ ]] || {
         echo 'GitHub run identifiers are required to create a unique private draft release' >&2
         return 1
@@ -284,14 +293,14 @@ upload_private_ipa() {
     tag="sm64-ios-unsigned-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     checksum_file="$private_dir/$(basename "$ipa").sha256"
     printf '%s  %s\n' "$digest" "$(basename "$ipa")" >"$checksum_file"
-    GH_TOKEN="$token" gh release create "$tag" \
+    github_api_call "private IPA draft release creation" "$token" gh release create "$tag" \
         --repo "$repository" --draft \
         --title "$release_label — unsigned build ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
         --notes "Connected-world test build from commit ${GITHUB_SHA:-unknown}. Unsigned IPA; device behavior remains unverified." \
-        >"$private_dir/private-release-create.log"
-    GH_TOKEN="$token" gh release upload "$tag" \
+        >"$private_dir/private-release-create.log" || return $?
+    github_api_call "private IPA and checksum upload" "$token" gh release upload "$tag" \
         "$ipa" "$checksum_file" --repo "$repository" \
-        >"$private_dir/private-release-upload.log"
+        >"$private_dir/private-release-upload.log" || return $?
 }
 
 main() {

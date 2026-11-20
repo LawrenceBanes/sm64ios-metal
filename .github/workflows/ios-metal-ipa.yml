@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ios, ci/ios-metal-m57-25c]
+    branches: [ios, ci/ios-metal-m57-25c, 'mission-*']
   workflow_dispatch:
     inputs:
       full_game:
@@ -63,10 +63,12 @@ jobs:
       - name: Validate Python tools and shell scripts
         run: |
           python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/stage_ios_runtime.py ios/validate_ipa.py ios/ci_summarize_build_log.py
-          bash -n ios/build_sdl2_ios.sh ios/build_ios_metal_ci.sh
+          bash -n ios/build_sdl2_ios.sh ios/build_ios_metal_ci.sh ios/github_api.sh
           python3 -m unittest discover -s ios -p 'test_ci_summarize_build_log.py'
           python3 -m unittest discover -s ios -p 'test_ipa_validation.py'
           python3 -m unittest discover -s ios -p 'test_stage_ios_runtime.py'
+          python3 -m unittest discover -s ios -p 'test_github_api.py'
+          python3 -m unittest discover -s ios -p 'test_ios_metal_workflow.py'
 
   ios-arm64-ipa:
     needs: linux-checks
@@ -92,21 +94,34 @@ jobs:
         shell: bash
         run: bash ios/build_ios_metal_ci.sh validate
 
+      - name: Create scoped private-vault GitHub App token
+        id: private-vault-token
+        if: >-
+          (inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]'))) &&
+          vars.SM64_PRIVATE_BUILD_USE_GITHUB_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SM64_PRIVATE_BUILD_APP_ID }}
+          private-key: ${{ secrets.SM64_PRIVATE_BUILD_APP_PRIVATE_KEY }}
+          owner: LawrenceBanes
+          repositories: sm64ios-private-builds
+          permission-contents: write
+
       - name: Build complete app, package IPA, and upload only to private vault
         if: ${{ inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
           SM64_IPA_PRIVATE_REPOSITORY: ${{ vars.SM64_IPA_PRIVATE_REPOSITORY }}
-          SM64_PRIVATE_BUILD_GH_TOKEN: ${{ secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
+          SM64_PRIVATE_BUILD_GH_TOKEN: ${{ steps.private-vault-token.outputs.token || secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
           ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag || vars.SM64_ASSET_BUNDLE_RELEASE_TAG }}
           HYRULE_O2R_RELEASE_TAG: ${{ inputs.hyrule_o2r_release_tag }}
           IOS_HYRULE_WORLD: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HYRULE_GATE_DIAGNOSTICS: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HAT_MOVEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.hat_movement && '1' || '0' }}
           IOS_CONNECTED_WORLD: ${{ github.event_name == 'workflow_dispatch' && inputs.connected_world && '1' || '0' }}
-          IOS_O2R_SCENE_RUNTIME: ${{ inputs.scene_diagnostic && '1' || '0' }}
-          IOS_SCENE_DIAGNOSTIC: ${{ inputs.scene_diagnostic && '1' || '0' }}
+          IOS_O2R_SCENE_RUNTIME: ${{ (inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
+          IOS_SCENE_DIAGNOSTIC: ${{ (inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
 
       - name: Upload asset-free diagnostics only
