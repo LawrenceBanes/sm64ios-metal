@@ -8,6 +8,8 @@ extern struct GfxRenderingAPI gfx_metal_api;
 
 #if defined(TARGET_OS_IOS)
 bool gfx_metal_hd_textures_enabled(void);
+bool gfx_metal_rt_geometry_capture_enabled(void);
+void gfx_metal_set_rt_geometry_capture_enabled(bool enabled);
 #endif
 
 #ifdef __OBJC__
@@ -17,6 +19,7 @@ bool gfx_metal_surface_is_ready(void);
 void gfx_metal_set_scene_active(bool active);
 struct GfxMetalSettings gfx_metal_get_settings(void);
 struct GfxMetalCapabilities gfx_metal_get_capabilities(void);
+struct GfxMetalRayTracingCapabilities gfx_metal_get_raytracing_capabilities(void);
 void gfx_metal_apply_settings(struct GfxMetalSettings settings);
 void gfx_metal_get_performance_stats(struct GfxMetalPerformanceStats *stats);
 void gfx_metal_set_cpu_frame_time_ms(double milliseconds);

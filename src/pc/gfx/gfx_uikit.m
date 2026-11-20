@@ -295,6 +295,23 @@ static int sm64RenderDiagnosticMode;
         gfx_ios_diag_log("Gameplay menu queued portal reset");
         [self appendStatus:@"Portal reset queued for game thread"];
     }]];
+#if defined(RAPI_METAL) && TARGET_OS_IOS
+    struct GfxMetalRayTracingCapabilities rtCapabilities = gfx_metal_get_raytracing_capabilities();
+    if (rtCapabilities.raytracing) {
+        BOOL captureEnabled = gfx_metal_rt_geometry_capture_enabled();
+        NSString *probeTitle = captureEnabled ? @"Stop RT static geometry / AS probe" : @"Capture static RT geometry / build AS";
+        [menu addAction:[UIAlertAction actionWithTitle:probeTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            BOOL enable = !gfx_metal_rt_geometry_capture_enabled();
+            gfx_metal_set_rt_geometry_capture_enabled(enable);
+            [self appendStatus:enable ? @"RT geometry capture enabled; open Graphics for AS diagnostics" : @"RT geometry capture stopped and AS resources released"];
+        }]];
+    } else {
+        UIAlertAction *unavailable = [UIAlertAction actionWithTitle:@"Metal ray tracing unavailable on this device" style:UIAlertActionStyleDefault handler:nil];
+        unavailable.enabled = NO;
+        [menu addAction:unavailable];
+    }
+#endif
 #ifdef IOS_SCENE_DIAGNOSTIC
     [menu addAction:[UIAlertAction actionWithTitle:@"Enter / leave WSC2 diagnostic" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
@@ -531,9 +548,9 @@ static int sm64RenderDiagnosticMode;
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
-    self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
-    self.performanceLabel.numberOfLines = 4;
-    self.performanceLabel.frame = CGRectMake(14, 245, 492, 72);
+    self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:8.5 weight:UIFontWeightRegular];
+    self.performanceLabel.numberOfLines = 7;
+    self.performanceLabel.frame = CGRectMake(14, 245, 492, 77);
     self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.graphicsPanel addSubview:self.performanceLabel];
 
@@ -676,15 +693,26 @@ static int sm64RenderDiagnosticMode;
 #if defined(RAPI_METAL)
     struct GfxMetalPerformanceStats stats = { 0 };
     gfx_metal_get_performance_stats(&stats);
+    struct GfxMetalRayTracingCapabilities rt = gfx_metal_get_raytracing_capabilities();
     NSString *gpu = stats.gpu_timing_available ?
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = stats.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced";
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×",
+        @"%@ | CPU %.2f ms | %.1f FPS est.\n%@\nDraws %llu | Triangles %llu\nRender %ux%u (%u%%) | MSAA %ux | AF %u×\nRT API %@ | render %@ | hardware %@\nMemory %.0f MiB | Metal %.0f / %.0f MiB | buffer %.0f MiB\nRT geometry %u (drop %llu) | AS %.1f MiB / %llu builds",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
-        stats.sample_count, stats.anisotropy];
+        stats.sample_count, stats.anisotropy,
+        rt.raytracing ? @"yes" : @"no", rt.raytracing_from_render ? @"yes" : @"no",
+        rt.hardware_raytracing_family ? @"yes" : @"no",
+        (double)rt.available_process_memory / (1024.0 * 1024.0),
+        (double)rt.current_allocated_size / (1024.0 * 1024.0),
+        (double)rt.recommended_working_set_size / (1024.0 * 1024.0),
+        (double)rt.max_buffer_length / (1024.0 * 1024.0),
+        stats.raytracing_static_triangles,
+        (unsigned long long)stats.raytracing_capture_dropped_triangles,
+        (double)stats.raytracing_acceleration_structure_bytes / (1024.0 * 1024.0),
+        (unsigned long long)stats.raytracing_acceleration_structure_build_count];
 #endif
 }
 

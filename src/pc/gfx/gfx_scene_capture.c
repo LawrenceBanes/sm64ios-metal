@@ -18,6 +18,11 @@ static float frame_projection_matrix[4][4];
 static bool frame_has_view_matrix;
 static bool frame_has_projection_matrix;
 static bool frame_view_ambiguous;
+static size_t triangle_limit = MAX_TRIANGLES;
+
+void gfx_scene_capture_set_triangle_limit(size_t maximum) {
+    triangle_limit = maximum == 0 || maximum > MAX_TRIANGLES ? MAX_TRIANGLES : maximum;
+}
 
 void gfx_scene_capture_set_enabled(bool enabled) {
     capture_enabled = enabled;
@@ -107,13 +112,13 @@ bool gfx_scene_capture_split_modelview(const float modelview[4][4], const float 
 
 bool gfx_scene_capture_submit(const struct GfxSceneCaptureTriangle *triangle) {
     if (!capture_enabled || !triangle) return false;
-    if (captured_count >= MAX_TRIANGLES) {
+    if (captured_count >= triangle_limit) {
         ++dropped_count;
         return false;
     }
     if (captured_count == captured_capacity) {
         size_t next_capacity = captured_capacity ? captured_capacity * 2 : INITIAL_CAPACITY;
-        if (next_capacity > MAX_TRIANGLES) next_capacity = MAX_TRIANGLES;
+        if (next_capacity > triangle_limit) next_capacity = triangle_limit;
         void *next = realloc(captured_triangles, next_capacity * sizeof(*captured_triangles));
         if (!next) {
             ++dropped_count;

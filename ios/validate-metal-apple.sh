@@ -20,6 +20,8 @@ sources=("$repo_dir/src/pc/gfx/gfx_metal.m"
          "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
          "$repo_dir/src/pc/gfx/gfx_metal_state.c"
          "$repo_dir/src/pc/gfx/gfx_cc.c"
+         "$repo_dir/src/pc/gfx/gfx_scene_capture.c"
+         "$repo_dir/src/pc/gfx/gfx_rt_scene.c"
          "$repo_dir/tests/metal_backend_diagnostics_stub.m"
          "$repo_dir/tests/metal_backend_config_stub.c"
          "$repo_dir/tests/metal_backend_link_main.m")

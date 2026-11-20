@@ -46,6 +46,9 @@ void gfx_scene_capture_set_projection_matrix(const float matrix[4][4]);
 bool gfx_scene_capture_split_modelview(const float modelview[4][4], const float view[4][4], float object_transform[4][4]);
 bool gfx_scene_capture_submit(const struct GfxSceneCaptureTriangle *triangle);
 struct GfxSceneCaptureFrame gfx_scene_capture_get_frame(void);
+/* Bound capture allocation when an optional analysis feature is enabled.
+ * Zero restores the production hard maximum. */
+void gfx_scene_capture_set_triangle_limit(size_t maximum);
 uint64_t gfx_scene_capture_hash_combine(uint64_t parent, uintptr_t source);
 uint64_t gfx_scene_capture_hash_bytes(uint64_t parent, const void *data, size_t size);
 

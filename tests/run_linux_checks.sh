@@ -7,6 +7,7 @@ SDL2_CFLAGS=$(pkg-config --cflags sdl2)
 CC="$cc" "$repo_dir/tests/run_metal_shader_codegen_test.sh"
 CC="$cc" "$repo_dir/tests/run_metal_state_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_capture_test.sh"
+CC="$cc" "$repo_dir/tests/run_gfx_rt_scene_test.sh"
 CC="$cc" "$repo_dir/tests/run_world_scene_view_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_bvh_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_cache_reset_test.sh"

@@ -62,6 +62,14 @@ int main(void) {
     assert(gfx_scene_capture_get_frame().triangle_count == 0);
     assert(!gfx_scene_capture_get_frame().has_view_matrix);
     assert(!gfx_scene_capture_get_frame().has_projection_matrix);
+    gfx_scene_capture_set_triangle_limit(2);
+    assert(gfx_scene_capture_submit(&triangle));
+    assert(gfx_scene_capture_submit(&triangle));
+    assert(!gfx_scene_capture_submit(&triangle));
+    frame = gfx_scene_capture_get_frame();
+    assert(frame.triangle_count == 2 && frame.dropped_triangles == 1);
+    gfx_scene_capture_begin_frame();
+    gfx_scene_capture_set_triangle_limit(0);
     gfx_scene_capture_set_enabled(false);
     assert(gfx_scene_capture_hash_combine(8, 0x1234) == gfx_scene_capture_hash_combine(8, 0x1234));
     assert(gfx_scene_capture_hash_combine(8, 0x1234) != gfx_scene_capture_hash_combine(9, 0x1234));

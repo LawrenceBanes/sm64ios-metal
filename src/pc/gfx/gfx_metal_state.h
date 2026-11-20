@@ -36,6 +36,20 @@ struct GfxMetalCapabilities {
     uint32_t max_anisotropy;
 };
 
+struct GfxMetalRayTracingCapabilities {
+    char device_name[96];
+    bool raytracing;
+    bool raytracing_from_render;
+    bool hardware_raytracing_family;
+    bool depth32_float_render_target;
+    bool rgba16_float_render_target;
+    bool unified_memory;
+    uint64_t available_process_memory;
+    uint64_t recommended_working_set_size;
+    uint64_t current_allocated_size;
+    uint64_t max_buffer_length;
+};
+
 struct GfxMetalTargetSize {
     uint32_t width;
     uint32_t height;
@@ -54,6 +68,10 @@ struct GfxMetalPerformanceStats {
     uint32_t render_scale_percent;
     uint32_t sample_count;
     uint32_t anisotropy;
+    uint32_t raytracing_static_triangles;
+    uint64_t raytracing_acceleration_structure_bytes;
+    uint64_t raytracing_capture_dropped_triangles;
+    uint64_t raytracing_acceleration_structure_build_count;
 };
 
 enum GfxSamplerAddressMode gfx_metal_sampler_address_mode(uint32_t n64_mode);

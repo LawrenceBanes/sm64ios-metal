@@ -10,6 +10,7 @@
 #import <Metal/MTLDrawable.h>
 #import <MetalKit/MetalKit.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <os/proc.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -20,6 +21,8 @@
 #include "gfx_metal_shader.h"
 #include "gfx_metal_vertex_layout.h"
 #include "gfx_cc.h"
+#include "gfx_scene_capture.h"
+#include "gfx_rt_scene.h"
 #include "gfx_uikit.h"
 #include "../configfile.h"
 
@@ -71,6 +74,14 @@ static id<MTLRenderPipelineState> metal_present_pipeline;
 static id<MTLSamplerState> metal_present_sampler;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
+static struct GfxMetalRayTracingCapabilities metal_raytracing_capabilities;
+static bool metal_rt_geometry_capture_enabled;
+static bool metal_rt_cleanup_pending;
+static id<MTLAccelerationStructure> metal_rt_static_acceleration_structure;
+static id<MTLBuffer> metal_rt_static_vertex_buffer;
+static id<MTLBuffer> metal_rt_build_scratch_buffer;
+static uint64_t metal_rt_static_geometry_hash;
+static uint64_t metal_rt_as_build_count;
 static struct GfxMetalPerformanceStats metal_performance_stats;
 static double metal_last_frame_start_time;
 static bool metal_logged_gpu_timing;
@@ -178,6 +189,63 @@ static void gfx_metal_release_render_targets(void) {
     metal_target_width = metal_target_height = metal_target_samples = 0;
 }
 
+static bool gfx_metal_test_render_target_format(MTLPixelFormat format) {
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                                                           width:4
+                                                                                          height:4
+                                                                                       mipmapped:NO];
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture = [metal_device newTextureWithDescriptor:descriptor];
+    bool supported = texture != nil;
+    [texture release];
+    return supported;
+}
+
+static void gfx_metal_refresh_raytracing_capabilities(void) {
+    memset(&metal_raytracing_capabilities, 0, sizeof(metal_raytracing_capabilities));
+    if (!metal_device) return;
+    snprintf(metal_raytracing_capabilities.device_name,
+             sizeof(metal_raytracing_capabilities.device_name), "%s",
+             metal_device.name.UTF8String ?: "unknown");
+    metal_raytracing_capabilities.depth32_float_render_target =
+        gfx_metal_test_render_target_format(MTLPixelFormatDepth32Float);
+    metal_raytracing_capabilities.rgba16_float_render_target =
+        gfx_metal_test_render_target_format(MTLPixelFormatRGBA16Float);
+    metal_raytracing_capabilities.unified_memory = metal_device.hasUnifiedMemory;
+    metal_raytracing_capabilities.recommended_working_set_size = metal_device.recommendedMaxWorkingSetSize;
+    metal_raytracing_capabilities.current_allocated_size = metal_device.currentAllocatedSize;
+    metal_raytracing_capabilities.max_buffer_length = metal_device.maxBufferLength;
+    if (@available(iOS 13.0, *))
+        metal_raytracing_capabilities.available_process_memory = os_proc_available_memory();
+    if (@available(iOS 16.0, *)) {
+        metal_raytracing_capabilities.raytracing = metal_device.supportsRaytracing;
+        metal_raytracing_capabilities.raytracing_from_render = metal_device.supportsRaytracingFromRender;
+    }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 170000
+    if (@available(iOS 17.0, *))
+        metal_raytracing_capabilities.hardware_raytracing_family =
+            [metal_device supportsFamily:MTLGPUFamilyApple9];
+#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 260000
+    if (@available(iOS 26.0, *))
+        metal_raytracing_capabilities.hardware_raytracing_family |=
+            [metal_device supportsFamily:MTLGPUFamilyApple10];
+#endif
+    gfx_ios_diag_log("Metal RT capability device=%s rt=%d rtFromRender=%d hardwareFamily=%d depth32FloatRT=%d rgba16FloatRT=%d unifiedMemory=%d availableProcessMemory=%llu recommendedWorkingSet=%llu allocated=%llu maxBuffer=%llu",
+        metal_raytracing_capabilities.device_name,
+        metal_raytracing_capabilities.raytracing,
+        metal_raytracing_capabilities.raytracing_from_render,
+        metal_raytracing_capabilities.hardware_raytracing_family,
+        metal_raytracing_capabilities.depth32_float_render_target,
+        metal_raytracing_capabilities.rgba16_float_render_target,
+        metal_raytracing_capabilities.unified_memory,
+        (unsigned long long)metal_raytracing_capabilities.available_process_memory,
+        (unsigned long long)metal_raytracing_capabilities.recommended_working_set_size,
+        (unsigned long long)metal_raytracing_capabilities.current_allocated_size,
+        (unsigned long long)metal_raytracing_capabilities.max_buffer_length);
+}
+
 static void gfx_metal_refresh_capabilities(void) {
     if (!metal_device) return;
     metal_capabilities.sample_count_2 = [metal_device supportsTextureSampleCount:2];
@@ -198,6 +266,7 @@ static void gfx_metal_refresh_capabilities(void) {
             break;
         }
     }
+    gfx_metal_refresh_raytracing_capabilities();
     gfx_ios_diag_log("Metal capabilities device=%s sampleCounts=(1,%d,%d) samplerMaxAnisotropy=%u", metal_device.name.UTF8String ?: "unknown", metal_capabilities.sample_count_2, metal_capabilities.sample_count_4, metal_capabilities.max_anisotropy);
 }
 
@@ -235,12 +304,40 @@ bool gfx_metal_hd_textures_enabled(void) {
     }
 }
 
+bool gfx_metal_rt_geometry_capture_enabled(void) {
+    @synchronized ([NSObject class]) { return metal_rt_geometry_capture_enabled; }
+}
+
+void gfx_metal_set_rt_geometry_capture_enabled(bool enabled) {
+    bool supported = metal_raytracing_capabilities.raytracing;
+    if (enabled && !supported) {
+        gfx_ios_diag_log("Metal RT geometry probe rejected: MTLDevice reports no ray-tracing support");
+        return;
+    }
+    @synchronized ([NSObject class]) {
+        metal_rt_geometry_capture_enabled = enabled;
+        if (!enabled) metal_rt_cleanup_pending = true;
+    }
+    if (!enabled) {
+        @synchronized ([NSObject class]) {
+            metal_performance_stats.raytracing_static_triangles = 0;
+            metal_performance_stats.raytracing_acceleration_structure_bytes = 0;
+            metal_performance_stats.raytracing_capture_dropped_triangles = 0;
+        }
+    }
+    gfx_ios_diag_log("Metal RT static geometry capture %s", enabled ? "enabled" : "disabled");
+}
+
 struct GfxMetalSettings gfx_metal_get_settings(void) {
     @synchronized ([NSObject class]) { return metal_settings; }
 }
 
 struct GfxMetalCapabilities gfx_metal_get_capabilities(void) {
     @synchronized ([NSObject class]) { return metal_capabilities; }
+}
+
+struct GfxMetalRayTracingCapabilities gfx_metal_get_raytracing_capabilities(void) {
+    @synchronized ([NSObject class]) { return metal_raytracing_capabilities; }
 }
 
 void gfx_metal_apply_settings(struct GfxMetalSettings requested) {
@@ -1191,9 +1288,116 @@ static void gfx_metal_start_frame(void) {
         gfx_ios_diag_log("Metal game frame encoding started frame=%u drawable=%.0fx%.0f render=%lux%lu samples=%lu offscreen=%d viewVisible=%d alpha=%.2f scene=%@", frame_count, metal_view.drawableSize.width, metal_view.drawableSize.height, (unsigned long)metal_active_render_width, (unsigned long)metal_active_render_height, (unsigned long)metal_active_sample_count, metal_frame_uses_offscreen, !metal_view.hidden && metal_view.window && !metal_view.window.hidden, metal_view.alpha, metal_view.window.windowScene.session.persistentIdentifier);
     has_viewport = has_scissor = false;
 }
+
+static void gfx_metal_capture_and_build_static_rt_scene(void) {
+    bool cleanup_pending;
+    @synchronized ([NSObject class]) {
+        cleanup_pending = metal_rt_cleanup_pending;
+        metal_rt_cleanup_pending = false;
+    }
+    if (cleanup_pending) {
+        gfx_rt_scene_reset();
+        [metal_rt_static_acceleration_structure release]; metal_rt_static_acceleration_structure = nil;
+        [metal_rt_static_vertex_buffer release]; metal_rt_static_vertex_buffer = nil;
+        [metal_rt_build_scratch_buffer release]; metal_rt_build_scratch_buffer = nil;
+        metal_rt_static_geometry_hash = 0;
+    }
+    if (!gfx_metal_rt_geometry_capture_enabled() ||
+        !metal_raytracing_capabilities.raytracing || !metal_command) return;
+
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    struct GfxRTScene scene = gfx_rt_scene_capture_static(&capture);
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.raytracing_static_triangles = (uint32_t)scene.triangle_count;
+        metal_performance_stats.raytracing_capture_dropped_triangles = scene.dropped_triangles;
+    }
+    if (!scene.triangle_count || !scene.geometry_hash ||
+        (scene.geometry_hash == metal_rt_static_geometry_hash && metal_rt_static_acceleration_structure)) return;
+
+    const NSUInteger vertex_bytes = scene.triangle_count * sizeof(struct GfxRTTriangle);
+    if (!vertex_bytes || vertex_bytes > metal_raytracing_capabilities.max_buffer_length) {
+        gfx_ios_diag_log("Metal RT static geometry rejected triangles=%lu bytes=%lu maxBuffer=%llu",
+            (unsigned long)scene.triangle_count, (unsigned long)vertex_bytes,
+            (unsigned long long)metal_raytracing_capabilities.max_buffer_length);
+        return;
+    }
+    id<MTLBuffer> vertices = [metal_device newBufferWithBytes:scene.triangles
+                                                       length:vertex_bytes
+                                                      options:MTLResourceStorageModeShared];
+    if (!vertices) {
+        gfx_ios_diag_log("Metal RT static vertex buffer allocation failed triangles=%lu bytes=%lu",
+            (unsigned long)scene.triangle_count, (unsigned long)vertex_bytes);
+        return;
+    }
+
+    MTLAccelerationStructureTriangleGeometryDescriptor *geometry =
+        [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+    geometry.vertexBuffer = vertices;
+    geometry.vertexBufferOffset = 0;
+    geometry.vertexFormat = MTLAttributeFormatFloat3;
+    geometry.vertexStride = sizeof(float) * 3;
+    geometry.triangleCount = scene.triangle_count;
+    MTLPrimitiveAccelerationStructureDescriptor *descriptor =
+        [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    descriptor.geometryDescriptors = @[geometry];
+
+    MTLAccelerationStructureSizes sizes = [metal_device accelerationStructureSizesWithDescriptor:descriptor];
+    const uint64_t maximum_structure_bytes = 64u * 1024u * 1024u;
+    if (!sizes.accelerationStructureSize || !sizes.buildScratchBufferSize ||
+        sizes.accelerationStructureSize > maximum_structure_bytes ||
+        sizes.buildScratchBufferSize > maximum_structure_bytes ||
+        sizes.accelerationStructureSize > metal_raytracing_capabilities.max_buffer_length ||
+        sizes.buildScratchBufferSize > metal_raytracing_capabilities.max_buffer_length) {
+        gfx_ios_diag_log("Metal RT AS size rejected triangles=%lu structure=%llu scratch=%llu maxBudget=%llu",
+            (unsigned long)scene.triangle_count,
+            (unsigned long long)sizes.accelerationStructureSize,
+            (unsigned long long)sizes.buildScratchBufferSize,
+            (unsigned long long)maximum_structure_bytes);
+        [vertices release];
+        return;
+    }
+    id<MTLAccelerationStructure> accelerationStructure =
+        [metal_device newAccelerationStructureWithSize:sizes.accelerationStructureSize];
+    id<MTLBuffer> scratch = [metal_device newBufferWithLength:sizes.buildScratchBufferSize
+                                                      options:MTLResourceStorageModePrivate];
+    id<MTLAccelerationStructureCommandEncoder> encoder = [metal_command accelerationStructureCommandEncoder];
+    if (!accelerationStructure || !scratch || !encoder) {
+        gfx_ios_diag_log("Metal RT AS build setup failed triangles=%lu as=%s scratch=%s encoder=%s",
+            (unsigned long)scene.triangle_count,
+            accelerationStructure ? "ready" : "nil", scratch ? "ready" : "nil", encoder ? "ready" : "nil");
+        [accelerationStructure release];
+        [scratch release];
+        [vertices release];
+        return;
+    }
+    [encoder buildAccelerationStructure:accelerationStructure descriptor:descriptor
+                          scratchBuffer:scratch scratchBufferOffset:0];
+    [encoder endEncoding];
+
+    [metal_rt_static_acceleration_structure release];
+    [metal_rt_static_vertex_buffer release];
+    [metal_rt_build_scratch_buffer release];
+    metal_rt_static_acceleration_structure = accelerationStructure;
+    metal_rt_static_vertex_buffer = vertices;
+    metal_rt_build_scratch_buffer = scratch;
+    metal_rt_static_geometry_hash = scene.geometry_hash;
+    ++metal_rt_as_build_count;
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.raytracing_acceleration_structure_bytes = sizes.accelerationStructureSize;
+        metal_performance_stats.raytracing_acceleration_structure_build_count = metal_rt_as_build_count;
+    }
+    gfx_ios_diag_log("Metal RT static AS built generation=%llu triangles=%lu vertexBytes=%lu asBytes=%llu scratchBytes=%llu hash=%016llx hardwareFamily=%d",
+        (unsigned long long)metal_rt_as_build_count, (unsigned long)scene.triangle_count,
+        (unsigned long)vertex_bytes, (unsigned long long)sizes.accelerationStructureSize,
+        (unsigned long long)sizes.buildScratchBufferSize,
+        (unsigned long long)scene.geometry_hash,
+        metal_raytracing_capabilities.hardware_raytracing_family);
+}
+
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
+    gfx_metal_capture_and_build_static_rt_scene();
     if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))
         metal_offscreen_runtime_failed = true;
     @synchronized ([NSObject class]) {
@@ -1295,6 +1499,13 @@ static void gfx_metal_end_frame(void) {
 static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; }
 static void gfx_metal_shutdown(void) {
     metal_encoder = nil; metal_drawable = nil; metal_command = nil;
+    [metal_rt_static_acceleration_structure release]; metal_rt_static_acceleration_structure = nil;
+    [metal_rt_static_vertex_buffer release]; metal_rt_static_vertex_buffer = nil;
+    [metal_rt_build_scratch_buffer release]; metal_rt_build_scratch_buffer = nil;
+    metal_rt_static_geometry_hash = 0;
+    metal_rt_geometry_capture_enabled = false;
+    metal_rt_cleanup_pending = false;
+    gfx_rt_scene_reset();
     gfx_metal_release_render_targets();
     [metal_present_pipeline release]; metal_present_pipeline = nil;
     [metal_present_sampler release]; metal_present_sampler = nil;

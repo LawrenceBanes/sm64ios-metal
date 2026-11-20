@@ -1454,6 +1454,36 @@ static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
         return;
     }
 
+    if (gfx_scene_capture_is_enabled()) {
+        struct GfxSceneCaptureTriangle capture;
+        memset(&capture, 0, sizeof(capture));
+        for (int i = 0; i < 3; ++i) {
+            memcpy(capture.vertices[i].position, vertices[i]->local_position,
+                   sizeof(vertices[i]->local_position));
+            memcpy(capture.vertices[i].normal, vertices[i]->normal,
+                   sizeof(vertices[i]->normal));
+            capture.vertices[i].uv[0] = vertices[i]->u;
+            capture.vertices[i].uv[1] = vertices[i]->v;
+            capture.vertices[i].color[0] = vertices[i]->color.r / 255.0f;
+            capture.vertices[i].color[1] = vertices[i]->color.g / 255.0f;
+            capture.vertices[i].color[2] = vertices[i]->color.b / 255.0f;
+            capture.vertices[i].color[3] = vertices[i]->color.a / 255.0f;
+        }
+        struct GfxSceneCaptureFrame capture_frame = gfx_scene_capture_get_frame();
+        if (capture_frame.has_view_matrix && vertices[0]->modelview_camera_applied)
+            capture.has_world_transform = gfx_scene_capture_split_modelview(
+                vertices[0]->modelview, capture_frame.view_matrix, capture.object_transform);
+        if (!capture.has_world_transform)
+            memcpy(capture.object_transform, vertices[0]->modelview, sizeof(capture.object_transform));
+        for (int i = 0; i < 3; ++i)
+            capture.geometry_id = gfx_scene_capture_hash_combine(capture.geometry_id,
+                                                                  vertices[i]->geometry_id);
+        capture.instance_id = gfx_scene_capture_hash_bytes(
+            capture.geometry_id, capture.object_transform, sizeof(capture.object_transform));
+        capture.material_flags = mat->flags;
+        gfx_scene_capture_submit(&capture);
+    }
+
     float alpha = mat->environment[3];
     if (mat->alphaPeriod) {
         unsigned phase = scene_render_frame % mat->alphaPeriod;
@@ -2658,6 +2688,11 @@ void gfx_start_frame(void) {
 
 void gfx_run(Gfx *commands) {
     gfx_sp_reset();
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    bool rt_capture = gfx_metal_rt_geometry_capture_enabled();
+    gfx_scene_capture_set_enabled(rt_capture);
+    gfx_scene_capture_set_triangle_limit(rt_capture ? 16384u : 0u);
+#endif
     gfx_scene_capture_begin_frame();
     
     //puts("New frame");
