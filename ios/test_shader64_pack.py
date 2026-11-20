@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+import math
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/pc/gfx/gfx_shader64_pack.c"
@@ -32,6 +33,18 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_build_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_wrapper.restype = ctypes.c_int
+        class GraphPass(ctypes.Structure):
+            _fields_ = [("id", ctypes.c_char_p), ("input", ctypes.c_char_p),
+                        ("output", ctypes.c_char_p), ("resolution_scale", ctypes.c_float),
+                        ("node_type", ctypes.c_uint)]
+        cls.GraphPass = GraphPass
+        cls.api.gfx_shader64_validate_graph.argtypes = [ctypes.POINTER(GraphPass), ctypes.c_size_t,
+            ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_graph.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -121,6 +134,61 @@ class ShaderPackTests(unittest.TestCase):
         bad = VALID.replace(b"shader64_post", b"wrong_name")
         self.assertFalse(self.api.gfx_shader64_validate_post_source(bad, len(bad), error, len(error)))
 
+    def test_api2_graph_topology_and_bounds(self):
+        passes = (self.GraphPass * 2)(
+            self.GraphPass(b"grade", b"sceneColor", b"graded", 0.5, 1),
+            self.GraphPass(b"presenter", b"graded", b"present", 1.0, 1))
+        order = (ctypes.c_ubyte * 4)()
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_graph(passes, 2, 1920, 1080, order, error, len(error)), error.value)
+        self.assertEqual(list(order)[:2], [0, 1])
+        wrapper = ctypes.create_string_buffer(len(VALID) + 1024)
+        source = VALID.replace(b"shader64_post", b"shader64_pass")
+        self.assertTrue(self.api.gfx_shader64_validate_pass_source(source, len(source), error, len(error)))
+        self.assertTrue(self.api.gfx_shader64_build_pass_wrapper(source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"return shader64_pass", wrapper.value)
+
+    def test_api2_graph_rejects_cycles_feedback_and_unbounded_targets(self):
+        error = ctypes.create_string_buffer(256)
+        order = (ctypes.c_ubyte * 4)()
+        cases = [
+            (self.GraphPass * 2)(self.GraphPass(b"a", b"bOut", b"aOut", 0.5, 1),
+                                 self.GraphPass(b"b", b"aOut", b"present", 1, 1)),
+            (self.GraphPass * 2)(self.GraphPass(b"a", b"present", b"aOut", 0.5, 1),
+                                 self.GraphPass(b"b", b"aOut", b"present", 1, 1)),
+        ]
+        for passes in cases:
+            self.assertFalse(self.api.gfx_shader64_validate_graph(passes, 2, 1920, 1080, order, error, len(error)))
+        oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
+            self.GraphPass(b"b", b"aOut", b"bOut", 1, 1),
+            self.GraphPass(b"c", b"bOut", b"present", 1, 1))
+        self.assertFalse(self.api.gfx_shader64_validate_graph(oversized, 3, 2048, 1080, order, error, len(error)))
+
+    def test_reference_api2_packs_validate_and_import(self):
+        for pack_id in ("GraphDemo", "BlissGridlines"):
+            directory = ROOT / "ios/shaderpacks" / pack_id
+            manifest = json.loads((directory / "manifest.json").read_text())
+            self.assertEqual(manifest["shaderApiVersion"], 2)
+            definitions = manifest["passes"]
+            graph_passes = (self.GraphPass * len(definitions))(*[
+                self.GraphPass(p["id"].encode(), p["input"].encode(), p["output"].encode(), p["scale"], 1)
+                for p in definitions])
+            order = (ctypes.c_ubyte * 4)()
+            error = ctypes.create_string_buffer(256)
+            self.assertTrue(self.api.gfx_shader64_validate_graph(graph_passes, len(definitions), 1920, 1080, order, error, len(error)), error.value)
+            entries = [("manifest.json", (directory / "manifest.json").read_bytes())]
+            for definition in definitions:
+                source = (directory / definition["source"]).read_bytes()
+                self.assertTrue(self.api.gfx_shader64_validate_pass_source(source, len(source), error, len(error)), error.value)
+                wrapper = ctypes.create_string_buffer(len(source) + 1024)
+                self.assertTrue(self.api.gfx_shader64_build_pass_wrapper(source, len(source), wrapper, len(wrapper)))
+                entries.append((definition["source"], source))
+            ok, message, installed = self.install(self.archive(entries))
+            self.assertTrue(ok, message)
+            for name, data in entries:
+                self.assertEqual((installed / name).read_bytes(), data)
+        self.assertTrue((ROOT / "ios/shaderpacks/BlissGridlines/LICENSE.md").exists())
+
     def test_ios_runtime_vertical_slice_wiring(self):
         metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
         ui = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
@@ -146,6 +214,12 @@ class ShaderPackTests(unittest.TestCase):
                 (directory / "shaders/postprocess.metal").read_bytes(),
                 len((directory / "shaders/postprocess.metal").read_bytes()),
                 ctypes.create_string_buffer(256), 256))
+        for token in ("gfx_metal_load_shader64_graph", "gfx_shader64_validate_graph",
+                      "GFX_SHADER64_MAX_GRAPH_PASSES", "render_graph"):
+            self.assertIn(token, (ROOT / "src/pc/gfx/gfx_metal.m").read_text() + ui)
+        apple_script = (ROOT / "ios/validate-metal-apple.sh").read_text()
+        self.assertIn("shader64_wrap_v2.c", apple_script)
+        self.assertIn("shader64-api2-", apple_script)
 
     def test_asan_ubsan_zip_paths(self):
         binary = pathlib.Path(self.temp.name) / "shader64-pack-sanitized"

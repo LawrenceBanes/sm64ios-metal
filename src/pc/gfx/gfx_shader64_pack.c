@@ -1,6 +1,7 @@
 #include "gfx_shader64_pack.h"
 
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -253,6 +254,124 @@ int gfx_shader64_build_wrapper(const char *source, size_t source_size,
     size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
     if (!output || output_size < needed ||
         !gfx_shader64_validate_post_source(source, source_size, NULL, 0)) return 0;
+    memcpy(output, prefix, sizeof(prefix) - 1u);
+    memcpy(output + sizeof(prefix) - 1u, source, source_size);
+    memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));
+    return 1;
+}
+
+static int graph_name(const char *s) {
+    size_t n;
+    if (!s || !(n = strlen(s)) || n > 32) return 0;
+    for (size_t i = 0; i < n; ++i)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
+              (s[i] >= '0' && s[i] <= '9') || s[i] == '_' || s[i] == '-')) return 0;
+    return 1;
+}
+
+int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
+                                size_t count, unsigned int width,
+                                unsigned int height, unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES],
+                                char *error, size_t error_size) {
+    unsigned char emitted[GFX_SHADER64_MAX_GRAPH_PASSES] = {0};
+    size_t targets = 0, present_count = 0;
+    uint64_t bytes = 0;
+    if (!passes || !order || !count || count > GFX_SHADER64_MAX_GRAPH_PASSES ||
+        !width || !height || width > 8192 || height > 8192) {
+        err(error, error_size, "render graph exceeds pass or viewport limits"); return 0;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const struct GfxShader64GraphPass *p = &passes[i];
+        if (p->node_type != 1u || !graph_name(p->id) || !graph_name(p->input) ||
+            !p->output || (!graph_name(p->output) && strcmp(p->output, "present") != 0) ||
+            !isfinite(p->resolution_scale) || p->resolution_scale < 0.25f ||
+            p->resolution_scale > 1.0f) {
+            err(error, error_size, "pass uses an unsupported node, name, or resolution scale"); return 0;
+        }
+        if (!strcmp(p->output, "present") && p->resolution_scale != 1.0f) {
+            err(error, error_size, "present output must use full resolution"); return 0;
+        }
+        if (!strcmp(p->output, "present") && p->resolution_scale != 1.0f) {
+            err(error, error_size, "present output must use full resolution"); return 0;
+        }
+        for (size_t j = 0; j < i; ++j)
+            if (!strcmp(p->id, passes[j].id) || !strcmp(p->output, passes[j].output)) {
+                err(error, error_size, "duplicate pass or output resource"); return 0;
+            }
+        if (!strcmp(p->output, "sceneColor")) {
+            err(error, error_size, "sceneColor is a read-only built-in resource"); return 0;
+        }
+        if (!strcmp(p->output, "present")) ++present_count;
+        else {
+            ++targets;
+            double scaled = (double)width * height * p->resolution_scale * p->resolution_scale * 8.0;
+            if (scaled > (double)GFX_SHADER64_MAX_GRAPH_TARGET_BYTES || bytes > UINT64_MAX - (uint64_t)scaled) {
+                err(error, error_size, "render graph target budget exceeded"); return 0;
+            }
+            bytes += (uint64_t)scaled;
+        }
+    }
+    if (targets > GFX_SHADER64_MAX_GRAPH_TARGETS || present_count != 1u ||
+        strcmp(passes[count - 1u].output, "present") != 0 ||
+        bytes > GFX_SHADER64_MAX_GRAPH_TARGET_BYTES) {
+        err(error, error_size, "graph needs one final present output and bounded intermediate targets"); return 0;
+    }
+    for (size_t emitted_count = 0; emitted_count < count; ++emitted_count) {
+        int progress = 0;
+        for (size_t i = 0; i < count; ++i) {
+            if (emitted[i]) continue;
+            const char *input = passes[i].input;
+            if (!strcmp(input, "present")) {
+                err(error, error_size, "present is write-only"); return 0;
+            }
+            int ready = !strcmp(input, "sceneColor");
+            for (size_t j = 0; !ready && j < count; ++j)
+                if (!strcmp(input, passes[j].output)) ready = emitted[j] != 0;
+            int declared = !strcmp(input, "sceneColor");
+            for (size_t j = 0; !declared && j < count; ++j)
+                if (!strcmp(input, passes[j].output)) declared = 1;
+            if (!declared) { err(error, error_size, "pass reads an undeclared resource"); return 0; }
+            if (ready) { emitted[i] = 1; order[emitted_count] = (unsigned char)i; progress = 1; break; }
+        }
+        if (!progress) { err(error, error_size, "render graph contains a cycle or unresolved dependency"); return 0; }
+    }
+    /* Every intermediate must be consumed; unused outputs hide resource cost. */
+    for (size_t i = 0; i < count; ++i) if (strcmp(passes[i].output, "present")) {
+        int consumed = 0;
+        for (size_t j = 0; j < count; ++j) if (!strcmp(passes[i].output, passes[j].input)) consumed = 1;
+        if (!consumed) { err(error, error_size, "graph contains an unconsumed intermediate resource"); return 0; }
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
+int gfx_shader64_validate_pass_source(const char *source, size_t size,
+                                      char *error, size_t error_size) {
+    static const char *const required[] = {
+        "float4 shader64_pass(", "float4 color", "float2 uv",
+        "texture2d<float> image", "sampler imageSampler", "constant float4 &params",
+        "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "pass source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) { err(error, error_size, "source does not implement Shader64 API v2 fullscreen signature"); return 0; }
+    if (contains(source, size, "#include \"")) { err(error, error_size, "local shader includes are not supported in API v2"); return 0; }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
+int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
+                                    char *output, size_t output_size) {
+    static const char prefix[] =
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct Shader64In { float4 position [[position]]; float2 uv; };\n"
+        "vertex Shader64In sm64_shader64_vertex(uint id [[vertex_id]]) { Shader64In o; o.position = id == 0 ? float4(-1.0,-1.0,0.0,1.0) : (id == 1 ? float4(3.0,-1.0,0.0,1.0) : float4(-1.0,3.0,0.0,1.0)); o.uv = id == 0 ? float2(0.0,1.0) : (id == 1 ? float2(2.0,1.0) : float2(0.0,-1.0)); return o; }\n";
+    static const char suffix[] =
+        "\nfragment float4 sm64_shader64_fragment(Shader64In in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], constant float4 &parameters [[buffer(0)]]) { float4 color=image.sample(imageSampler,in.uv); return shader64_pass(color,in.uv,image,imageSampler,parameters); }\n";
+    size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
+    if (!output || output_size < needed || !gfx_shader64_validate_pass_source(source, source_size, NULL, 0)) return 0;
     memcpy(output, prefix, sizeof(prefix) - 1u);
     memcpy(output + sizeof(prefix) - 1u, source, source_size);
     memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));

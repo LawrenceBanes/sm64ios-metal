@@ -2,6 +2,8 @@
 
 SHADER64 is an optional user shader interface layered on the existing Metal renderer. The built-in Classic64 path remains the recovery/default path. The initial runtime contract supports one replaceable stage: **postprocess**, after the scene has been rasterized and before the native HUD is drawn. SM64 Fast3D material combiners, world geometry, shadow generation, and HUD rendering continue to use the engine's native code.
 
+Mission 81 adds an incremental API 2 option: a bounded Metal fullscreen render graph with up to four source-compiled raster passes and named sampled intermediate images. API 1 remains supported unchanged. API 2 does not yet expose geometry/material, engine depth, shadow maps, G-buffers, compute, history, or custom texture bindings; see [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md) for the current resource map, graph contract, Bliss workload audit, and limitations.
+
 ## Installing a pack
 
 Create a ZIP whose root contains `manifest.json` and either `shaders/postprocess.metal` or `shaders/postprocess.metallib` (an optional explicit `shaders/` directory entry is allowed). In Graphics, tap **Shader Pack**, then **Import ZIP Pack…**, choose the archive in Files, and select the installed pack. Compilation/loading happens on selection. If compilation, library loading, or pipeline creation fails, the prior pipeline stays active and the error is shown. Choose **Classic64** to restore the original renderer immediately. The active pack and four parameter values persist across launches; a missing or failing pack automatically falls back to Classic64.

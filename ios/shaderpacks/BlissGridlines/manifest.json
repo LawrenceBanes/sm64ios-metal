@@ -1,0 +1,15 @@
+{
+  "formatVersion": 2,
+  "id": "BlissGridlines",
+  "name": "-Bliss Camera Gridlines Adaptation- (Chocapic13' Shaders edit)",
+  "author": "Bliss / Chocapic13; SHITBOX LABZ API adaptation",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "enabled", "label": "Camera gridlines", "type": "boolean", "default": 1 }
+  ],
+  "passes": [
+    { "id": "camera_gridlines", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/gridlines.metal", "scale": 1.0 }
+  ]
+}

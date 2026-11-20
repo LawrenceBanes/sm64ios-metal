@@ -1397,7 +1397,7 @@ static int sm64RenderDiagnosticMode;
         [packIDs addObject:child];
     }
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"SHADER64"
-        message:@"Custom packs replace the final scene composite. Native SM64 material rendering and HUD remain in place; built-in post effects are bypassed while a custom composite is active. Source MSL and compatible iOS metallib packs are supported. Metal shaders are trusted code and are not sandboxed from GPU execution."
+        message:@"API 1 packs replace the final scene composite; API 2 packs run a bounded fullscreen Metal render graph. Native geometry/material rendering and HUD remain in place. API 1 supports source MSL or compatible iOS metallib; API 2 currently supports source MSL passes. Metal shaders are trusted code and are not sandboxed from GPU execution."
         preferredStyle:UIAlertControllerStyleActionSheet];
     [menu addAction:[UIAlertAction actionWithTitle:@"Classic64 (restore original renderer)" style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) { (void)action; gfx_metal_use_classic_shader(); [self refreshGraphicsSettings]; [self appendStatus:@"Classic64 renderer restored"]; }]];
@@ -1408,9 +1408,12 @@ static int sm64RenderDiagnosticMode;
         [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"About %@", name]
             style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
                 (void)action;
-                NSString *details = [NSString stringWithFormat:@"%@ %@\nBy %@\nShader API %@\nStage %@\nEntry %@",
-                    manifest[@"name"], manifest[@"version"], manifest[@"author"],
-                    manifest[@"shaderApiVersion"], manifest[@"stage"], manifest[@"entryPoint"]];
+                NSString *details = [manifest[@"shaderApiVersion"] integerValue] == 2 ?
+                    [NSString stringWithFormat:@"%@ %@\nBy %@\nShader API 2\nRender graph: %lu fullscreen passes",
+                        manifest[@"name"], manifest[@"version"], manifest[@"author"], (unsigned long)[manifest[@"passes"] count]] :
+                    [NSString stringWithFormat:@"%@ %@\nBy %@\nShader API %@\nStage %@\nEntry %@",
+                        manifest[@"name"], manifest[@"version"], manifest[@"author"],
+                        manifest[@"shaderApiVersion"], manifest[@"stage"], manifest[@"entryPoint"]];
                 UIAlertController *about = [UIAlertController alertControllerWithTitle:@"Shader Pack Details"
                     message:details preferredStyle:UIAlertControllerStyleAlert];
                 [about addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -1449,11 +1452,33 @@ static int sm64RenderDiagnosticMode;
     BOOL identifierOK = [identifier isKindOfClass:[NSString class]] && [regex numberOfMatchesInString:identifier options:0 range:NSMakeRange(0, identifier.length)] == 1 && [identifier isEqualToString:packID];
     BOOL metadataOK = [manifest[@"name"] isKindOfClass:[NSString class]] && [manifest[@"name"] length] > 0 && [manifest[@"name"] length] <= 80 &&
         [manifest[@"version"] isKindOfClass:[NSString class]] && [manifest[@"author"] isKindOfClass:[NSString class]];
-    if (!identifierOK || !metadataOK || format.integerValue != 1 || api.integerValue != 1 ||
-        ![stage isEqualToString:@"postprocess"] ||
-        !([source isEqualToString:@"shaders/postprocess.metal"] || [source isEqualToString:@"shaders/postprocess.metallib"]) ||
-        ![entry isEqualToString:@"shader64_post"]) {
-        if (errorOut) *errorOut = @"Manifest must use format/API 1, postprocess stage, a supported postprocess source or library, and shader64_post entry point.";
+    BOOL api1 = format.integerValue == 1 && api.integerValue == 1 && [stage isEqualToString:@"postprocess"] &&
+        ([source isEqualToString:@"shaders/postprocess.metal"] || [source isEqualToString:@"shaders/postprocess.metallib"]) &&
+        [entry isEqualToString:@"shader64_post"];
+    BOOL api2 = format.integerValue == 2 && api.integerValue == 2 && [stage isEqualToString:@"render_graph"] &&
+        [manifest[@"passes"] isKindOfClass:[NSArray class]] && [manifest[@"passes"] count] > 0 &&
+        [manifest[@"passes"] count] <= GFX_SHADER64_MAX_GRAPH_PASSES;
+    if (api2) {
+        NSRegularExpression *nameRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,32}$" options:0 error:nil];
+        NSMutableSet *outputs = [NSMutableSet set];
+        for (NSDictionary *pass in manifest[@"passes"]) {
+            if (![pass isKindOfClass:[NSDictionary class]]) { api2 = NO; break; }
+            NSString *pid = pass[@"id"], *input = pass[@"input"], *output = pass[@"output"], *path = pass[@"source"], *type = pass[@"type"];
+            NSNumber *scale = pass[@"scale"];
+            BOOL passOK = [pass isKindOfClass:[NSDictionary class]] &&
+                [pid isKindOfClass:[NSString class]] && [nameRegex numberOfMatchesInString:pid options:0 range:NSMakeRange(0, pid.length)] == 1 &&
+                [input isKindOfClass:[NSString class]] && [nameRegex numberOfMatchesInString:input options:0 range:NSMakeRange(0, input.length)] == 1 &&
+                [output isKindOfClass:[NSString class]] && ([output isEqualToString:@"present"] || [nameRegex numberOfMatchesInString:output options:0 range:NSMakeRange(0, output.length)] == 1) &&
+                [path isKindOfClass:[NSString class]] && [path hasPrefix:@"shaders/"] && ![path containsString:@".."] &&
+                [[path pathComponents] count] == 2 && [path hasSuffix:@".metal"] &&
+                [type isEqualToString:@"fullscreen"] && [scale isKindOfClass:[NSNumber class]] && isfinite(scale.doubleValue) && scale.doubleValue >= 0.25 && scale.doubleValue <= 1.0;
+            if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
+            [outputs addObject:output];
+        }
+        if (![[manifest[@"passes"] lastObject][@"output"] isEqualToString:@"present"]) api2 = NO;
+    }
+    if (!identifierOK || !metadataOK || (!api1 && !api2)) {
+        if (errorOut) *errorOut = @"Manifest must use the supported API 1 postprocess contract or API 2 bounded fullscreen render graph.";
         return nil;
     }
     return manifest;
@@ -1462,10 +1487,29 @@ static int sm64RenderDiagnosticMode;
 - (void)activateShaderPack:(NSString *)packID {
     NSString *root = [self shaderPackRoot], *validation = nil;
     NSDictionary *manifest = [self shaderManifestForID:packID root:root error:&validation];
+    BOOL graphPack = [manifest[@"shaderApiVersion"] integerValue] == 2;
     NSString *relative = [manifest[@"source"] isKindOfClass:[NSString class]] ? manifest[@"source"] : @"";
     BOOL compiledLibrary = [relative isEqualToString:@"shaders/postprocess.metallib"];
     NSString *sourcePath = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:relative];
-    NSData *source = manifest ? [NSData dataWithContentsOfFile:sourcePath] : nil;
+    NSData *source = manifest && !graphPack ? [NSData dataWithContentsOfFile:sourcePath] : nil;
+    NSMutableArray<NSData *> *graphSources = [NSMutableArray array];
+    struct GfxShader64GraphSource graphPasses[GFX_SHADER64_MAX_GRAPH_PASSES];
+    memset(graphPasses, 0, sizeof(graphPasses));
+    if (manifest && graphPack) {
+        NSArray *definitions = manifest[@"passes"];
+        for (NSUInteger i = 0; i < definitions.count; ++i) {
+            NSDictionary *definition = definitions[i];
+            NSString *path = definition[@"source"];
+            NSString *file = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:path];
+            NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:file error:nil];
+            NSData *bytes = [attrs[NSFileType] isEqualToString:NSFileTypeRegular] && [attrs[NSFileSize] unsignedLongLongValue] <= GFX_SHADER64_MAX_SOURCE_BYTES ? [NSData dataWithContentsOfFile:file] : nil;
+            if (!bytes) { validation = @"A graph pass source is missing or exceeds the 256 KiB limit"; break; }
+            [graphSources addObject:bytes];
+            graphPasses[i] = (struct GfxShader64GraphSource){
+                [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
+                bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u };
+        }
+    }
     float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     NSArray *configured = manifest[@"parameters"];
     if (configured && (![configured isKindOfClass:[NSArray class]] || configured.count > 4)) validation = @"parameters must be an array of at most four float declarations";
@@ -1511,9 +1555,11 @@ static int sm64RenderDiagnosticMode;
         parameters[i] = (float)v;
     }
     char error[512] = {0};
-    BOOL loaded = source && !validation && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
+    BOOL loaded = !validation && (graphPack ? (graphSources.count == [manifest[@"passes"] count] &&
+        gfx_metal_load_shader64_graph(packID.UTF8String, graphPasses, graphSources.count, parameters, error, sizeof(error))) :
+        (source && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,
-        source.bytes, source.length, parameters, error, sizeof(error)));
+        source.bytes, source.length, parameters, error, sizeof(error)))));
     if (!loaded) {
         NSString *message = validation ?: (source ? [NSString stringWithUTF8String:error] : @"Shader source file is missing.");
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Shader pack not activated" message:message preferredStyle:UIAlertControllerStyleAlert];
