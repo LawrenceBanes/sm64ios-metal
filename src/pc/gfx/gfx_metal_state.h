@@ -146,5 +146,7 @@ struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_step(
     struct GfxMetalFogAdjustments adjustments, uint32_t parameter, int direction);
 uint32_t gfx_metal_tone_mapping_sanitize(uint32_t mode);
 const char *gfx_metal_tone_mapping_name_for_mode(uint32_t mode);
+float gfx_metal_exposure_sanitize(float stops);
+float gfx_metal_exposure_step(float stops, int direction);
 
 #endif

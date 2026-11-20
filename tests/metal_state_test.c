@@ -48,6 +48,12 @@ int main(void) {
     assert(gfx_metal_tone_mapping_sanitize(GFX_METAL_TONE_REINHARD) == GFX_METAL_TONE_REINHARD);
     assert(gfx_metal_tone_mapping_sanitize(99u) == GFX_METAL_TONE_ACES);
     assert(strcmp(gfx_metal_tone_mapping_name_for_mode(GFX_METAL_TONE_REINHARD), "Reinhard") == 0);
+    assert(gfx_metal_exposure_sanitize(4.0f) == 2.0f);
+    assert(gfx_metal_exposure_sanitize(-4.0f) == -2.0f);
+    assert(gfx_metal_exposure_step(0.0f, 1) == 0.25f);
+    assert(gfx_metal_exposure_step(0.0f, -1) == -0.25f);
+    assert(gfx_metal_exposure_step(2.0f, 1) == 2.0f);
+    assert(gfx_metal_exposure_sanitize(NAN) == 0.0f);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_DENSITY, -1);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_START, 1);
     assert(fog.density_scale == 0.75f && fog.start_scale == 1.25f);

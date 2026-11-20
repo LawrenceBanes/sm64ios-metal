@@ -748,7 +748,7 @@ static int sm64RenderDiagnosticMode;
                      forState:UIControlStateNormal];
     [self.fxaaButton setTitle:gfx_metal_fxaa_enabled() ? @"FXAA: On" : @"FXAA: Off"
                      forState:UIControlStateNormal];
-    [self.exposureButton setTitle:[NSString stringWithFormat:@"Exposure %+.0f", gfx_metal_exposure_stops()]
+    [self.exposureButton setTitle:[NSString stringWithFormat:@"EV %+.2f", gfx_metal_exposure_stops()]
                           forState:UIControlStateNormal];
     [self.fogButton setTitle:gfx_metal_fog_enabled() ? @"Fog: On" : @"Fog: Off"
                     forState:UIControlStateNormal];
@@ -862,8 +862,18 @@ static int sm64RenderDiagnosticMode;
 
 - (void)stepExposure {
 #if defined(RAPI_METAL)
-    gfx_metal_step_exposure();
-    [self refreshGraphicsSettings];
+    float exposure = gfx_metal_exposure_stops();
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Exposure"
+        message:[NSString stringWithFormat:@"Manual exposure: %+.2f EV (range −2 to +2)", exposure]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"−0.25 EV" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_exposure(-1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"+0.25 EV" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_exposure(1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reset" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { gfx_metal_reset_exposure(); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 
@@ -1053,6 +1063,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_ssao_enabled(false);
             gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(false);
+            gfx_metal_reset_exposure();
             gfx_metal_set_tone_mapping_mode(0u);
             gfx_metal_set_fxaa_enabled(false);
             gfx_metal_set_bloom_enabled(false);
@@ -1090,6 +1101,7 @@ static int sm64RenderDiagnosticMode;
                                        (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
             gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(true);
+            gfx_metal_reset_exposure();
             gfx_metal_set_tone_mapping_mode(preset == GFX_METAL_PRESET_PERFORMANCE ? 1u : 0u);
             gfx_metal_set_fxaa_enabled(preset != GFX_METAL_PRESET_PERFORMANCE);
             gfx_metal_set_bloom_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
@@ -1159,6 +1171,7 @@ static int sm64RenderDiagnosticMode;
 #if defined(RAPI_METAL)
     gfx_metal_set_ssao_enabled(false);
     gfx_metal_set_post_enabled(false);
+    gfx_metal_reset_exposure();
     gfx_metal_set_tone_mapping_mode(0u);
     gfx_metal_set_fxaa_enabled(false);
     gfx_metal_set_fog_enabled(false);

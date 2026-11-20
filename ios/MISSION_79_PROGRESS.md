@@ -48,6 +48,11 @@
 - Added persistent ACES-inspired and Reinhard curve selection in the existing final composite shader. The developer control retains an independent tone-mapping on/off action, displays the selected curve, and presets/reset choose an explicit mode.
 - Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple validation is pending; device image comparison remains required.
 
+## M79-D fractional exposure controls (working tree)
+
+- Corrected saved exposure to retain fractional EV values and added bounded quarter-stop adjustments from −2 to +2 EV. The developer exposure control now provides increase, decrease, and reset actions; presets/reset restore neutral exposure.
+- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple validation is pending.
+
 ## Milestones
 
 ### M79-A — Infrastructure (partial)
@@ -173,4 +178,4 @@
 
 The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Next: verify tone-map Apple validation and start an IPA from the newest validated source. Continue remaining renderer controls and reliability items; physical-device image and timing review remains required.
+Next: commit/push fractional exposure and run Apple validation; monitor IPA workflow `44711031225` and verify its release. Then make a fresh build from the newest validated source and continue remaining renderer reliability work. Physical-device visual/performance evidence remains required.

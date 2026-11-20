@@ -48,6 +48,8 @@ bool gfx_metal_fxaa_enabled(void);
 void gfx_metal_set_fxaa_enabled(bool enabled);
 float gfx_metal_exposure_stops(void);
 void gfx_metal_step_exposure(void);
+void gfx_metal_adjust_exposure(int direction);
+void gfx_metal_reset_exposure(void);
 uint32_t gfx_metal_color_grade(void);
 void gfx_metal_cycle_color_grade(void);
 void gfx_metal_set_color_grade(uint32_t grade);

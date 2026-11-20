@@ -236,3 +236,15 @@ const char *gfx_metal_tone_mapping_name_for_mode(uint32_t mode) {
     return gfx_metal_tone_mapping_sanitize(mode) == GFX_METAL_TONE_REINHARD ?
         "Reinhard" : "ACES";
 }
+
+float gfx_metal_exposure_sanitize(float stops) {
+    if (!isfinite(stops)) return 0.0f;
+    if (stops < -2.0f) return -2.0f;
+    if (stops > 2.0f) return 2.0f;
+    return stops;
+}
+
+float gfx_metal_exposure_step(float stops, int direction) {
+    return gfx_metal_exposure_sanitize(gfx_metal_exposure_sanitize(stops) +
+                                        (direction < 0 ? -0.25f : 0.25f));
+}

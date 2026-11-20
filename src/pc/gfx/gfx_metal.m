@@ -309,7 +309,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
                               (uint32_t)saved_shadow_resolution : 512u;
     metal_sun_preset = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunPreset"]));
     metal_sun_intensity = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunIntensity"]));
-    metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
+    metal_exposure_stops = gfx_metal_exposure_sanitize((float)[defaults doubleForKey:@"SM64MetalExposureStops"]);
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_color_adjustments = gfx_metal_color_adjustments_sanitize((struct GfxMetalColorAdjustments){
         (float)[defaults doubleForKey:@"SM64MetalBrightness"],
@@ -559,11 +559,18 @@ void gfx_metal_set_fxaa_enabled(bool enabled) {
 }
 float gfx_metal_exposure_stops(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_exposure_stops : 0.0f; } }
 void gfx_metal_step_exposure(void) {
+    gfx_metal_adjust_exposure(1);
+}
+void gfx_metal_adjust_exposure(int direction) {
     @synchronized ([NSObject class]) {
-        metal_exposure_stops += 1.0f;
-        if (metal_exposure_stops > 1.0f) metal_exposure_stops = -1.0f;
+        metal_exposure_stops = gfx_metal_exposure_step(metal_exposure_stops, direction);
+        metal_offscreen_runtime_failed = false;
     }
-    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_exposure_stops forKey:@"SM64MetalExposureStops"];
+    [[NSUserDefaults standardUserDefaults] setDouble:metal_exposure_stops forKey:@"SM64MetalExposureStops"];
+}
+void gfx_metal_reset_exposure(void) {
+    @synchronized ([NSObject class]) { metal_exposure_stops = 0.0f; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setDouble:0.0 forKey:@"SM64MetalExposureStops"];
 }
 uint32_t gfx_metal_color_grade(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_color_grade : 0u; } }
 void gfx_metal_cycle_color_grade(void) {
