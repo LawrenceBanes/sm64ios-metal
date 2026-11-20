@@ -147,7 +147,17 @@
 
 ### Remaining M79-D/M79-E/M79-F/M79-G/M79-H work
 
-- God rays, genuine sky/sun presentation beyond gradients, HUD/UI isolation, device performance measurements, screenshot-based visual acceptance, and final integrated build remain outstanding. Bloom, tone map/exposure, grade, fog, settings presets, and controls have source/host/Apple compile coverage but no physical visual verification.
+- Screen-space light shafts, a simple camera-relative sky gradient and sun disk, and HUD/UI isolation are implemented. They have source/host/Apple compile coverage but no physical visual verification. Remaining work includes scene-by-scene transparent geometry/depth validation, GPU/device performance and thermal measurements, contact-AO/shadow screenshot evidence, and physical appearance review; no real volumetric scattering or cascaded shadow maps are implemented.
+
+### Test-build activation notes
+
+1. Open the developer Cheats/Graphics panel and choose **Enhanced** for AO, shadows, tone mapping, and directional sunlight, or **Cinematic** to additionally enable bloom, fog, sunset sky, and screen-space light shafts.
+2. Use **SSAO** to cycle Off / On / AO-only / depth view. **AO quality** opens Low/Standard/High plus radius, bias, intensity, and reset controls.
+3. **Tone** opens enable/disable and ACES-inspired or Reinhard mode. **FXAA** toggles final-image antialiasing. **EV** opens ±0.25-stop exposure controls and reset.
+4. **Bloom**, **Color**, and **Fog range** open profiles and independent settings. **Sun/Shadows** controls direction, sunlight intensity, shadow enable, and map resolution. **Rays** controls enable, sample quality, and intensity. **Sky** cycles Original/Day/Sunset.
+5. **Effects: Off** disables enhancement passes; **Classic** preset/reset restores the direct rendering fallback.
+
+All of these controls remain device-unverified; these steps only identify the implemented test UI.
 
 ## Current validation
 
