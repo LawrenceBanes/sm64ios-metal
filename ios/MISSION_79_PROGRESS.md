@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `9d193d7fdaf4b1099e1f67a070162670fcbc57fb`, with the next fog-profile increment in progress.
+- Current source commit: `9ebfd82e23f20590145b8e6b92a65f1acbab099a`.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -52,7 +52,7 @@
 ### M79-E — Fog controls (implementation increment)
 
 - Added four persisted fog profiles that alter exponential density, start distance, and fog tint; profile cycling and reset are wired into the Graphics panel.
-- Focused source/shader checks and postprocess ASan/UBSan pass. Full Linux regression and Apple SDK validation are running/pending for this follow-up commit.
+- Focused source/shader checks, postprocess ASan/UBSan, and full Linux regression pass. Apple SDK/MSL validation passed in [run 44697954395](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44697954395). Fog profile appearance and scale tuning remain device-unverified.
 
 ### Build candidate status
 
@@ -77,4 +77,4 @@
 
 ## Next task
 
-Commit and validate fog profiles, then build a current private IPA. Continue with AO controls and HUD isolation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Build a current private IPA with grading and atmosphere controls, then continue with AO controls and HUD isolation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
