@@ -14,6 +14,23 @@ static bool normalize3(float v[3]) {
     return true;
 }
 
+bool gfx_shadow_map_transform_point(const float object_transform[4][4],
+                                    const float local_position[3], float world_position[3]) {
+    if (!object_transform || !local_position || !world_position) return false;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            if (!isfinite(object_transform[r][c])) return false;
+    for (int c = 0; c < 3; ++c) {
+        if (!isfinite(local_position[c])) return false;
+        world_position[c] = local_position[0] * object_transform[0][c] +
+                            local_position[1] * object_transform[1][c] +
+                            local_position[2] * object_transform[2][c] +
+                            object_transform[3][c];
+        if (!isfinite(world_position[c])) return false;
+    }
+    return true;
+}
+
 bool gfx_shadow_map_fit(const float (*positions)[3], size_t count,
                         const float light_direction[3], uint32_t resolution,
                         struct GfxShadowMapTransform *transform) {

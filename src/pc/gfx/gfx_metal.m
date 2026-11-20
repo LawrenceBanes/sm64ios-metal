@@ -1518,12 +1518,10 @@ static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
         if (vertex_count + 3u > METAL_SHADOW_VERTEX_LIMIT) break;
         for (size_t v = 0; v < 3; ++v) {
             const float *local = triangle->vertices[v].position;
-            float *world = metal_shadow_world_positions[vertex_count++];
-            for (int column = 0; column < 3; ++column)
-                world[column] = local[0] * triangle->object_transform[0][column] +
-                                local[1] * triangle->object_transform[1][column] +
-                                local[2] * triangle->object_transform[2][column] +
-                                triangle->object_transform[3][column];
+            if (!gfx_shadow_map_transform_point(triangle->object_transform, local,
+                                                metal_shadow_world_positions[vertex_count]))
+                return false;
+            ++vertex_count;
         }
     }
     if (vertex_count < 3u) return false;

@@ -5,6 +5,18 @@
 #include <stdio.h>
 
 int main(void) {
+    const float object_transform[4][4] = {
+        { 2.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 3.0f, 0.0f, 0.0f },
+        { 0.0f, 0.0f, 4.0f, 0.0f }, { 7.0f, -5.0f, 11.0f, 1.0f }
+    };
+    const float local_position[3] = { 2.0f, 3.0f, -1.0f };
+    float world_position[3];
+    assert(gfx_shadow_map_transform_point(object_transform, local_position, world_position));
+    assert(world_position[0] == 11.0f && world_position[1] == 4.0f && world_position[2] == 7.0f);
+    const float invalid_transform[4][4] = {
+        { 1, 0, 0, 0 }, { 0, NAN, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 }
+    };
+    assert(!gfx_shadow_map_transform_point(invalid_transform, local_position, world_position));
     const float vertices[][3] = {
         { -100.0f, 0.0f, -100.0f }, { 100.0f, 0.0f, -100.0f },
         { 100.0f, 0.0f, 100.0f }, { -100.0f, 0.0f, 100.0f },

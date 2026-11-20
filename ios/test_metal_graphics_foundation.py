@@ -49,7 +49,7 @@ def main() -> None:
     ):
         require(token in state_test, f"missing host regression case: {token}")
     for token in (
-        "gfx_shadow_map_fit", "gfx_shadow_map_project", "center_x = roundf",
+        "gfx_shadow_map_transform_point", "gfx_shadow_map_fit", "gfx_shadow_map_project", "center_x = roundf",
         "uv_depth[c] = c == 1 ? 1.0f - n : n",
     ):
         require(token in shadow_h + shadow_c, f"missing directional shadow math: {token}")
