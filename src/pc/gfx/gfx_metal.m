@@ -88,6 +88,7 @@ static uint32_t metal_ssao_debug;
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
 static float metal_exposure_stops;
+static uint32_t metal_color_grade;
 static bool metal_fog_is_enabled;
 static bool metal_bloom_is_enabled;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
@@ -244,6 +245,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
+    metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
     metal_bloom_is_enabled = [defaults boolForKey:@"SM64MetalBloomEnabled"];
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
@@ -327,6 +329,14 @@ void gfx_metal_step_exposure(void) {
         if (metal_exposure_stops > 1.0f) metal_exposure_stops = -1.0f;
     }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_exposure_stops forKey:@"SM64MetalExposureStops"];
+}
+uint32_t gfx_metal_color_grade(void) { @synchronized ([NSObject class]) { return metal_color_grade; } }
+void gfx_metal_cycle_color_grade(void) {
+    gfx_metal_set_color_grade((gfx_metal_color_grade() + 1u) % 4u);
+}
+void gfx_metal_set_color_grade(uint32_t grade) {
+    @synchronized ([NSObject class]) { metal_color_grade = MIN(grade, 3u); metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_color_grade forKey:@"SM64MetalColorGrade"];
 }
 bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return metal_fog_is_enabled; } }
 void gfx_metal_set_fog_enabled(bool enabled) {
@@ -1051,7 +1061,7 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
-        !gfx_metal_bloom_enabled()) return false;
+        !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1194,11 +1204,20 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     }
     vector_float4 fog_color = { 0.52f, 0.67f, 0.82f, 1.0f };
     vector_float4 bloom_params = { gfx_metal_bloom_enabled() ? 1.0f : 0.0f, 0.65f, 0.8f, 0.0f };
+    /* saturation, contrast, warm/cool red-blue bias, brightness offset */
+    static const vector_float4 grades[4] = {
+        { 1.00f, 1.00f, 0.00f, 0.00f }, /* neutral */
+        { 1.00f, 1.02f, 0.035f, 0.00f }, /* warm */
+        { 1.22f, 1.04f, 0.00f, 0.00f }, /* vivid */
+        { 1.08f, 1.12f, 0.015f, -0.015f } /* cinematic */
+    };
+    vector_float4 grade_style = grades[gfx_metal_color_grade() % 4u];
     [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
     [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
     [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:2];
     [encoder setFragmentBytes:&fog_color length:sizeof(fog_color) atIndex:3];
     [encoder setFragmentBytes:&bloom_params length:sizeof(bloom_params) atIndex:4];
+    [encoder setFragmentBytes:&grade_style length:sizeof(grade_style) atIndex:5];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;

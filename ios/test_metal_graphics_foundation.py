@@ -100,6 +100,13 @@ def main() -> None:
         require(token in uikit, f"missing native graphics settings UI control: {token}")
     require("gfx_metal_set_cpu_frame_time_ms" in main_source,
             "CPU timing must cover the game tick separately from Metal GPU timing")
+    for token in (
+        "SM64MetalColorGrade", "gfx_metal_cycle_color_grade",
+        "gfx_metal_set_color_grade", "grade_style", "Grade: %@",
+        "gradeStyle [[buffer(5)]]", "gradeStyle.x", "gradeStyle.y",
+    ):
+        require(token in metal + metal_h + shader_c + uikit,
+                f"missing persisted color-grading path: {token}")
 
     print("Configurable Metal renderer foundation source checks passed")
 

@@ -66,6 +66,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *exposureButton;
 @property(nonatomic, strong) UIButton *fogButton;
 @property(nonatomic, strong) UIButton *bloomButton;
+@property(nonatomic, strong) UIButton *gradeButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -559,6 +560,9 @@ static int sm64RenderDiagnosticMode;
     self.bloomButton = [self buttonWithTitle:@"Bloom: Off" action:@selector(toggleBloom)];
     self.bloomButton.frame = CGRectMake(14, 278, 108, 30);
     [self.graphicsPanel addSubview:self.bloomButton];
+    self.gradeButton = [self buttonWithTitle:@"Grade: Neutral" action:@selector(cycleColorGrade)];
+    self.gradeButton.frame = CGRectMake(128, 278, 160, 30);
+    [self.graphicsPanel addSubview:self.gradeButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
@@ -686,6 +690,9 @@ static int sm64RenderDiagnosticMode;
                     forState:UIControlStateNormal];
     [self.bloomButton setTitle:gfx_metal_bloom_enabled() ? @"Bloom: On" : @"Bloom: Off"
                        forState:UIControlStateNormal];
+    static NSString *const grade_names[] = { @"Neutral", @"Warm", @"Vivid", @"Cinematic" };
+    [self.gradeButton setTitle:[NSString stringWithFormat:@"Grade: %@", grade_names[MIN(gfx_metal_color_grade(), 3u)]]
+                       forState:UIControlStateNormal];
 #endif
 }
 
@@ -722,6 +729,13 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_bloom_enabled(!gfx_metal_bloom_enabled());
     [self refreshGraphicsSettings];
     [self appendStatus:gfx_metal_bloom_enabled() ? @"Bloom enabled (quarter-resolution bright pass)" : @"Bloom disabled"];
+#endif
+}
+
+- (void)cycleColorGrade {
+#if defined(RAPI_METAL)
+    gfx_metal_cycle_color_grade();
+    [self refreshGraphicsSettings];
 #endif
 }
 
@@ -795,6 +809,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_fxaa_enabled(false);
     gfx_metal_set_fog_enabled(false);
     gfx_metal_set_bloom_enabled(false);
+    gfx_metal_set_color_grade(0u);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];

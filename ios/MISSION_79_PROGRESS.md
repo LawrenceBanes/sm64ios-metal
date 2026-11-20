@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `aff5bc593b9e5806995b2bf4dd3420180705e5e7`; uncommitted work adds estimated render-target memory and effect-pixel counters.
+- Current source commit: updated after this checkpoint is committed; most recent verified backend-only source was `a05012e91f9ce7e9ef34383feeab4f0049a35232`.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -44,9 +44,14 @@
 - Added a quarter-resolution bright pass and two separable blur passes; presentation can composite bloom before tone mapping. A persisted developer toggle keeps it off by default.
 - Apple Metal SDK/MSL validation passed at `aff5bc593b9e5806995b2bf4dd3420180705e5e7`, workflow [44696615662](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696615662), including the bloom compute source and VERSION_US area syntax path. Visual output has not been verified.
 
+### M79-D — Color-grade presets (implementation increment)
+
+- Added persisted Neutral, Warm, Vivid, and Cinematic grade selections to the final Metal composite. The shader adjusts saturation, contrast, temperature bias, and brightness before optional tone mapping; non-neutral grades activate the offscreen path. Reset returns to Neutral.
+- UI and shader-generation source checks pass. Full Linux regression passed after this increment. Apple SDK compilation is pending.
+
 ### Build candidate status
 
-- The private full-game IPA workflow [44694849327](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694849327) first failed at `area.c:41`. Safe diagnostics were improved; rerun [44695695998](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695695998) identified an undeclared symbol or type. The line declares `bool` inside the iOS branding guard, so `<stdbool.h>` is now included explicitly. This fix awaits another complete app build; neither failed run produced an IPA.
+- The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
 
 ### M79-C — Directional lighting and shadows (not implemented)
 
@@ -58,13 +63,13 @@
 
 ## Current validation
 
-- Full local Linux suite and Apple validation passed for fog at commit `dada9851` (run [44695676469](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695676469)). Linux checks and full iPhoneOS/IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) are running for `aff5bc59` after the bool include fix.
+- Full local Linux regression suite passed after color-grade implementation. Previous backend-only Apple Metal validation and Linux checks passed at `a05012e9` in [run 44697022003](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44697022003); Apple validation for color grading is pending.
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
 - Tone-map/FXAA is committed as `2e1911824acd5791796c013979792b5c1c348971`; focused checks, the full Linux suite, and Apple SDK/MSL validation passed (workflow [44694655649](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694655649)).
-- No Mission 79 IPA, on-device rendering, or physical-device visual/performance claim exists.
+- No physical-device visual, AO quality, postprocessing quality, or performance claim exists. The available private IPA predates color grading and estimated-memory/effect-pixel counters.
 
 ## Next task
 
-Finish the current iPhoneOS app build and inspect its sanitized diagnostics. Continue with render-target memory reporting, postprocessing grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.
+Run Apple validation for the color-grade checkpoint and rebuild the private IPA if it passes. Then continue with AO controls and HUD isolation, real directional shadow mapping, adjustable fog/sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
