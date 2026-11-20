@@ -610,8 +610,8 @@ int gfx_shader64_validate_material_resources_source(const char *source, size_t s
     } else if (!gfx_shader64_validate_material_source(source, size, error, error_size)) {
         return 0;
     }
-    if (directional_light && !vertex_normals) {
-        err(error, error_size, "directional material lighting requires vertex normals");
+    if (directional_light && !vertex_normals && !vertex_positions) {
+        err(error, error_size, "directional material lighting requires vertex normals or view-space positions");
         return 0;
     }
     if (vertex_normals && (!contains(source, size, "float3 viewNormal") ||
@@ -635,10 +635,9 @@ int gfx_shader64_validate_material_resources_source(const char *source, size_t s
 
 int gfx_shader64_validate_material_normal_source(const char *source, size_t size,
                                                 int pack_textures, int directional_light,
-                                                int vertex_positions,
                                                 char *error, size_t error_size) {
     return gfx_shader64_validate_material_resources_source(source, size, pack_textures, 1,
-        directional_light, vertex_positions, error, error_size);
+        directional_light, 0, error, error_size);
 }
 
 int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,

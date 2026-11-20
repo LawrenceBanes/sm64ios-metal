@@ -252,17 +252,17 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     }
     gfx_cc_get_features(shader_id, features);
     features->material_positions = material_positions;
-    if (features->material_directional_light && !features->material_normals) return false;
+    if (features->material_directional_light && !features->material_normals && !material_positions) return false;
     if (material_source && features->material_normals) {
         if (!shader_source_contains(material_source, material_size, "float3 viewNormal") ||
             !shader_source_contains(material_source, material_size, "bool normalValid")) return false;
-        if (features->material_directional_light &&
-            (!shader_source_contains(material_source, material_size, "float3 sunDirectionView") ||
-             !shader_source_contains(material_source, material_size, "float sunIntensity"))) return false;
     }
     if (material_source && features->material_positions &&
         (!shader_source_contains(material_source, material_size, "float3 viewPosition") ||
          !shader_source_contains(material_source, material_size, "bool positionValid"))) return false;
+    if (material_source && features->material_directional_light &&
+        (!shader_source_contains(material_source, material_size, "float3 sunDirectionView") ||
+         !shader_source_contains(material_source, material_size, "float sunIntensity"))) return false;
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
          (features->scene_blend && features->opt_texture_edge) ||

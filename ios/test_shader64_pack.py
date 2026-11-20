@@ -53,7 +53,7 @@ class ShaderPackTests(unittest.TestCase):
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_texture_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_material_normal_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+            ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_normal_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_material_resources_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
@@ -247,18 +247,18 @@ class ShaderPackTests(unittest.TestCase):
                   b'if (normalValid) baseColor.rgb *= abs(viewNormal); return baseColor; }')
         error = ctypes.create_string_buffer(256)
         self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
-            source, len(source), 0, 0, 0, error, len(error)), error.value)
+            source, len(source), 0, 0, error, len(error)), error.value)
         invalid = source.replace(b"bool normalValid", b"bool badFlag")
         self.assertFalse(self.api.gfx_shader64_validate_material_normal_source(
-            invalid, len(invalid), 0, 0, 0, error, len(error)))
+            invalid, len(invalid), 0, 0, error, len(error)))
         self.assertIn(b"vertex-normal", error.value)
         lit_source = source.replace(b"bool normalValid, constant float4 &params",
             b"bool normalValid, float3 sunDirectionView, float sunIntensity, constant float4 &params")
         self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
-            lit_source, len(lit_source), 0, 1, 0, error, len(error)), error.value)
+            lit_source, len(lit_source), 0, 1, error, len(error)), error.value)
         no_light = lit_source.replace(b"float3 sunDirectionView, float sunIntensity, ", b"")
         self.assertFalse(self.api.gfx_shader64_validate_material_normal_source(
-            no_light, len(no_light), 0, 1, 0, error, len(error)))
+            no_light, len(no_light), 0, 1, error, len(error)))
         self.assertIn(b"directional-light", error.value)
         position_source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
             b'float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, '
@@ -267,6 +267,13 @@ class ShaderPackTests(unittest.TestCase):
             position_source, len(position_source), 0, 0, 0, 1, error, len(error)), error.value)
         self.assertFalse(self.api.gfx_shader64_validate_material_resources_source(
             source, len(source), 0, 0, 0, 1, error, len(error)))
+        self.assertFalse(self.api.gfx_shader64_validate_material_resources_source(
+            source, len(source), 0, 0, 1, 0, error, len(error)))
+        position_lit_source = position_source.replace(
+            b'bool positionValid, constant float4 &params',
+            b'bool positionValid, float3 sunDirectionView, float sunIntensity, constant float4 &params')
+        self.assertTrue(self.api.gfx_shader64_validate_material_resources_source(
+            position_lit_source, len(position_lit_source), 0, 0, 1, 1, error, len(error)), error.value)
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
@@ -739,8 +746,9 @@ class ShaderPackTests(unittest.TestCase):
                 material_definition = manifest.get("materialShader")
                 if material_definition is not None:
                     if material_definition.get("directionalLight"):
-                        self.assertTrue(material_definition.get("vertexNormals"),
-                                        f"{pack_id}: directionalLight requires vertexNormals")
+                        self.assertTrue(material_definition.get("vertexNormals") or
+                                        material_definition.get("vertexPositions"),
+                                        f"{pack_id}: directionalLight requires vertexNormals or vertexPositions")
                     material_path = material_definition["source"]
                     self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
                     material_source = (directory / material_path).read_bytes()
@@ -835,7 +843,7 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn('materialDefinition[@"vertexNormals"]', ui)
         self.assertIn('materialDefinition[@"directionalLight"]', ui)
         self.assertIn('materialDefinition[@"vertexPositions"]', ui)
-        self.assertIn('[directionalLight boolValue] && ![vertexNormals boolValue]', ui)
+        self.assertIn('[directionalLight boolValue] && ![vertexNormals boolValue] && ![vertexPositions boolValue]', ui)
         self.assertIn("gfx_metal_shader64_material_vertex_normals_enabled", (ROOT / "src/pc/gfx/gfx_pc.c").read_text())
         self.assertIn("gfx_metal_shader64_material_vertex_positions_enabled", (ROOT / "src/pc/gfx/gfx_pc.c").read_text())
         importer_start = ui.index("- (void)installShaderArchiveAtURL:(NSURL *)url {")

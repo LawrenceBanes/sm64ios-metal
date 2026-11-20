@@ -179,3 +179,9 @@ Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary 
 - Added GeometryNormal64 as an API 2 reference pack that uses actual interpolated view-space positions and Metal fragment derivatives to derive and visualize per-triangle face normals. The effect is authored entirely in the pack shader; it does not add engine-side normal fabrication or change original Fast3D lighting.
 - The result is a flat derivative normal, not a smooth vertex normal; discontinuities, triangle orientation, invalid transforms, or degenerate screen-space triangles can affect the output. Invalid data preserves the original combiner color.
 - Added the pack to the production-importer matrix and Apple generated-Fast3D MSL compile/link workload. Runtime visual testing is pending.
+
+## Current working increment — directional lighting from derived face normals
+
+- Relaxed the API 2 `directionalLight` dependency to accept either source normals or actual view-space positions. The source must still declare and use the bounded sun-direction/intensity signature; position-only packs cannot claim source normals implicitly.
+- GeometryNormal64 now derives a flat face normal from Metal fragment derivatives and applies the renderer's configured sun using an explicitly two-sided diffuse model. This avoids assuming the material hook's front/back winding semantics. The normal derivation and lighting are authored in the shader pack, not special-cased in the engine.
+- Updated source validation, UIKit manifest checks, code generation, generated-MSL Apple coverage, and tests for valid position-based lighting and rejection when neither normal nor position inputs are declared. `python3 ios/test_shader64_pack.py`, `CC=clang tests/run_metal_shader_codegen_test.sh`, explicit position-lit MSL code generation, and the full `CC=clang tests/run_linux_checks.sh` pass. Apple validation is pending for this increment.

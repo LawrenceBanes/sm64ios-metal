@@ -1536,7 +1536,7 @@ static int sm64RenderDiagnosticMode;
                 (vertexNormals && ![vertexNormals isKindOfClass:[NSNumber class]]) ||
                 (directionalLight && ![directionalLight isKindOfClass:[NSNumber class]]) ||
                 (vertexPositions && ![vertexPositions isKindOfClass:[NSNumber class]]) ||
-                ([directionalLight boolValue] && ![vertexNormals boolValue])) api2 = NO;
+                ([directionalLight boolValue] && ![vertexNormals boolValue] && ![vertexPositions boolValue])) api2 = NO;
             if ([material[@"packTextures"] boolValue] && textureList.count == 0) api2 = NO;
         }
     }

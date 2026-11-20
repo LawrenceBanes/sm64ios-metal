@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     char *source = malloc((size_t)length);
     if (!source || fread(source, 1, (size_t)length, file) != (size_t)length) return 67;
     fclose(file);
-    if (!gfx_shader64_validate_material_normal_source(source, (size_t)length, 0, 1, 0, NULL, 0)) return 68;
+    if (!gfx_shader64_validate_material_normal_source(source, (size_t)length, 0, 1, NULL, 0)) return 68;
     if (fwrite(prefix, 1, sizeof(prefix) - 1, stdout) != sizeof(prefix) - 1 ||
         fwrite(source, 1, (size_t)length, stdout) != (size_t)length ||
         fwrite(suffix, 1, sizeof(suffix) - 1, stdout) != sizeof(suffix) - 1) return 69;

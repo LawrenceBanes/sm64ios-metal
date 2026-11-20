@@ -1945,7 +1945,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) || !passes ||
         ((material_source == NULL) != (material_source_size == 0)) ||
         ((material_pack_textures || material_vertex_normals || material_directional_light || material_vertex_positions) && !material_source) ||
-        (material_directional_light && !material_vertex_normals) ||
+        (material_directional_light && !material_vertex_normals && !material_vertex_positions) ||
         !pass_count || pass_count > GFX_SHADER64_MAX_GRAPH_PASSES) {
         if (error_out && error_size) snprintf(error_out, error_size, "invalid API v2 graph or Metal device unavailable");
         return false;

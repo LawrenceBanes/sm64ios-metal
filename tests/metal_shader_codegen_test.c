@@ -198,6 +198,16 @@ int main(void) {
     assert_dense_vertex_attributes(source, &features);
     assert(!gfx_metal_build_shader_with_material(id, material_source,
         strlen(material_source), false, true, source, sizeof(source), &features));
+    const char *position_lit_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
+        "float3 viewPosition, bool positionValid, float3 sunDirectionView, float sunIntensity, "
+        "constant float4 &params) { return positionValid ? baseColor * sunIntensity : baseColor; }";
+    assert(gfx_metal_build_shader_with_material(id | SHADER_OPT_MATERIAL_LIGHT, position_lit_source,
+        strlen(position_lit_source), false, true, source, sizeof(source), &features));
+    assert(!features.material_normals && features.material_positions && features.material_directional_light);
+    assert(strstr(source, "in.viewPosition.xyz,in.viewPosition.w>0.5") != NULL);
+    assert(strstr(source, "params.sunIntensity") != NULL);
+    assert_dense_vertex_attributes(source, &features);
     const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
     assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material), false,
                                                   false, source, sizeof(source), &features));
