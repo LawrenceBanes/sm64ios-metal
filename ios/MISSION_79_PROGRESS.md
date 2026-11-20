@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit before the tone-mapping increment: `4b7f7d0f` (independent fog density and start distance); Apple Metal SDK and Linux CI passed in [run 44710368065](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44710368065). Full IPA build for `dd3d5894` is running in [44709981511](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709981511).
+- Current pushed source commit: `6762ddc2` (selectable tone-map curves); Apple validation is running in [run 44710814369](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44710814369). Fog controls passed Apple SDK/Linux CI in [44710368065](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44710368065).
 - Full IPA workflow [44707824529](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707824529) succeeded for source `6866de41`, including HUD isolation and shadow-map reuse; it predates the adjustable Bloom UI and following controls.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
@@ -43,10 +43,10 @@
 - Added bounded persistent fog density/start-distance multipliers layered on the four existing fog color/density/range profiles. The developer Fog control now exposes profile selection, near/far start, density adjustment, and reset; presets and Classic restore neutral multipliers.
 - Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple Metal SDK and Linux CI passed in [run 44710368065](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44710368065). No physical appearance test has been performed.
 
-## M79-D tone-map mode selection (working tree)
+## M79-D tone-map mode selection (`6762ddc2`)
 
 - Added persistent ACES-inspired and Reinhard curve selection in the existing final composite shader. The developer control retains an independent tone-mapping on/off action, displays the selected curve, and presets/reset choose an explicit mode.
-- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple validation and device image comparison are pending.
+- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple validation is pending; device image comparison remains required.
 
 ## Milestones
 
@@ -127,6 +127,7 @@
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
 - A newer full game build from source `3303360fa275b3b9d3726be51fa9a9c81a96e8e4` passed compile, IPA structure checks, and private upload in [workflow 44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366). Private draft: [unsigned build 44698163366.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-f4ffbc277ed244358b57); IPA SHA-256 `df42a01c548d61b7f8369dc6c36079e0f54ccd35684edc5980bc499d2b8966a`. It contains color grading and fog profiles but predates the AO quality control and sky gradient.
+- Full iPhoneOS arm64 build, IPA packaging and private upload from source `dd3d5894` passed in [workflow 44709981511](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709981511). Private draft [unsigned build 44709981511.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-7dbb2924647f13b76d3f); asset size 9,346,458 bytes; SHA-256 `803a36a3003b321495d8ffa1a6a3a86a5653478dbf8f56e527ed2816fc4db380`. It includes the AO tuning and color controls, plus HUD isolation, but predates fog fine-tuning and selectable tone mapping. No device installation or visual evidence exists.
 - Full game build from source `300cc597685623222c2e96301ea801eeb8152cef` passed arm64 compilation, IPA structural validation, and private upload in [workflow 44699134859](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44699134859). Private draft: [unsigned build 44699134859.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-dff6475bfe493acf287f); IPA SHA-256 `7d5d98a0fa527fc508b53d8cc228b36904e89029cff53b4122ddded384fae472`. It includes AO quality and day/sunset horizon gradient, and predates four unified presets.
 
 ### M79-C — Remaining
@@ -172,4 +173,4 @@
 
 The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Next: commit/push tone-map selection and run Apple validation; monitor IPA workflow `44709981511`, then prepare a newer full IPA once the new mode compiles. Continue remaining renderer controls and reliability items; physical-device image and timing review remains required.
+Next: verify tone-map Apple validation and start an IPA from the newest validated source. Continue remaining renderer controls and reliability items; physical-device image and timing review remains required.
