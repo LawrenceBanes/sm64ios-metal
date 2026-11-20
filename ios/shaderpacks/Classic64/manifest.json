@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "id": "Classic64",
+  "name": "Classic64 (Pass Through)",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 1,
+  "stage": "postprocess",
+  "source": "shaders/postprocess.metal",
+  "entryPoint": "shader64_post",
+  "parameters": []
+}

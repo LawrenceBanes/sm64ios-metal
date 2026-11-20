@@ -18,6 +18,7 @@ common=(-std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 -DRAPI_METAL=1
 sources=("$repo_dir/src/pc/gfx/gfx_metal.m"
          "$repo_dir/src/pc/gfx/gfx_texture_override.c"
          "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
+         "$repo_dir/src/pc/gfx/gfx_shader64_pack.c"
          "$repo_dir/src/pc/gfx/gfx_metal_state.c"
          "$repo_dir/src/pc/gfx/gfx_scene_capture.c"
          "$repo_dir/src/pc/gfx/gfx_postprocess.c"
@@ -73,6 +74,20 @@ for source in "$shader_dir"/*.metal; do
     xcrun --sdk iphoneos metal -c "$source" -o "$shader_dir/$name.air"
     xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
     echo "compiled and linked $name"
+done
+
+echo "Compiling SHADER64 API 1 reference pack sources with the iPhoneOS Metal compiler."
+wrapper_tool="$output_dir/shader64-wrap"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$wrapper_tool"
+for source in "$repo_dir"/ios/shaderpacks/*/shaders/*.metal; do
+    pack=$(basename "$(dirname "$(dirname "$source")")")
+    name="shader64-$pack-$(basename "$source" .metal)"
+    "$wrapper_tool" "$source" > "$shader_dir/$name.metal"
+    xcrun --sdk iphoneos metal -c "$shader_dir/$name.metal" -o "$shader_dir/$name.air"
+    xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
+    echo "compiled and linked SHADER64 reference $name"
 done
 
 echo "Verifying project wiring and Makefile framework selection."

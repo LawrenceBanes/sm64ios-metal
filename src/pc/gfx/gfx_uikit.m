@@ -8,6 +8,9 @@
 #include <math.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <limits.h>
+#include "gfx_shader64_pack.h"
 #import <objc/runtime.h>
 #import "gfx_uikit.h"
 #include "game/mario.h"
@@ -42,7 +45,11 @@ static BOOL sm64OrientationSourceLogged;
 static BOOL sm64DiagnosticsEmbeddedInSDL;
 static int sm64RenderDiagnosticMode;
 
+#if TARGET_OS_IOS
+@interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate, UIDocumentPickerDelegate>
+#else
 @interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate>
+#endif
 @property(nonatomic, strong) UIView *panel;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
@@ -73,6 +80,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *skyPresetButton;
 @property(nonatomic, strong) UIButton *masterEffectsButton;
 @property(nonatomic, strong) UIButton *godRaysButton;
+@property(nonatomic, strong) UIButton *shaderPacksButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -98,6 +106,15 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsSettings;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
+#if TARGET_OS_IOS && defined(RAPI_METAL)
+- (void)openShaderPacks;
+- (void)importShaderPack;
+- (void)deleteShaderPack;
+- (void)activateShaderPack:(NSString *)packID;
+- (void)configureShaderPack:(NSString *)packID;
+- (NSDictionary *)shaderManifestForID:(NSString *)packID root:(NSString *)root error:(NSString **)errorOut;
+- (void)installShaderArchiveAtURL:(NSURL *)url;
+#endif
 - (void)toggleSSAO;
 - (void)togglePostprocessing;
 - (void)toggleFXAA;
@@ -535,6 +552,8 @@ static int sm64RenderDiagnosticMode;
             x += widths3[i] + gap;
         }
         self.performanceLabel.frame = CGRectMake(14, 346, inner, 36);
+        self.shaderPacksButton.frame = CGRectMake(14, 346, inner, 30);
+        self.performanceLabel.frame = CGRectMake(14, 378, inner, 26);
     }
     if (self.collapsed) {
         self.titleLabel.hidden = YES;
@@ -630,16 +649,23 @@ static int sm64RenderDiagnosticMode;
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:8.0 weight:UIFontWeightRegular];
     self.performanceLabel.numberOfLines = 5;
-    self.performanceLabel.frame = CGRectMake(14, 346, 492, 36);
+    self.performanceLabel.frame = CGRectMake(14, 378, 492, 26);
     self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.graphicsPanel addSubview:self.performanceLabel];
 
+#if TARGET_OS_IOS && defined(RAPI_METAL)
+    self.shaderPacksButton = [self buttonWithTitle:@"Shader Pack: Classic64" action:@selector(openShaderPacks)];
+    self.shaderPacksButton.frame = CGRectMake(14, 346, 492, 30);
+    self.shaderPacksButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.graphicsPanel addSubview:self.shaderPacksButton];
+#endif
+
     UIButton *reset = [self buttonWithTitle:@"Reset defaults" action:@selector(resetGraphicsSettings)];
-    reset.frame = CGRectMake(14, 384, 145, 30);
+    reset.frame = CGRectMake(14, 408, 145, 30);
     reset.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;
     [self.graphicsPanel addSubview:reset];
     UIButton *done = [self buttonWithTitle:@"Done" action:@selector(toggleGraphicsSettings)];
-    done.frame = CGRectMake(0, 327, 80, 34);
+    done.frame = CGRectMake(0, 408, 80, 30);
     done.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
     [self.graphicsPanel addSubview:done];
 }
@@ -1172,6 +1198,11 @@ static int sm64RenderDiagnosticMode;
         gfx_metal_god_rays_enabled() ? @"on" : @"off",
         (unsigned long long)stats.god_ray_pixels,
         (double)stats.estimated_target_bytes / (1024.0 * 1024.0)];
+#if TARGET_OS_IOS
+    NSString *activePack = [NSString stringWithUTF8String:gfx_metal_active_shader64_pack()];
+    [self.shaderPacksButton setTitle:[NSString stringWithFormat:@"Shader Pack: %@", activePack]
+                            forState:UIControlStateNormal];
+#endif
 #endif
 }
 
@@ -1200,12 +1231,257 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_sun_intensity(0u);
     gfx_metal_set_effects_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
+#if TARGET_OS_IOS
+    gfx_metal_use_classic_shader();
+#endif
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
     gfx_ios_diag_log("Metal graphics settings reset to Classic defaults");
     [self appendStatus:@"Graphics reset to Classic defaults"];
 #endif
 }
+
+#if TARGET_OS_IOS && defined(RAPI_METAL)
+- (NSString *)shaderPackRoot {
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    if (!paths.count) return nil;
+    NSString *root = [paths[0] stringByAppendingPathComponent:@"shaderpacks"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
+    return root;
+}
+
+- (void)openShaderPacks {
+    NSMutableArray<NSString *> *packIDs = [NSMutableArray array];
+    NSString *root = [self shaderPackRoot];
+    NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:root error:nil];
+    for (NSString *child in children) {
+        BOOL isDirectory = NO;
+        NSString *folder = [root stringByAppendingPathComponent:child];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:folder isDirectory:&isDirectory] || !isDirectory) continue;
+        [packIDs addObject:child];
+    }
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"SHADER64"
+        message:@"Custom packs replace the final scene composite. Native SM64 material rendering and HUD remain in place; built-in post effects are bypassed while a custom composite is active. Metal shaders are trusted code and are not sandboxed from GPU execution."
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Classic64 (restore original renderer)" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { (void)action; gfx_metal_use_classic_shader(); [self refreshGraphicsSettings]; [self appendStatus:@"Classic64 renderer restored"]; }]];
+    for (NSString *packID in packIDs) {
+        NSDictionary *manifest = [self shaderManifestForID:packID root:root error:nil];
+        if (!manifest) continue;
+        NSString *name = [manifest[@"name"] isKindOfClass:[NSString class]] ? manifest[@"name"] : packID;
+        [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *action) { (void)action; [self activateShaderPack:packID]; }]];
+        if ([manifest[@"parameters"] isKindOfClass:[NSArray class]] && [manifest[@"parameters"] count]) {
+            [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Configure %@…", name] style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction *action) { (void)action; [self activateShaderPack:packID]; if ([[NSString stringWithUTF8String:gfx_metal_active_shader64_pack()] isEqualToString:packID]) [self configureShaderPack:packID]; }]];
+        }
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Import ZIP Pack…" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { (void)action; [self importShaderPack]; }]];
+    if (packIDs.count) [menu addAction:[UIAlertAction actionWithTitle:@"Delete an installed pack…" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { (void)action; [self deleteShaderPack]; }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    menu.popoverPresentationController.sourceView = self.shaderPacksButton;
+    menu.popoverPresentationController.sourceRect = self.shaderPacksButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
+- (NSDictionary *)shaderManifestForID:(NSString *)packID root:(NSString *)root error:(NSString **)errorOut {
+    NSString *path = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:@"manifest.json"];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    NSError *jsonError = nil;
+    id value = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingFragmentsAllowed error:&jsonError] : nil;
+    if (![value isKindOfClass:[NSDictionary class]]) {
+        if (errorOut) *errorOut = jsonError.localizedDescription ?: @"manifest.json is missing";
+        return nil;
+    }
+    NSDictionary *manifest = value;
+    NSString *identifier = manifest[@"id"], *source = manifest[@"source"], *stage = manifest[@"stage"], *entry = manifest[@"entryPoint"];
+    NSNumber *format = manifest[@"formatVersion"], *api = manifest[@"shaderApiVersion"];
+    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
+    BOOL identifierOK = [identifier isKindOfClass:[NSString class]] && [regex numberOfMatchesInString:identifier options:0 range:NSMakeRange(0, identifier.length)] == 1 && [identifier isEqualToString:packID];
+    BOOL metadataOK = [manifest[@"name"] isKindOfClass:[NSString class]] && [manifest[@"name"] length] > 0 && [manifest[@"name"] length] <= 80 &&
+        [manifest[@"version"] isKindOfClass:[NSString class]] && [manifest[@"author"] isKindOfClass:[NSString class]];
+    if (!identifierOK || !metadataOK || format.integerValue != 1 || api.integerValue != 1 ||
+        ![stage isEqualToString:@"postprocess"] || ![source isEqualToString:@"shaders/postprocess.metal"] ||
+        ![entry isEqualToString:@"shader64_post"]) {
+        if (errorOut) *errorOut = @"Manifest must use format/API 1, postprocess stage, the fixed postprocess source, and shader64_post entry point.";
+        return nil;
+    }
+    return manifest;
+}
+
+- (void)activateShaderPack:(NSString *)packID {
+    NSString *root = [self shaderPackRoot], *validation = nil;
+    NSDictionary *manifest = [self shaderManifestForID:packID root:root error:&validation];
+    NSString *sourcePath = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:@"shaders/postprocess.metal"];
+    NSData *source = manifest ? [NSData dataWithContentsOfFile:sourcePath] : nil;
+    float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    NSArray *configured = manifest[@"parameters"];
+    if (configured && (![configured isKindOfClass:[NSArray class]] || configured.count > 4)) validation = @"parameters must be an array of at most four float declarations";
+    NSArray *savedForPack = [[NSUserDefaults standardUserDefaults] arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    if ([configured isKindOfClass:[NSArray class]]) for (NSUInteger i = 0; i < configured.count && i < 4; ++i) {
+        NSDictionary *definition = configured[i];
+        if (![definition isKindOfClass:[NSDictionary class]]) { validation = @"Each parameter must be an object"; break; }
+        NSNumber *defaultValue = definition[@"default"];
+        NSNumber *minimum = definition[@"min"], *maximum = definition[@"max"];
+        if (![definition[@"name"] isKindOfClass:[NSString class]] ||
+            ![definition[@"label"] isKindOfClass:[NSString class]] || ![definition[@"type"] isEqualToString:@"float"] ||
+            ![defaultValue isKindOfClass:[NSNumber class]] || ![minimum isKindOfClass:[NSNumber class]] ||
+            ![maximum isKindOfClass:[NSNumber class]] || !isfinite(defaultValue.doubleValue) ||
+            !isfinite(minimum.doubleValue) || !isfinite(maximum.doubleValue) || minimum.doubleValue > maximum.doubleValue ||
+            defaultValue.doubleValue < minimum.doubleValue || defaultValue.doubleValue > maximum.doubleValue) {
+            validation = @"Each parameter needs a float name/label/default/min/max with finite, ordered bounds"; break;
+        }
+        double v = defaultValue.doubleValue;
+        if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]] && isfinite([savedForPack[i] doubleValue]))
+            v = MIN(maximum.doubleValue, MAX(minimum.doubleValue, [savedForPack[i] doubleValue]));
+        parameters[i] = (float)v;
+    }
+    char error[512] = {0};
+    BOOL loaded = source && !validation && gfx_metal_load_shader64_source(packID.UTF8String,
+        source.bytes, source.length, parameters, error, sizeof(error));
+    if (!loaded) {
+        NSString *message = validation ?: (source ? [NSString stringWithUTF8String:error] : @"Shader source file is missing.");
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Shader pack not activated" message:message preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        [self appendStatus:[NSString stringWithFormat:@"Shader error: %@", message]];
+        return;
+    }
+    NSArray *values = @[@(parameters[0]), @(parameters[1]), @(parameters[2]), @(parameters[3])];
+    [[NSUserDefaults standardUserDefaults] setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    gfx_metal_set_shader64_parameters(parameters);
+    [self refreshGraphicsSettings];
+    [self appendStatus:[NSString stringWithFormat:@"Activated %@", manifest[@"name"]]];
+}
+
+- (void)configureShaderPack:(NSString *)packID {
+    NSDictionary *manifest = [self shaderManifestForID:packID root:[self shaderPackRoot] error:nil];
+    NSArray *definitions = manifest[@"parameters"];
+    if (![definitions isKindOfClass:[NSArray class]] || !definitions.count || definitions.count > 4) return;
+    NSArray *current = [[NSUserDefaults standardUserDefaults] arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Parameters", manifest[@"name"]]
+        message:@"Values are clamped to the bounds declared by this pack." preferredStyle:UIAlertControllerStyleAlert];
+    for (NSUInteger i = 0; i < definitions.count; ++i) {
+        NSDictionary *definition = definitions[i];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+            textField.placeholder = definition[@"label"];
+            textField.keyboardType = UIKeyboardTypeDecimalPad;
+            NSNumber *value = current.count == definitions.count ? current[i] : definition[@"default"];
+            textField.text = [value stringValue];
+        }];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Apply" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+        NSMutableArray *values = [NSMutableArray arrayWithCapacity:definitions.count];
+        NSUInteger index = 0;
+        for (NSDictionary *definition in definitions) {
+            double value = alert.textFields[index].text.doubleValue;
+            if (!isfinite(value)) value = [definition[@"default"] doubleValue];
+            value = MIN([definition[@"max"] doubleValue], MAX([definition[@"min"] doubleValue], value));
+            parameters[index++] = (float)value;
+            [values addObject:@(value)];
+        }
+        [[NSUserDefaults standardUserDefaults] setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+        gfx_metal_set_shader64_parameters(parameters);
+        [self appendStatus:[NSString stringWithFormat:@"Updated %@ parameters", manifest[@"name"]]];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)importShaderPack {
+    UIDocumentPickerViewController *picker = [[[UIDocumentPickerViewController alloc]
+        initWithDocumentTypes:@[@"public.zip-archive"] inMode:UIDocumentPickerModeImport] autorelease];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)deleteShaderPack {
+    NSString *root = [self shaderPackRoot];
+    NSArray *children = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:root error:nil];
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Remove Shader Pack"
+        message:@"The original renderer remains available as Classic64." preferredStyle:UIAlertControllerStyleActionSheet];
+    NSString *active = [NSString stringWithUTF8String:gfx_metal_active_shader64_pack()];
+    for (NSString *packID in children) {
+        if (![self shaderManifestForID:packID root:root error:nil]) continue;
+        [menu addAction:[UIAlertAction actionWithTitle:packID style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+            (void)action;
+            if ([active isEqualToString:packID]) gfx_metal_use_classic_shader();
+            NSError *error = nil;
+            BOOL removed = [[NSFileManager defaultManager] removeItemAtPath:[root stringByAppendingPathComponent:packID] error:&error];
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+            if (removed) [self appendStatus:[NSString stringWithFormat:@"Removed %@", packID]];
+            else [self appendStatus:[NSString stringWithFormat:@"Could not remove %@: %@", packID, error.localizedDescription ?: @"unknown error"]];
+            [self refreshGraphicsSettings];
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    menu.popoverPresentationController.sourceView = self.shaderPacksButton;
+    menu.popoverPresentationController.sourceRect = self.shaderPacksButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller;
+    if (urls.count) [self installShaderArchiveAtURL:urls[0]];
+}
+
+- (void)installShaderArchiveAtURL:(NSURL *)url {
+    BOOL scoped = [url startAccessingSecurityScopedResource];
+    NSData *archive = [NSData dataWithContentsOfURL:url];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (!archive || archive.length > GFX_SHADER64_MAX_ARCHIVE_BYTES) {
+        [self appendStatus:@"Shader ZIP is unreadable or exceeds 8 MiB"];
+        return;
+    }
+    NSString *root = [self shaderPackRoot];
+    NSString *temporaryID = [NSString stringWithFormat:@".install-%@", NSUUID.UUID.UUIDString];
+    NSString *temporaryPath = [root stringByAppendingPathComponent:temporaryID];
+    NSError *fileError = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:temporaryPath withIntermediateDirectories:NO attributes:nil error:&fileError];
+    char error[256] = {0};
+    BOOL installed = !fileError && gfx_shader64_install_zip(archive.bytes, archive.length,
+        temporaryPath.fileSystemRepresentation, error, sizeof(error));
+    NSString *manifestPath = [temporaryPath stringByAppendingPathComponent:@"manifest.json"];
+    NSData *manifestData = installed ? [NSData dataWithContentsOfFile:manifestPath] : nil;
+    NSError *jsonError = nil;
+    id value = manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:NSJSONReadingFragmentsAllowed error:&jsonError] : nil;
+    NSString *packID = [value isKindOfClass:[NSDictionary class]] ? value[@"id"] : nil;
+    NSDictionary *manifest = nil;
+    BOOL movedIntoFinalPath = NO;
+    NSRegularExpression *idRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
+    BOOL packIDSafe = [packID isKindOfClass:[NSString class]] && [idRegex numberOfMatchesInString:packID options:0 range:NSMakeRange(0, packID.length)] == 1;
+    if (installed && packIDSafe) {
+        NSString *finalPath = [root stringByAppendingPathComponent:packID];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:finalPath]) {
+            installed = NO; snprintf(error, sizeof(error), "a pack with this ID is already installed");
+        } else if (![[NSFileManager defaultManager] moveItemAtPath:temporaryPath toPath:finalPath error:&fileError]) {
+            installed = NO; snprintf(error, sizeof(error), "could not finalize installed pack");
+        } else {
+            movedIntoFinalPath = YES;
+            manifest = [self shaderManifestForID:packID root:root error:nil];
+            if (!manifest) { installed = NO; snprintf(error, sizeof(error), "invalid manifest or unsupported shader API"); }
+        }
+    } else if (installed) {
+        installed = NO; snprintf(error, sizeof(error), "invalid manifest or unsupported shader API");
+    }
+    if (!installed) {
+        [[NSFileManager defaultManager] removeItemAtPath:temporaryPath error:nil];
+        if (movedIntoFinalPath) [[NSFileManager defaultManager] removeItemAtPath:[root stringByAppendingPathComponent:packID] error:nil];
+        NSString *message = error[0] ? [NSString stringWithUTF8String:error] : (jsonError.localizedDescription ?: fileError.localizedDescription ?: @"invalid shader ZIP");
+        [self appendStatus:[NSString stringWithFormat:@"Import failed: %@", message]];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Shader pack import failed" message:message preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [self appendStatus:[NSString stringWithFormat:@"Installed %@", manifest[@"name"]]];
+    [self activateShaderPack:packID];
+}
+#endif
 
 - (void)updateTextureCacheDiagnosticsButton {
     BOOL enabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"SM64TextureCacheDiagnosticsEnabled"];

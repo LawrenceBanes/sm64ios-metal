@@ -4,7 +4,7 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 pbxproj="$repo_dir/sm64ios/sm64ios.xcodeproj/project.pbxproj"
 makefile="$repo_dir/Makefile"
 
-for source in gfx_metal.m gfx_metal_shader.c gfx_metal_state.c gfx_scene_capture.c; do
+for source in gfx_metal.m gfx_metal_shader.c gfx_shader64_pack.c gfx_metal_state.c gfx_scene_capture.c; do
     grep -Fq "$source" "$pbxproj"
 done
 grep -Fq 'MetalKit.framework' "$pbxproj"

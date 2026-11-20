@@ -7,6 +7,13 @@
 extern struct GfxRenderingAPI gfx_metal_api;
 
 #if defined(TARGET_OS_IOS)
+#include <stddef.h>
+bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
+                                    size_t source_size, const float parameters[4], char *error,
+                                    size_t error_size);
+void gfx_metal_use_classic_shader(void);
+const char *gfx_metal_active_shader64_pack(void);
+void gfx_metal_set_shader64_parameters(const float parameters[4]);
 bool gfx_metal_hd_textures_enabled(void);
 bool gfx_metal_ssao_enabled(void);
 void gfx_metal_set_ssao_enabled(bool enabled);

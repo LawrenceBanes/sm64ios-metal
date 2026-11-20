@@ -19,6 +19,7 @@
 #include "gfx_metal.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
+#include "gfx_shader64_pack.h"
 #include "gfx_metal_vertex_layout.h"
 #include "gfx_cc.h"
 #include "gfx_scene_capture.h"
@@ -73,6 +74,10 @@ static NSUInteger metal_target_width;
 static NSUInteger metal_target_height;
 static NSUInteger metal_target_samples;
 static id<MTLRenderPipelineState> metal_present_pipeline;
+static id<MTLRenderPipelineState> metal_shader64_pipeline;
+static id<MTLLibrary> metal_shader64_library;
+static char metal_shader64_active_id[65];
+static vector_float4 metal_shader64_parameters = { 1.0f, 0.0f, 0.0f, 0.0f };
 static id<MTLSamplerState> metal_present_sampler;
 static id<MTLComputePipelineState> metal_ssao_pipeline;
 static id<MTLComputePipelineState> metal_ssao_denoise_pipeline;
@@ -139,6 +144,8 @@ static NSUInteger metal_active_render_height;
 static bool metal_frame_uses_offscreen;
 static bool metal_scene_postprocessed_before_ui;
 static bool metal_offscreen_runtime_failed;
+static void gfx_metal_restore_shader64_pack(void);
+static bool gfx_metal_shader64_is_active(void);
 static id<MTLCommandBuffer> metal_command;
 static id<MTLRenderCommandEncoder> metal_encoder;
 static id<CAMetalDrawable> metal_drawable;
@@ -830,6 +837,7 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
     CAMetalLayer *metal_layer = (CAMetalLayer *)metal_view.layer;
     gfx_ios_diag_log("Metal CoreAnimation layer configuration presentsWithTransaction=%d framebufferOnly=%d paused=%d enableSetNeedsDisplay=%d", metal_layer.presentsWithTransaction, metal_view.framebufferOnly, metal_view.paused, metal_view.enableSetNeedsDisplay);
     gfx_ios_diag_log("Metal scene geometry attached sceneBounds=(%.0fx%.0f) windowBounds=(%.0fx%.0f) rootBounds=(%.0fx%.0f) MTKViewBounds=(%.0fx%.0f) drawable=(%.0fx%.0f) scale=%.2f", scene.coordinateSpace.bounds.size.width, scene.coordinateSpace.bounds.size.height, metal_view.window.bounds.size.width, metal_view.window.bounds.size.height, view_controller.view.bounds.size.width, view_controller.view.bounds.size.height, metal_view.bounds.size.width, metal_view.bounds.size.height, drawable.width, drawable.height, metal_view.contentScaleFactor);
+    gfx_metal_restore_shader64_pack();
     bool ready = gfx_metal_surface_is_ready();
     gfx_ios_diag_log("Game Metal surface readiness=%s drawable=%.0fx%.0f attachedToScene=%d", ready ? "ready" : "not-ready", drawable.width, drawable.height, metal_view.window.windowScene != nil);
     return ready;
@@ -1372,6 +1380,142 @@ static bool gfx_metal_create_present_pipeline(void) {
     return true;
 }
 
+static bool gfx_metal_shader64_valid_id(const char *id) {
+    if (!id || !*id || strlen(id) > 64) return false;
+    for (const unsigned char *p = (const unsigned char *)id; *p; ++p)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '-' || *p == '_')) return false;
+    return true;
+}
+
+bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
+                                    size_t source_size, const float parameters[4], char *error_out,
+                                    size_t error_size) {
+    char validation[192] = {0};
+    if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) ||
+        !gfx_shader64_validate_post_source(source, source_size, validation, sizeof(validation))) {
+        const char *message = validation[0] ? validation : "invalid pack id or Metal device unavailable";
+        if (error_out && error_size) snprintf(error_out, error_size, "%s", message);
+        return false;
+    }
+    size_t wrapper_capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 1024u;
+    char *wrapper_bytes = malloc(wrapper_capacity);
+    if (!wrapper_bytes || !gfx_shader64_build_wrapper(source, source_size, wrapper_bytes, wrapper_capacity)) {
+        free(wrapper_bytes);
+        if (error_out && error_size) snprintf(error_out, error_size, "could not construct the Shader64 API v1 wrapper");
+        return false;
+    }
+    NSString *wrapped = [[[NSString alloc] initWithBytes:wrapper_bytes
+        length:strlen(wrapper_bytes) encoding:NSUTF8StringEncoding] autorelease];
+    free(wrapper_bytes);
+    if (!wrapped) {
+        if (error_out && error_size) snprintf(error_out, error_size, "shader source is not valid UTF-8");
+        return false;
+    }
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:wrapped options:nil error:&error];
+    if (!library) {
+        if (error_out && error_size) snprintf(error_out, error_size, "Metal compile failed: %.400s", error.localizedDescription.UTF8String ?: "unknown error");
+        gfx_ios_diag_log("SHADER64 compile failed pack=%s message=%s", pack_id, error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    id<MTLFunction> vertex = [library newFunctionWithName:@"sm64_shader64_vertex"];
+    id<MTLFunction> fragment = [library newFunctionWithName:@"sm64_shader64_fragment"];
+    MTLRenderPipelineDescriptor *descriptor = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
+    descriptor.vertexFunction = vertex;
+    descriptor.fragmentFunction = fragment;
+    descriptor.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
+    descriptor.sampleCount = 1;
+    id<MTLRenderPipelineState> pipeline = (vertex && fragment) ?
+        [metal_device newRenderPipelineStateWithDescriptor:descriptor error:&error] : nil;
+    [vertex release]; [fragment release];
+    if (!pipeline) {
+        if (error_out && error_size) snprintf(error_out, error_size, "Metal pipeline creation failed: %.400s", error.localizedDescription.UTF8String ?: "entry point missing");
+        gfx_ios_diag_log("SHADER64 pipeline failed pack=%s message=%s", pack_id, error.localizedDescription.UTF8String ?: "entry point missing");
+        [library release]; return false;
+    }
+    @synchronized ([NSObject class]) {
+        [metal_shader64_pipeline release];
+        [metal_shader64_library release];
+        metal_shader64_pipeline = pipeline;
+        metal_shader64_library = library;
+        snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
+        metal_shader64_parameters = (vector_float4){
+            parameters && isfinite(parameters[0]) ? fmaxf(-8.0f, fminf(8.0f, parameters[0])) : 1.0f,
+            parameters && isfinite(parameters[1]) ? fmaxf(-8.0f, fminf(8.0f, parameters[1])) : 0.0f,
+            parameters && isfinite(parameters[2]) ? fmaxf(-8.0f, fminf(8.0f, parameters[2])) : 0.0f,
+            parameters && isfinite(parameters[3]) ? fmaxf(-8.0f, fminf(8.0f, parameters[3])) : 0.0f
+        };
+        metal_offscreen_runtime_failed = false;
+    }
+    if (error_out && error_size) error_out[0] = '\0';
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:[NSString stringWithUTF8String:pack_id] forKey:@"SM64Shader64ActivePack"];
+    [defaults setObject:@[@(metal_shader64_parameters.x), @(metal_shader64_parameters.y),
+                          @(metal_shader64_parameters.z), @(metal_shader64_parameters.w)]
+                  forKey:@"SM64Shader64Parameters"];
+    gfx_ios_diag_log("SHADER64 pack activated id=%s stage=postprocess api=1", pack_id);
+    return true;
+}
+
+static void gfx_metal_restore_shader64_pack(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *packID = [defaults stringForKey:@"SM64Shader64ActivePack"];
+    if (!packID.length || !gfx_metal_shader64_valid_id(packID.UTF8String)) return;
+    NSArray<NSString *> *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    if (!documents.count) return;
+    NSString *sourcePath = [[[[documents[0] stringByAppendingPathComponent:@"shaderpacks"]
+        stringByAppendingPathComponent:packID] stringByAppendingPathComponent:@"shaders"]
+        stringByAppendingPathComponent:@"postprocess.metal"];
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:sourcePath error:nil];
+    if (![attrs[NSFileType] isEqualToString:NSFileTypeRegular] || [attrs[NSFileSize] unsignedLongLongValue] > GFX_SHADER64_MAX_SOURCE_BYTES) {
+        [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
+        gfx_ios_diag_log("SHADER64 restore skipped id=%s reason=source missing or oversized", packID.UTF8String);
+        return;
+    }
+    NSData *data = [NSData dataWithContentsOfFile:sourcePath];
+    NSArray *saved = [defaults arrayForKey:@"SM64Shader64Parameters"];
+    float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
+        if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
+    char error[384] = {0};
+    if (!data || !gfx_metal_load_shader64_source(packID.UTF8String, data.bytes, data.length,
+                                                 parameters, error, sizeof(error))) {
+        [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
+        gfx_ios_diag_log("SHADER64 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
+                         error[0] ? error : "source unavailable");
+    }
+}
+
+void gfx_metal_use_classic_shader(void) {
+    @synchronized ([NSObject class]) {
+        [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
+        [metal_shader64_library release]; metal_shader64_library = nil;
+        metal_shader64_active_id[0] = '\0';
+        metal_shader64_parameters = (vector_float4){ 1.0f, 0.0f, 0.0f, 0.0f };
+        metal_offscreen_runtime_failed = false;
+    }
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"SM64Shader64ActivePack"];
+    gfx_ios_diag_log("SHADER64 restored Classic64 renderer");
+}
+
+const char *gfx_metal_active_shader64_pack(void) {
+    return metal_shader64_active_id[0] ? metal_shader64_active_id : "Classic64";
+}
+
+static bool gfx_metal_shader64_is_active(void) {
+    @synchronized ([NSObject class]) { return metal_shader64_pipeline != nil; }
+}
+
+void gfx_metal_set_shader64_parameters(const float parameters[4]) {
+    if (!parameters) return;
+    vector_float4 value = {0, 0, 0, 0};
+    for (NSUInteger i = 0; i < 4; ++i) value[i] = isfinite(parameters[i]) ? fmaxf(-8.0f, fminf(8.0f, parameters[i])) : 0.0f;
+    @synchronized ([NSObject class]) { metal_shader64_parameters = value; }
+    [[NSUserDefaults standardUserDefaults] setObject:@[@(value.x), @(value.y), @(value.z), @(value.w)]
+        forKey:@"SM64Shader64Parameters"];
+}
+
 static id<MTLTexture> gfx_metal_new_target_texture(NSUInteger width, NSUInteger height,
                                                    NSUInteger sample_count,
                                                    MTLPixelFormat pixel_format,
@@ -1421,7 +1565,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
         !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u &&
-        !gfx_metal_shadows_enabled() && !gfx_metal_god_rays_enabled() && gfx_metal_sun_intensity() == 0u) return false;
+        !gfx_metal_shadows_enabled() && !gfx_metal_god_rays_enabled() && gfx_metal_sun_intensity() == 0u &&
+        !gfx_metal_shader64_is_active()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1553,8 +1698,17 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
 static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
                                         id<MTLCommandBuffer> command) {
     id<MTLTexture> source = metal_active_sample_count > 1 ? metal_resolve_texture : metal_color_target;
-    if (!source || !metal_present_pipeline || !metal_present_sampler) {
-        gfx_ios_diag_log("Metal final pass skipped source=%@ pipeline=%@ sampler=%@", source, metal_present_pipeline, metal_present_sampler);
+    id<MTLRenderPipelineState> present_pipeline = nil;
+    BOOL custom_shader = NO;
+    vector_float4 shader64_parameters = {1.0f, 0.0f, 0.0f, 0.0f};
+    @synchronized ([NSObject class]) {
+        custom_shader = metal_shader64_pipeline != nil;
+        present_pipeline = [(custom_shader ? metal_shader64_pipeline : metal_present_pipeline) retain];
+        shader64_parameters = metal_shader64_parameters;
+    }
+    if (!source || !present_pipeline || !metal_present_sampler) {
+        gfx_ios_diag_log("Metal final pass skipped source=%@ pipeline=%@ sampler=%@", source, present_pipeline, metal_present_sampler);
+        [present_pipeline release];
         return false;
     }
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -1565,11 +1719,21 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
     if (!encoder) {
         gfx_ios_diag_log("Metal final pass encoder creation failed drawable=%lux%lu", (unsigned long)drawable.texture.width, (unsigned long)drawable.texture.height);
+        [present_pipeline release];
         return false;
     }
-    [encoder setRenderPipelineState:metal_present_pipeline];
+    [encoder setRenderPipelineState:present_pipeline];
     [encoder setFragmentTexture:source atIndex:0];
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
+    if (custom_shader) {
+        /* API v1 parameters are four bounded floats. Reference packs use the
+         * first lane for their main strength control; default is neutral. */
+        [encoder setFragmentBytes:&shader64_parameters length:sizeof(shader64_parameters) atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [encoder endEncoding];
+        [present_pipeline release];
+        return true;
+    }
     [encoder setFragmentTexture:(gfx_metal_ssao_enabled() ? metal_ssao_filtered_texture : source) atIndex:1];
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
     [encoder setFragmentTexture:metal_depth_texture atIndex:2];
@@ -1679,6 +1843,7 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentBytes:&sun_params length:sizeof(sun_params) atIndex:13];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
+    [present_pipeline release];
     return true;
 }
 
@@ -2380,6 +2545,9 @@ static void gfx_metal_shutdown(void) {
     free(metal_shadow_world_positions); metal_shadow_world_positions = NULL;
     [metal_present_pipeline release]; metal_present_pipeline = nil;
     [metal_present_sampler release]; metal_present_sampler = nil;
+    [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
+    [metal_shader64_library release]; metal_shader64_library = nil;
+    metal_shader64_active_id[0] = '\0';
     for (size_t i = 0; i < program_count; ++i) {
         for (size_t j = 0; j < METAL_PIPELINE_STATE_CAP; ++j) [programs[i].pipelines[j] release];
         [programs[i].vertex release]; [programs[i].fragment release]; [programs[i].library release];

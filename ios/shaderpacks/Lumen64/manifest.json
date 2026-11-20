@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "id": "Lumen64",
+  "name": "Lumen64 (Composite Demo)",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 1,
+  "stage": "postprocess",
+  "source": "shaders/postprocess.metal",
+  "entryPoint": "shader64_post",
+  "parameters": [
+    {"name":"exposure","label":"Exposure stops","type":"float","default":0.15,"min":-2.0,"max":2.0},
+    {"name":"saturation","label":"Saturation","type":"float","default":1.08,"min":0.0,"max":2.0}
+  ]
+}
