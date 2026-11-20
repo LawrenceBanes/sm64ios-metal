@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `cb1bde4b54b5cf1a3e4dd31d8dea7de2a7f49d48` (compute packs can consume configured directional lighting; Apple workflow `44823825399` passed, and the progress record is current through this checkpoint). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `ca195ffe8285ea6e60a596968009f3f55bf8866d` (compute packs can sample the native shadow map; Apple workflow `44825394576` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -60,9 +60,9 @@
 
 ## Remaining work / next
 
-1. Validate the current compute shadow binding and SceneDataCompute64 kernel on Linux and Apple CI; current source is not yet committed or Apple-compiled.
+1. Expose useful actual Fast3D geometry attributes to the external material hook without changing the default combiner path; prioritize per-vertex normals if the native vertex layout supplies them consistently.
 2. Device-test material classification, custom material textures, scene depth/normals, lighting/shadows, and reference packs against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
-3. Continue with geometry/material inputs from actual Fast3D data, then choose the next achievable scene-data or render-graph capability. Native vertex normals, complete G-buffers, arbitrary shadow cameras/passes, multi-output compute, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
+3. Native mesh normals, complete G-buffers, arbitrary shadow cameras/passes, multi-output compute, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
 ## Current working increment — depth-derived scene normals
 
@@ -145,6 +145,7 @@
 - Reused the renderer's existing bounded directional shadow map and transform; the compute graph declines the custom path and uses the native composite when the shadow texture/camera data is unavailable. This does not add user-defined shadow cameras or increase capture coverage.
 - Extended source and graph validation, UIKit manifest validation, Metal pipeline reflection, runtime bindings, production-importer tests, and `SceneDataCompute64`. The reference kernel reconstructs world position and applies a 3×3 depth comparison filter. Device appearance and GPU execution remain unverified.
 - `python3 ios/test_shader64_pack.py` passes 29 tests, including production import of every reference pack and the ASan/UBSan ZIP smoke. A first full Linux run found a test assertion spelling mismatch; after correcting the assertion, the full `CC=clang tests/run_linux_checks.sh` passed. Metal codegen, project wiring, shell syntax, and diff checks pass.
-- Apple Metal validation has not yet run for this working increment. The local Linux environment cannot execute Metal or verify pixels.
+- Commit `ca195ffe8285ea6e60a596968009f3f55bf8866d` was pushed to the isolated branch. Apple validation workflow [44825394576](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44825394576) passed the full Linux job and Xcode 27 iOS Metal backend/MSL compile-link, including SceneDataCompute64's compute shadow kernel.
+- CI establishes source compile/link and host contract coverage only. The local Linux environment cannot execute Metal; shadow coverage and final pixels remain unverified on hardware.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
