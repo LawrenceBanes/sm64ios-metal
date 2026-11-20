@@ -1526,10 +1526,12 @@ static int sm64RenderDiagnosticMode;
         id material = manifest[@"materialShader"];
         if (material) {
             NSString *materialPath = [material isKindOfClass:[NSDictionary class]] ? material[@"source"] : nil;
+            id vertexNormals = [material isKindOfClass:[NSDictionary class]] ? material[@"vertexNormals"] : nil;
             if (![materialPath isKindOfClass:[NSString class]] || ![materialPath hasPrefix:@"shaders/"] ||
                 [materialPath containsString:@".."] || [materialPath.pathComponents count] != 2 ||
                 ![materialPath hasSuffix:@".metal"] ||
-                (material[@"packTextures"] && ![material[@"packTextures"] isKindOfClass:[NSNumber class]])) api2 = NO;
+                (material[@"packTextures"] && ![material[@"packTextures"] isKindOfClass:[NSNumber class]]) ||
+                (vertexNormals && ![vertexNormals isKindOfClass:[NSNumber class]])) api2 = NO;
             if ([material[@"packTextures"] boolValue] && textureList.count == 0) api2 = NO;
         }
     }
@@ -1633,9 +1635,11 @@ static int sm64RenderDiagnosticMode;
     char error[512] = {0};
     NSDictionary *materialDefinition = manifest[@"materialShader"];
     BOOL materialPackTextures = [materialDefinition[@"packTextures"] boolValue];
+    BOOL materialVertexNormals = [materialDefinition[@"vertexNormals"] boolValue];
     BOOL loaded = !validation && (graphPack ? (graphSources.count == [manifest[@"passes"] count] &&
         gfx_metal_load_shader64_graph_with_material(packID.UTF8String, graphPasses, graphSources.count,
-        materialSource.bytes, materialSource.length, materialPackTextures, parameters, error, sizeof(error))) :
+        materialSource.bytes, materialSource.length, materialPackTextures, materialVertexNormals,
+        parameters, error, sizeof(error))) :
         (source && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)))));

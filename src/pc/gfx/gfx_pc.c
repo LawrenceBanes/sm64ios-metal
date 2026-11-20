@@ -44,6 +44,7 @@ static u32 scene_render_frame;
 #endif
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
 #include "gfx_metal.h"
+#include "gfx_metal_vertex_layout.h"
 #endif
 #if defined(TARGET_OS_IOS)
 #include "gfx_ios_diagnostics.h"
@@ -112,6 +113,8 @@ struct LoadedVertex {
     uint8_t clip_rej;
     float local_position[3];
     float normal[3];
+    float view_normal[3];
+    float view_normal_valid;
     float modelview[4][4];
     bool modelview_camera_applied;
     uint64_t geometry_id;
@@ -279,7 +282,8 @@ struct GfxDimensions gfx_current_dimensions;
 
 static bool dropped_frame;
 
-static float buf_vbo[MAX_BUFFERED * (26 * 3)]; // 3 vertices in a triangle and 26 floats per vtx
+/* Opt-in SHADER64 material normals add one float4 per submitted vertex. */
+static float buf_vbo[MAX_BUFFERED * (30 * 3)]; // 3 vertices in a triangle and at most 30 floats per vertex
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
 
@@ -1202,6 +1206,9 @@ static float gfx_adjust_x_for_aspect_ratio(float x) {
 
 static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *vertices) {
     uint64_t geometry_id = 0;
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    bool capture_material_normals = gfx_metal_shader64_material_vertex_normals_enabled();
+#endif
     if (gfx_scene_capture_is_enabled()) {
         uint32_t vertex_count = (uint32_t)n_vertices;
         geometry_id = gfx_scene_capture_hash_bytes(0, &vertex_count, sizeof(vertex_count));
@@ -1218,6 +1225,17 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         const Vtx_t *v = &vertices[i].v;
         const Vtx_tn *vn = &vertices[i].n;
         struct LoadedVertex *d = &rsp.loaded_vertices[dest_index];
+
+        d->view_normal[0] = d->view_normal[1] = d->view_normal[2] = 0.0f;
+        d->view_normal_valid = 0.0f;
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+        if (capture_material_normals && (rsp.geometry_mode & G_LIGHTING)) {
+            float source_normal[3] = { vn->n[0] / 127.0f, vn->n[1] / 127.0f, vn->n[2] / 127.0f };
+            if (gfx_metal_transform_view_normal(source_normal,
+                    rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], d->view_normal))
+                d->view_normal_valid = 1.0f;
+        }
+#endif
 
         if (gfx_scene_capture_is_enabled()) {
             d->local_position[0] = v->ob[0];
@@ -1371,6 +1389,9 @@ static u32 scene_texture_upload_diagnostic_count;
 #endif
 static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
     uint32_t shader = SHADER_OPT_SCENE_MATERIAL;
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    if (gfx_metal_shader64_material_vertex_normals_enabled()) shader |= SHADER_OPT_MATERIAL_NORMAL;
+#endif
     if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
     if (material->texture[1].name[0]) shader |= SHADER_SCENE_TEX1;
     if (material->flags & WORLD_SCENE_CUTOUT) shader |= SHADER_SCENE_CUTOUT;
@@ -1488,6 +1509,14 @@ static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
             for (int c = 0; c < 3; ++c) buf_vbo[buf_vbo_len++] = mat->fogColor[c] / 255.0f;
             buf_vbo[buf_vbo_len++] = fogFactor / 255.0f;
         }
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+        if (gfx_metal_shader64_material_vertex_normals_enabled()) {
+            buf_vbo[buf_vbo_len++] = vertex->view_normal[0];
+            buf_vbo[buf_vbo_len++] = vertex->view_normal[1];
+            buf_vbo[buf_vbo_len++] = vertex->view_normal[2];
+            buf_vbo[buf_vbo_len++] = vertex->view_normal_valid;
+        }
+#endif
         buf_vbo[buf_vbo_len++] = vertex->color.r / 255.0f;
         buf_vbo[buf_vbo_len++] = vertex->color.g / 255.0f;
         buf_vbo[buf_vbo_len++] = vertex->color.b / 255.0f;
@@ -1622,6 +1651,9 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     if (use_fog) cc_id |= SHADER_OPT_FOG;
     if (texture_edge) cc_id |= SHADER_OPT_TEXTURE_EDGE;
     if (use_noise) cc_id |= SHADER_OPT_NOISE;
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    if (gfx_metal_shader64_material_vertex_normals_enabled()) cc_id |= SHADER_OPT_MATERIAL_NORMAL;
+#endif
     
     if (!use_alpha) {
         cc_id &= ~0xfff000;
@@ -1819,6 +1851,15 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             buf_vbo[buf_vbo_len++] = rdp.fog_color.b / 255.0f;
             buf_vbo[buf_vbo_len++] = v_arr[i]->color.a / 255.0f; // fog factor (not alpha)
         }
+
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+        if (cc_id & SHADER_OPT_MATERIAL_NORMAL) {
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal[0];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal[1];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal[2];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal_valid;
+        }
+#endif
         
         for (int j = 0; j < num_inputs; j++) {
             struct RGBA *color;

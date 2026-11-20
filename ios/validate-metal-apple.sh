@@ -225,6 +225,18 @@ for material_source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/material.me
     echo "compiled and linked SHADER64 API 2 $pack material hook"
 done
 
+normal_material_wrapper_tool="$output_dir/shader64-wrap-material-normals"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_material_normals.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$normal_material_wrapper_tool"
+normal_material_source="$repo_dir/ios/shaderpacks/VertexNormal64/shaders/material.metal"
+"$normal_material_wrapper_tool" "$normal_material_source" > "$shader_dir/shader64-VertexNormal64-material.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-VertexNormal64-material.metal" \
+    -o "$shader_dir/shader64-VertexNormal64-material.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-VertexNormal64-material.air" \
+    -o "$shader_dir/shader64-VertexNormal64-material.metallib"
+echo "compiled and linked SHADER64 API 2 VertexNormal64 material hook"
+
 depth_wrapper_tool="$output_dir/shader64-wrap-depth"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_depth_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

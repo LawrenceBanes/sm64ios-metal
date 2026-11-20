@@ -18,6 +18,7 @@
 #include <limits.h>
 #include <string.h>
 #include <math.h>
+#include <stdatomic.h>
 #include "gfx_metal.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
@@ -90,6 +91,7 @@ struct MetalShader64Graph {
     char *material_source;
     size_t material_source_size;
     bool material_pack_textures;
+    bool material_vertex_normals;
     unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES];
     NSUInteger pack_texture_count;
     id<MTLTexture> pack_textures[GFX_SHADER64_MAX_PACK_TEXTURES];
@@ -117,6 +119,7 @@ static id<MTLRenderPipelineState> metal_present_pipeline;
 static id<MTLRenderPipelineState> metal_shader64_pipeline;
 static id<MTLLibrary> metal_shader64_library;
 static struct MetalShader64Graph *metal_shader64_graph;
+static atomic_bool metal_shader64_material_normals_active = ATOMIC_VAR_INIT(false);
 static char metal_shader64_active_id[65];
 static vector_float4 metal_shader64_parameters = { 1.0f, 0.0f, 0.0f, 0.0f };
 static uint32_t metal_material_generation = 1;
@@ -1905,13 +1908,14 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                    const struct GfxShader64GraphSource *passes,
                                    size_t pass_count, const char *material_source,
                                    size_t material_source_size, bool material_pack_textures,
+                                   bool material_vertex_normals,
                                    const float parameters[4],
                                    char *error_out, size_t error_size) {
     struct GfxShader64GraphPass descriptions[GFX_SHADER64_MAX_GRAPH_PASSES];
     struct MetalShader64Graph *graph;
     if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) || !passes ||
         ((material_source == NULL) != (material_source_size == 0)) ||
-        (material_pack_textures && !material_source) ||
+        ((material_pack_textures || material_vertex_normals) && !material_source) ||
         !pass_count || pass_count > GFX_SHADER64_MAX_GRAPH_PASSES) {
         if (error_out && error_size) snprintf(error_out, error_size, "invalid API v2 graph or Metal device unavailable");
         return false;
@@ -1923,9 +1927,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     if (!graph) { if (error_out && error_size) snprintf(error_out, error_size, "out of memory preparing graph"); return false; }
     graph->references = 1; graph->count = pass_count;
     graph->material_pack_textures = material_pack_textures;
+    graph->material_vertex_normals = material_vertex_normals;
     if (material_source) {
         char validation[192] = {0};
-        bool material_valid = material_pack_textures ?
+        bool material_valid = material_vertex_normals ?
+            gfx_shader64_validate_material_normal_source(material_source, material_source_size,
+                material_pack_textures, validation, sizeof(validation)) : material_pack_textures ?
             gfx_shader64_validate_material_texture_source(material_source, material_source_size,
                                                           validation, sizeof(validation)) :
             gfx_shader64_validate_material_source(material_source, material_source_size,
@@ -2170,6 +2177,8 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     struct MetalShader64Graph *old;
     @synchronized ([NSObject class]) {
         old = metal_shader64_graph; metal_shader64_graph = graph;
+        atomic_store_explicit(&metal_shader64_material_normals_active,
+                              graph->material_vertex_normals, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
@@ -2194,7 +2203,7 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
                                    size_t pass_count, const float parameters[4],
                                    char *error_out, size_t error_size) {
     return gfx_metal_load_shader64_graph_with_material(pack_id, passes, pass_count,
-        NULL, 0, false, parameters, error_out, error_size);
+        NULL, 0, false, false, parameters, error_out, error_size);
 }
 
 bool gfx_metal_shader64_needs_scene_depth(void) {
@@ -2248,6 +2257,7 @@ static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibra
     @synchronized ([NSObject class]) {
         old_graph = metal_shader64_graph;
         metal_shader64_graph = NULL;
+        atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release];
@@ -2422,9 +2432,10 @@ static void gfx_metal_restore_shader64_pack(void) {
             if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
         char error[384] = {0};
         bool material_pack_textures = [material_definition[@"packTextures"] boolValue];
+        bool material_vertex_normals = [material_definition[@"vertexNormals"] boolValue];
         bool loaded = valid && gfx_metal_load_shader64_graph_with_material(packID.UTF8String,
             graph_passes, sources.count, material_source.bytes, material_source.length,
-            material_pack_textures, parameters, error, sizeof(error));
+            material_pack_textures, material_vertex_normals, parameters, error, sizeof(error));
         if (!loaded) {
             [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
             gfx_ios_diag_log("SHADER64 API v2 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
@@ -2467,6 +2478,7 @@ void gfx_metal_use_classic_shader(void) {
     struct MetalShader64Graph *old_graph = NULL;
     @synchronized ([NSObject class]) {
         old_graph = metal_shader64_graph; metal_shader64_graph = NULL;
+        atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
@@ -2482,6 +2494,10 @@ void gfx_metal_use_classic_shader(void) {
 
 const char *gfx_metal_active_shader64_pack(void) {
     return metal_shader64_active_id[0] ? metal_shader64_active_id : "Classic64";
+}
+
+bool gfx_metal_shader64_material_vertex_normals_enabled(void) {
+    return atomic_load_explicit(&metal_shader64_material_normals_active, memory_order_acquire);
 }
 
 static bool gfx_metal_shader64_is_active(void) {
@@ -3607,6 +3623,7 @@ static void gfx_metal_shutdown(void) {
     [metal_present_sampler release]; metal_present_sampler = nil;
     struct MetalShader64Graph *old_shader_graph = metal_shader64_graph;
     metal_shader64_graph = NULL;
+    atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
     gfx_metal_shader64_graph_release(old_shader_graph);
     [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
     [metal_shader64_library release]; metal_shader64_library = nil;

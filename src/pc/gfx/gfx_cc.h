@@ -33,6 +33,7 @@ enum {
 #define SHADER_OPT_ALPHA_ONE (1 << 28)
 
 #define SHADER_OPT_SCENE_MATERIAL (1u << 29)
+#define SHADER_OPT_MATERIAL_NORMAL (1u << 30)
 #define SHADER_SCENE_TEX0 1u
 #define SHADER_SCENE_TEX1 2u
 #define SHADER_SCENE_CUTOUT 4u
@@ -44,6 +45,7 @@ struct CCFeatures {
     bool opt_alpha;
     bool scene_material;
     bool scene_blend;
+    bool material_normals;
     bool opt_fog;
     bool opt_texture_edge;
     bool opt_noise;

@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `ca195ffe8285ea6e60a596968009f3f55bf8866d` (compute packs can sample the native shadow map; Apple workflow `44825394576` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `ca195ffe8285ea6e60a596968009f3f55bf8866d` (compute packs can sample the native shadow map; Apple workflow `44825394576` passed). Current working tree adds opt-in native vertex normals to material hooks; Apple validation is pending. Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -149,3 +149,11 @@
 - CI establishes source compile/link and host contract coverage only. The local Linux environment cannot execute Metal; shadow coverage and final pixels remain unverified on hardware.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
+
+## Current working increment — opt-in native material vertex normals
+
+- Added the API 2 material manifest option `materialShader.vertexNormals:true`. Activated packs receive `float3 viewNormal, bool normalValid` after `materialClass`; the source SM64 signed normal payload is transformed to normalized view space with the modelview inverse-transpose. Unlit or singular cases are explicitly invalid, so authors can preserve the original combiner output.
+- Kept the default Fast3D path unchanged. An atomic activation flag avoids locks in the per-vertex path, and normals are transformed only for an active opt-in pack. The bounded VBO accommodates the optional float4 attribute. WSC normals are usable only when that source geometry carries a valid lighting-normal payload.
+- Added the `VertexNormal64` host reference pack, production-importer coverage, material source validation, generated MSL ABI checks, normal-transform tests (identity, non-uniform scale, singular transform, zero normal), and Apple wrapper/compile wiring. This is not a physical rendering claim.
+- Validation: `python3 ios/test_shader64_pack.py` passes 31 tests; `CC=clang tests/run_linux_checks.sh` passes the full suite (existing fixture diagnostics and known compiler warnings remain); Metal codegen, project wiring, shell syntax, and `git diff --check` pass. Apple MSL/backend validation and physical-device output are pending.
+- Next: commit and push the isolated checkpoint, run Apple validation, repair any confirmed build issue, then continue with the next achievable rendering capability. No merge to `main` is planned at this checkpoint.

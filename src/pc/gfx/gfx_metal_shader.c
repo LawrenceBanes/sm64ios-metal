@@ -251,10 +251,14 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             if (!shader_source_contains(material_source, material_size, required[i])) return false;
     }
     gfx_cc_get_features(shader_id, features);
+    if (material_source && features->material_normals) {
+        if (!shader_source_contains(material_source, material_size, "float3 viewNormal") ||
+            !shader_source_contains(material_source, material_size, "bool normalValid")) return false;
+    }
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
          (features->scene_blend && features->opt_texture_edge) ||
-         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_FOG | 15u)))) return false;
+         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | SHADER_OPT_MATERIAL_NORMAL | SHADER_SCENE_FOG | 15u)))) return false;
     if (!gfx_metal_get_vertex_layout(features, &vertex_layout)) return false;
     out[0] = '\0';
 
@@ -299,6 +303,9 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         if (vertex_layout.has_fog) {
             write_format(&w, "float4 fog [[attribute(%d)]];\n", vertex_layout.fog_attribute, 0);
         }
+        if (features->material_normals) {
+            write_format(&w, "float4 viewNormal [[attribute(%d)]];\n", vertex_layout.normal_attribute, 0);
+        }
         for (i = 0; i < features->num_inputs; ++i) {
             write_format(&w, features->opt_alpha ? "float4 input%d [[attribute(%d)]];\n" :
                          "float3 input%d [[attribute(%d)]];\n", i + 1, vertex_layout.input_attribute[i]);
@@ -308,6 +315,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "float2 uv;\n");
     if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "float2 uv1;\n");
     if (features->opt_fog) write_text(&w, "float4 fog;\n");
+    if (features->material_normals) write_text(&w, "float4 viewNormal;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, features->opt_alpha ? "float4 input%d;\n" : "float3 input%d;\n", i + 1, 0);
     write_text(&w,
@@ -317,6 +325,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (features->used_textures[0] || features->used_textures[1]) write_text(&w, "o.uv=in.uv;\n");
     if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "o.uv1=in.uv1;\n");
     if (features->opt_fog) write_text(&w, "o.fog=in.fog;\n");
+    if (features->material_normals) write_text(&w, "o.viewNormal=in.viewNormal;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, "o.input%d=in.input%d;\n", i + 1, i + 1);
     write_text(&w, "return o; }\n");
@@ -381,6 +390,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             write_text(&w, "return shader64_material(color,");
             write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
             write_text(&w, ",in.pos,params.materialClass");
+            if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
             if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
             write_text(&w, ",shader64Parameters); }\n");
         } else {
@@ -416,6 +426,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         write_text(&w, "return shader64_material(color,");
         write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
         write_text(&w, ",in.pos,params.materialClass");
+        if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
         if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
         write_text(&w, ",shader64Parameters); }\n");
     } else {

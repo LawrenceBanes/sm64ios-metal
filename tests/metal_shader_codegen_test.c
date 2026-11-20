@@ -20,9 +20,10 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
     struct GfxMetalVertexLayout layout;
     assert(gfx_metal_get_vertex_layout(features, &layout));
     bool uv1 = layout.uv1_attribute != UINT8_MAX;
-    assert(layout.attribute_count == 1 + layout.has_uv + uv1 + layout.has_fog + features->num_inputs);
+    assert(layout.attribute_count == 1 + layout.has_uv + uv1 + layout.has_fog +
+           features->material_normals + features->num_inputs);
     assert(layout.stride == 16 + (layout.has_uv ? 8 : 0) + (uv1 ? 8 : 0) + (layout.has_fog ? 16 : 0) +
-           features->num_inputs * (features->opt_alpha ? 16 : 12));
+           (features->material_normals ? 16 : 0) + features->num_inputs * (features->opt_alpha ? 16 : 12));
     uint16_t expected_offset = 0;
     for (int i = 0; i < layout.attribute_count; ++i) {
         assert(layout.offset[i] == expected_offset);
@@ -55,6 +56,28 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
 int main(void) {
     char source[8192];
     struct CCFeatures features;
+    {
+        const float test_normal[3] = { 1.0f, 1.0f, 0.0f };
+        float normal_out[3];
+        const float identity[4][4] = {
+            {1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0,0,1}
+        };
+        assert(gfx_metal_transform_view_normal(test_normal, identity, normal_out));
+        assert(normal_out[0] > 0.70f && normal_out[0] < 0.71f);
+        assert(normal_out[1] > 0.70f && normal_out[1] < 0.71f);
+        const float nonuniform[4][4] = {
+            {2,0,0,0}, {0,1,0,0}, {0,0,0.5f,0}, {0,0,0,1}
+        };
+        assert(gfx_metal_transform_view_normal(test_normal, nonuniform, normal_out));
+        assert(normal_out[0] > 0.44f && normal_out[0] < 0.45f);
+        assert(normal_out[1] > 0.89f && normal_out[1] < 0.90f);
+        const float singular[4][4] = {
+            {1,0,0,0}, {0,0,0,0}, {0,0,1,0}, {0,0,0,1}
+        };
+        assert(!gfx_metal_transform_view_normal(test_normal, singular, normal_out));
+        const float zero_normal[3] = { 0, 0, 0 };
+        assert(!gfx_metal_transform_view_normal(zero_normal, identity, normal_out));
+    }
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
     assert(strstr(present_source, "sm64_present_fragment") != NULL);
@@ -119,6 +142,20 @@ int main(void) {
     assert(strstr(source, "materialTextureCount,shader64Parameters") != NULL);
     assert(!gfx_metal_build_shader_with_material(id, material_source, strlen(material_source), true,
         source, sizeof(source), &features));
+    const char *material_normal_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
+        "float3 viewNormal, bool normalValid, constant float4 &params) { "
+        "if (normalValid) baseColor.rgb *= 0.5 + 0.5 * abs(viewNormal); return baseColor; }";
+    uint32_t normal_id = id | SHADER_OPT_MATERIAL_NORMAL;
+    assert(gfx_metal_build_shader_with_material(normal_id, material_normal_source,
+        strlen(material_normal_source), false, source, sizeof(source), &features));
+    assert(features.material_normals);
+    assert(strstr(source, "float4 viewNormal [[attribute(") != NULL);
+    assert(strstr(source, "in.viewNormal.xyz,in.viewNormal.w>0.5") != NULL);
+    assert(strstr(source, "float3 viewNormal, bool normalValid") != NULL);
+    assert_dense_vertex_attributes(source, &features);
+    assert(!gfx_metal_build_shader_with_material(normal_id, material_source,
+        strlen(material_source), false, source, sizeof(source), &features));
     const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
     assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material), false,
                                                   source, sizeof(source), &features));

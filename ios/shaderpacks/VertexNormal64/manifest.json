@@ -1,0 +1,16 @@
+{
+  "formatVersion": 2,
+  "id": "VertexNormal64",
+  "name": "Vertex Normal Material View",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "normalMix", "label": "Normal visualization", "type": "float", "default": 1.0, "min": 0.0, "max": 1.0 }
+  ],
+  "materialShader": { "source": "shaders/material.metal", "vertexNormals": true },
+  "passes": [
+    { "id": "preserve_scene", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/passthrough.metal", "scale": 1.0 }
+  ]
+}

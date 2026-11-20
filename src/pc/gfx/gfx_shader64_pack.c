@@ -601,6 +601,22 @@ int gfx_shader64_validate_material_texture_source(const char *source, size_t siz
     return 1;
 }
 
+int gfx_shader64_validate_material_normal_source(const char *source, size_t size,
+                                                int pack_textures,
+                                                char *error, size_t error_size) {
+    if (pack_textures) {
+        if (!gfx_shader64_validate_material_texture_source(source, size, error, error_size)) return 0;
+    } else if (!gfx_shader64_validate_material_source(source, size, error, error_size)) {
+        return 0;
+    }
+    if (!contains(source, size, "float3 viewNormal") || !contains(source, size, "bool normalValid")) {
+        err(error, error_size, "material source is missing the optional view-space vertex-normal parameters");
+        return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
 int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size) {
     static const char *const required[] = {

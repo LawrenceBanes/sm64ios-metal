@@ -52,6 +52,9 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_material_texture_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_texture_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_material_normal_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_material_normal_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_frame_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
@@ -233,6 +236,19 @@ class ShaderPackTests(unittest.TestCase):
             source, len(source), error, len(error)), error.value)
         self.assertFalse(self.api.gfx_shader64_validate_material_texture_source(
             source.replace(b"materialTexture3", b"invalidTexture"), len(source), error, len(error)))
+
+    def test_material_vertex_normal_contract_is_opt_in_and_validated(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, '
+                  b'float3 viewNormal, bool normalValid, constant float4 &params) { '
+                  b'if (normalValid) baseColor.rgb *= abs(viewNormal); return baseColor; }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
+            source, len(source), 0, error, len(error)), error.value)
+        invalid = source.replace(b"bool normalValid", b"bool badFlag")
+        self.assertFalse(self.api.gfx_shader64_validate_material_normal_source(
+            invalid, len(invalid), 0, error, len(error)))
+        self.assertIn(b"vertex-normal", error.value)
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
@@ -620,7 +636,8 @@ class ShaderPackTests(unittest.TestCase):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
-                         "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64")
+                         "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
+                         "VertexNormal64")
         reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
@@ -705,12 +722,17 @@ class ShaderPackTests(unittest.TestCase):
                     material_path = material_definition["source"]
                     self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
                     material_source = (directory / material_path).read_bytes()
-                    material_validator = (self.api.gfx_shader64_validate_material_texture_source
-                                          if material_definition.get("packTextures") else
-                                          self.api.gfx_shader64_validate_material_source)
-                    self.assertTrue(material_validator(
-                        material_source, len(material_source), error, len(error)),
-                        f"{pack_id} material hook: {error.value!r}")
+                    if material_definition.get("vertexNormals"):
+                        self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
+                            material_source, len(material_source), int(bool(material_definition.get("packTextures"))),
+                            error, len(error)), f"{pack_id} material hook: {error.value!r}")
+                    else:
+                        material_validator = (self.api.gfx_shader64_validate_material_texture_source
+                                              if material_definition.get("packTextures") else
+                                              self.api.gfx_shader64_validate_material_source)
+                        self.assertTrue(material_validator(
+                            material_source, len(material_source), error, len(error)),
+                            f"{pack_id} material hook: {error.value!r}")
                     entries.append((material_path, material_source))
             for texture in manifest.get("textures", []):
                 self.assertLessEqual(len(manifest.get("textures", [])), 4, pack_id)
@@ -766,6 +788,7 @@ class ShaderPackTests(unittest.TestCase):
                       "argument.index == 9u)\n                        shadow_ranges_bound = YES",
                       "material_pack_textures", "material_pack_texture_count"):
             self.assertIn(token, metal)
+        self.assertIn("material_vertex_normals", metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT", pack_header)
@@ -781,6 +804,8 @@ class ShaderPackTests(unittest.TestCase):
                       "UISegmentedControl", "type must be float, boolean, or select",
                       "Reset to Defaults", "About %@", "Shader API %@"):
             self.assertIn(token, ui)
+        self.assertIn('materialDefinition[@"vertexNormals"]', ui)
+        self.assertIn("gfx_metal_shader64_material_vertex_normals_enabled", (ROOT / "src/pc/gfx/gfx_pc.c").read_text())
         importer_start = ui.index("- (void)installShaderArchiveAtURL:(NSURL *)url {")
         importer = ui[importer_start:ui.index("\n}", importer_start) + 2]
         self.assertLess(importer.index("getResourceValue:&fileSize"), importer.index("dataWithContentsOfURL:url"))
