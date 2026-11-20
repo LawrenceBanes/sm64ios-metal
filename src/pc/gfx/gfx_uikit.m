@@ -1514,8 +1514,9 @@ static int sm64RenderDiagnosticMode;
                 [sceneLighting boolValue] || [sceneShadows boolValue])))) passOK = NO;
             if (!compute && [sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue])) passOK = NO;
-            if (compute && ([sceneShadows boolValue] ||
-                ([sceneLighting boolValue] && (![sceneDepth boolValue] || ![sceneNormals boolValue])))) passOK = NO;
+            if (compute && (([sceneLighting boolValue] && (![sceneDepth boolValue] || ![sceneNormals boolValue])) ||
+                ([sceneShadows boolValue] && (![sceneDepth boolValue] || ![sceneNormals boolValue] ||
+                                               ![sceneLighting boolValue])))) passOK = NO;
             if ([frameInfo boolValue] && (compute || [sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }

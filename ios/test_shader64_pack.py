@@ -92,6 +92,7 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_compute_depth_textured_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_compute_resource_pass_source.argtypes = [
             ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_compute_resource_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_lit_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
@@ -491,6 +492,11 @@ class ShaderPackTests(unittest.TestCase):
                   b'texture2d<float> sceneNormals [[texture(7)]], sampler normalSampler [[sampler(7)]], '
                   b'constant float4x4 &inverseView [[buffer(4)]], '
                   b'constant float4 &sunDirectionAndIntensity [[buffer(5)]], '
+                  b'depth2d<float> shadowMap [[texture(8)]], sampler shadowSampler [[sampler(8)]], '
+                  b'constant float4 &shadowRightMin [[buffer(6)]], '
+                  b'constant float4 &shadowUpMin [[buffer(7)]], '
+                  b'constant float4 &shadowForwardMin [[buffer(8)]], '
+                  b'constant float4 &shadowRanges [[buffer(9)]], '
                   b'uint2 tid [[thread_position_in_grid]]) { '
                   b'float2 uv=(float2(tid)+0.5)/float2(output.get_width(),output.get_height()); '
                   b'float d=sceneDepth.sample(depthSampler,uv); '
@@ -498,22 +504,34 @@ class ShaderPackTests(unittest.TestCase):
                   b'float3 p=(inverseProjection*float4(uv*2.0-1.0,d*2.0-1.0,1.0)).xyz; '
                   b'float3 wn=normalize((inverseView*float4(n,0.0)).xyz); '
                   b'float diffuse=max(dot(wn,normalize(sunDirectionAndIntensity.xyz)),0.0); '
+                  b'float4 world=inverseView*(inverseProjection*float4(uv*2.0-1.0,d*2.0-1.0,1.0)); '
+                  b'float shadow=shadowMap.sample(shadowSampler,uv).r+shadowRightMin.x*0.0+'
+                  b'shadowUpMin.x*0.0+shadowForwardMin.x*0.0+shadowRanges.x*0.0; '
                   b'float4 c=image.read(tid); output.write(float4(c.rgb*(0.4+diffuse*sunDirectionAndIntensity.w)+'
-                  b'p*0.0+frameInfo.xyz*0.0+params.xyz*0.0,c.a),tid); }')
+                  b'p*0.0+world.xyz*0.0+frameInfo.xyz*0.0+params.xyz*0.0+shadow*0.0,c.a),tid); }')
         error = ctypes.create_string_buffer(256)
         self.assertTrue(self.api.gfx_shader64_validate_compute_resource_pass_source(
-            source, len(source), 0, 1, 1, 1, error, len(error)), error.value)
+            source, len(source), 0, 1, 1, 1, 1, error, len(error)), error.value)
         missing_normal = source.replace(b"sceneNormals [[texture(7)]]", b"unusedNormals [[texture(7)]]")
         self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
-            missing_normal, len(missing_normal), 0, 1, 1, 1, error, len(error)))
+            missing_normal, len(missing_normal), 0, 1, 1, 1, 1, error, len(error)))
         self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
-            source, len(source), 0, 1, 0, 1, error, len(error)))
+            source, len(source), 0, 1, 0, 1, 1, error, len(error)))
+        self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
+            source, len(source), 0, 1, 1, 0, 1, error, len(error)))
+        self.assertIn(b"shadows require scene depth, normals, and directional lighting", error.value)
+        missing_shadow = source.replace(b"shadowMap [[texture(8)]]", b"unusedMap [[texture(8)]]")
+        self.assertFalse(self.api.gfx_shader64_validate_compute_resource_pass_source(
+            missing_shadow, len(missing_shadow), 0, 1, 1, 1, 1, error, len(error)))
         graph_order = (ctypes.c_ubyte * 4)()
         graph = (self.GraphPass * 2)(
-            self.GraphPass(b"depth_normal", b"sceneColor", b"shade", 0.5, 2, 19),
+            self.GraphPass(b"depth_normal", b"sceneColor", b"shade", 0.5, 2, 31),
             self.GraphPass(b"present", b"shade", b"present", 1.0, 1, 0))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             graph, 2, 1920, 1080, graph_order, error, len(error)), error.value)
+        graph[0].resource_flags = 15  # shadow requested without scene normals
+        self.assertFalse(self.api.gfx_shader64_validate_graph(
+            graph, 2, 1920, 1080, graph_order, error, len(error)))
 
     def test_api2_graph_rejects_cycles_feedback_and_unbounded_targets(self):
         error = ctypes.create_string_buffer(256)
@@ -630,7 +648,7 @@ class ShaderPackTests(unittest.TestCase):
                     if compute_pass:
                         self.assertTrue(self.api.gfx_shader64_validate_compute_resource_pass_source(
                             source, len(source), int(texture_pass), int(depth_pass), int(normals_pass),
-                            int(lighting_pass),
+                            int(lighting_pass), int(shadow_pass),
                             error, len(error)), f"{pack_id}: {error.value!r}")
                         validator = None
                     elif frame_info_pass:
@@ -717,6 +735,16 @@ class ShaderPackTests(unittest.TestCase):
                 self.assertEqual((installed / name).read_bytes(), data, pack_id)
         self.assertTrue((ROOT / "ios/shaderpacks/BlissGridlines/LICENSE.md").exists())
 
+    def test_scene_data_compute_reference_uses_native_shadow_depth(self):
+        pack = ROOT / "ios/shaderpacks/SceneDataCompute64"
+        manifest = json.loads((pack / "manifest.json").read_text())
+        compute = next(p for p in manifest["passes"] if p.get("type") == "compute")
+        self.assertTrue(compute.get("sceneShadows"))
+        source = (pack / compute["source"]).read_text()
+        for expression in ("shadowMap.sample(shadowSampler", "sz - shadowRanges.w <= storedDepth",
+                           "mix(0.62, 1.0, shadowVisibility)"):
+            self.assertIn(expression, source)
+
     def test_ios_runtime_vertical_slice_wiring(self):
         metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
         ui = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
@@ -733,6 +761,9 @@ class ShaderPackTests(unittest.TestCase):
                       "argument.index == 7u) scene_normals_bound = YES",
                       "compute_scene_lighting", "inverse_view length:sizeof(inverse_view) atIndex:4",
                       "sun_direction_and_intensity) atIndex:5", "argument.index == 5u)\n                        sun_direction_bound = YES",
+                      "compute_scene_shadows", "metal_shadow_texture atIndex:8",
+                      "shadow_right_min length:sizeof(shadow_right_min) atIndex:6",
+                      "argument.index == 9u)\n                        shadow_ranges_bound = YES",
                       "material_pack_textures", "material_pack_texture_count"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()

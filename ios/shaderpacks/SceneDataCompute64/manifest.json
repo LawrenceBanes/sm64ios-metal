@@ -14,7 +14,7 @@
     { "name": "fog", "label": "Depth fog", "type": "float", "default": 0.2, "min": 0, "max": 1 }
   ],
   "passes": [
-    { "id": "surface_data", "type": "compute", "input": "sceneColor", "output": "surface", "source": "shaders/surface.metal", "scale": 0.5, "sceneDepth": true, "sceneNormals": true, "sceneLighting": true, "packTextures": true },
+    { "id": "surface_data", "type": "compute", "input": "sceneColor", "output": "surface", "source": "shaders/surface.metal", "scale": 0.5, "sceneDepth": true, "sceneNormals": true, "sceneLighting": true, "sceneShadows": true, "packTextures": true },
     { "id": "present", "type": "fullscreen", "input": "surface", "output": "present", "source": "shaders/present.metal", "scale": 1.0 }
   ]
 }

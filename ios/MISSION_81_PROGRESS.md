@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `359a2fc5e09f55e1a527872f45042ed6f3e77c80` (compute packs can consume configured directional lighting; Apple workflow `44823825399` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `cb1bde4b54b5cf1a3e4dd31d8dea7de2a7f49d48` (compute packs can consume configured directional lighting; Apple workflow `44823825399` passed, and the progress record is current through this checkpoint). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -60,9 +60,9 @@
 
 ## Remaining work / next
 
-1. Validate the combined `sceneNormals` + `packTextures` pass through focused tests, full Linux regressions, and Apple Metal compilation; fix any confirmed failures.
+1. Validate the current compute shadow binding and SceneDataCompute64 kernel on Linux and Apple CI; current source is not yet committed or Apple-compiled.
 2. Device-test material classification, custom material textures, scene depth/normals, lighting/shadows, and reference packs against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
-3. Continue with geometry/material inputs from actual Fast3D data, then choose the next achievable scene-data or render-graph capability. Native vertex normals, complete G-buffers, arbitrary shadow cameras/passes, user compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
+3. Continue with geometry/material inputs from actual Fast3D data, then choose the next achievable scene-data or render-graph capability. Native vertex normals, complete G-buffers, arbitrary shadow cameras/passes, multi-output compute, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
 ## Current working increment — depth-derived scene normals
 
@@ -138,5 +138,13 @@
 - Extended `SceneDataCompute64` to use the reconstructed surface normal transformed into world space against the real configured sun, while retaining depth fog and the pack-owned texture. The pass remains an illustrative screen-space shader; it is not physical-device verified.
 - Focused pack tests pass (29), including the reference pack with `sceneLighting`, graph-resource rejection for lighting without both depth and normals, and ASan/UBSan ZIP smoke. Full `CC=clang tests/run_linux_checks.sh`, Metal codegen, Xcode wiring, shell syntax, and diff checks pass; familiar fixture warnings/invalid-input messages remain. No GPU execution or device output is claimed.
 - Apple workflow `44823825399` passed Linux regressions and Xcode 27 iOS Metal backend/MSL compile-link for the directional-light compute binding and `SceneDataCompute64`. This remains compile evidence only, not runtime shading or device output.
+
+## Current working increment — native shadow-map input for compute passes
+
+- Added optional `sceneShadows:true` to API 2 compute passes, with an explicit resource contract: native depth map and sampler at texture/sampler 8; the fitted world-to-shadow right/up/forward basis and ranges/bias at buffers 6–9. It requires scene depth, normals, and configured directional lighting, keeping all current binding namespaces disjoint.
+- Reused the renderer's existing bounded directional shadow map and transform; the compute graph declines the custom path and uses the native composite when the shadow texture/camera data is unavailable. This does not add user-defined shadow cameras or increase capture coverage.
+- Extended source and graph validation, UIKit manifest validation, Metal pipeline reflection, runtime bindings, production-importer tests, and `SceneDataCompute64`. The reference kernel reconstructs world position and applies a 3×3 depth comparison filter. Device appearance and GPU execution remain unverified.
+- `python3 ios/test_shader64_pack.py` passes 29 tests, including production import of every reference pack and the ASan/UBSan ZIP smoke. A first full Linux run found a test assertion spelling mismatch; after correcting the assertion, the full `CC=clang tests/run_linux_checks.sh` passed. Metal codegen, project wiring, shell syntax, and diff checks pass.
+- Apple Metal validation has not yet run for this working increment. The local Linux environment cannot execute Metal or verify pixels.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
