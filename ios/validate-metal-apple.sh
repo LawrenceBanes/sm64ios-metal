@@ -42,6 +42,7 @@ xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \
     -DIOS_BUILD=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 -DIOS_O2R_SCENE_RUNTIME=1 \
     -DIOS_SCENE_DIAGNOSTIC=1 \
     "$repo_dir/src/engine/world_scene.c" "$repo_dir/src/engine/world_scene_file.c" \
+    "$repo_dir/src/engine/world_scene_view.c" \
     "$repo_dir/src/engine/world_region.c" "$repo_dir/src/engine/surface_load.c" \
     "$repo_dir/src/pc/gfx/gfx_pc.c" "$repo_dir/src/game/area.c" \
     "$repo_dir/src/game/rendering_graph_node.c" "$repo_dir/src/game/level_update.c" \

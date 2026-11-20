@@ -5,6 +5,7 @@
 #include "engine/math_util.h"
 #ifdef IOS_O2R_SCENE_RUNTIME
 #include "engine/world_region.h"
+#include "engine/world_scene_view.h"
 #endif
 #include "game_init.h"
 #include "gfx_dimensions.h"
@@ -259,7 +260,11 @@ static void geo_process_perspective(struct GraphNodePerspective *node) {
         f32 aspect = (f32) gCurGraphNodeRoot->width / (f32) gCurGraphNodeRoot->height;
 #endif
 
-        guPerspective(mtx, &perspNorm, node->fov, aspect, node->near, node->far, 1.0f);
+        f32 farPlane = node->far;
+#ifdef IOS_O2R_SCENE_RUNTIME
+        farPlane = world_scene_view_far_plane(farPlane, area_scene_package_id() != 0);
+#endif
+        guPerspective(mtx, &perspNorm, node->fov, aspect, node->near, farPlane, 1.0f);
         gSPPerspNormalize(gDisplayListHead++, perspNorm);
 
         gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(mtx), G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
@@ -798,6 +803,12 @@ static int obj_is_in_view(struct GraphNodeObject *node, Mat4 matrix) {
     //  makes PU travel safe when the camera is locked on the main map.
     //  If Mario were rendered with a depth over 65536 it would cause overflow
     //  when converting the transformation matrix to a fixed point matrix.
+#ifdef IOS_O2R_SCENE_RUNTIME
+    if (area_scene_package_id() != 0) {
+        f32 objectFar = world_scene_view_far_plane(gCurGraphNodeCamFrustum->far, TRUE);
+        if (-matrix[3][2] > world_scene_view_object_limit(objectFar, cullingRadius)) return FALSE;
+    } else
+#endif
     if (matrix[3][2] < -20000.0f - cullingRadius) {
         return FALSE;
     }

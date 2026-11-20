@@ -7,6 +7,7 @@ SDL2_CFLAGS=$(pkg-config --cflags sdl2)
 CC="$cc" "$repo_dir/tests/run_metal_shader_codegen_test.sh"
 CC="$cc" "$repo_dir/tests/run_metal_state_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_capture_test.sh"
+CC="$cc" "$repo_dir/tests/run_world_scene_view_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_bvh_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_cache_reset_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_override_test.sh"
@@ -96,7 +97,7 @@ $cc $common_flags -DF3DEX_GBI_2E -DNON_MATCHING=1 -DAVOID_UB=1 -DIOS_BUILD=1 \
     -DIOS_O2R_SCENE_RUNTIME=1 -DIOS_SCENE_DIAGNOSTIC=1 -DIOS_CONNECTED_WORLD_TEST=1 -DIOS_HAT_MOVEMENT=1 \
     -DRAPI_METAL=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 $SDL2_CFLAGS \
     "$repo_dir/src/engine/world_scene_file.c" "$repo_dir/src/engine/world_scene.c" \
-    "$repo_dir/src/engine/world_region.c" "$repo_dir/src/engine/surface_load.c" \
+    "$repo_dir/src/engine/world_scene_view.c" "$repo_dir/src/engine/world_region.c" "$repo_dir/src/engine/surface_load.c" \
     "$repo_dir/src/game/area.c" "$repo_dir/src/game/rendering_graph_node.c" \
     "$repo_dir/src/game/level_update.c" "$repo_dir/levels/castle_grounds/script.c" \
     "$repo_dir/src/pc/gfx/gfx_pc.c"

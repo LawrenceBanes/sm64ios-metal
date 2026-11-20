@@ -14,6 +14,9 @@
 #include "game/ios_reality.h"
 #include "scene_diagnostic.h"
 #include "game/area.h"
+#ifdef IOS_O2R_SCENE_RUNTIME
+#include "engine/world_scene_view.h"
+#endif
 #import "src/ios/CheatsViewController.h"
 #if TARGET_OS_IOS
 #include "ios_app_branding.h"
@@ -83,6 +86,9 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
 - (void)showGameplayActions;
+#ifdef IOS_O2R_SCENE_RUNTIME
+- (void)showImportedWorldViewSettings;
+#endif
 - (void)showRealityDebugger;
 - (void)showRealityCategory:(NSInteger)category;
 @end
@@ -212,6 +218,16 @@ static int sm64RenderDiagnosticMode;
     [self updateTextureCacheDiagnosticsButton];
     [self buildGraphicsSettingsPanel];
     self.recentStatus = [NSMutableArray array];
+#ifdef IOS_O2R_SCENE_RUNTIME
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:@"SM64ImportedWorldDistance"] != nil) {
+        NSInteger savedDistance = [defaults integerForKey:@"SM64ImportedWorldDistance"];
+        if (savedDistance >= WORLD_SCENE_VIEW_ORIGINAL && savedDistance < WORLD_SCENE_VIEW_DISTANCE_COUNT)
+            world_scene_view_set_distance((enum WorldSceneViewDistance)savedDistance);
+    }
+    if ([defaults objectForKey:@"SM64ImportedWorldFog"] != nil)
+        world_scene_view_set_fog_enabled([defaults boolForKey:@"SM64ImportedWorldFog"]);
+#endif
     [self appendStatus:@"Native UIKit diagnostic panel ready"];
 }
 
@@ -302,6 +318,12 @@ static int sm64RenderDiagnosticMode;
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD);
     }]];
+#ifdef IOS_O2R_SCENE_RUNTIME
+    [menu addAction:[UIAlertAction actionWithTitle:@"Imported world view settings" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        [self showImportedWorldViewSettings];
+    }]];
+#endif
 #endif
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = menu.popoverPresentationController;
@@ -309,6 +331,44 @@ static int sm64RenderDiagnosticMode;
     popover.sourceRect = self.gameplayButton.bounds;
     [self presentViewController:menu animated:YES completion:nil];
 }
+
+#ifdef IOS_O2R_SCENE_RUNTIME
+- (void)showImportedWorldViewSettings {
+    NSArray<NSString *> *presets = @[@"Original / compatibility", @"Extended", @"Maximum practical distance"];
+    NSString *selected = presets[world_scene_view_get_distance()];
+    NSString *fog = world_scene_view_get_fog_enabled() ? @"On" : @"Off";
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Imported World View"
+        message:[NSString stringWithFormat:@"Draw distance: %@\nWSC fog: %@\nFog changes appearance independently of geometry visibility.", selected, fog]
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray<NSNumber *> *values = @[@(WORLD_SCENE_VIEW_ORIGINAL), @(WORLD_SCENE_VIEW_EXTENDED), @(WORLD_SCENE_VIEW_MAXIMUM)];
+    for (NSUInteger i = 0; i < presets.count; ++i) {
+        NSString *title = presets[i];
+        NSInteger value = values[i].integerValue;
+        [menu addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            world_scene_view_set_distance((enum WorldSceneViewDistance)value);
+            [[NSUserDefaults standardUserDefaults] setInteger:value forKey:@"SM64ImportedWorldDistance"];
+            gfx_ios_diag_log("Imported-world draw distance preset selected index=%ld", (long)value);
+            [self appendStatus:[NSString stringWithFormat:@"Imported world distance: %@", title]];
+        }]];
+    }
+    BOOL fogEnabled = world_scene_view_get_fog_enabled();
+    [menu addAction:[UIAlertAction actionWithTitle:(fogEnabled ? @"Turn WSC fog off" : @"Turn WSC fog on")
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            BOOL enabled = !fogEnabled;
+            world_scene_view_set_fog_enabled(enabled);
+            [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64ImportedWorldFog"];
+            gfx_ios_diag_log("Imported-world WSC fog %s", enabled ? "enabled" : "disabled");
+            [self appendStatus:[NSString stringWithFormat:@"Imported world fog %@", enabled ? @"on" : @"off"]];
+        }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = menu.popoverPresentationController;
+    popover.sourceView = self.gameplayButton;
+    popover.sourceRect = self.gameplayButton.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
+}
+#endif
 
 - (void)showRealityDebugger {
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Reality Debugger"

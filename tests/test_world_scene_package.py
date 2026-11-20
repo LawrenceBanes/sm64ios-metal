@@ -240,7 +240,7 @@ class ScenePackageTest(unittest.TestCase):
                 (work / "gfx/scenes" / path.name).write_bytes(path.read_bytes())
             executable = work / "scene-test"
             sources = ["tests/test_world_scene_package.c", "src/engine/world_scene_file.c",
-                       "src/engine/world_scene.c", "src/engine/world_region.c", "src/engine/surface_collision.c",
+                       "src/engine/world_scene.c", "src/engine/world_scene_view.c", "src/engine/world_region.c", "src/engine/surface_collision.c",
                        "src/pc/gfx/gfx_cc.c", "src/pc/gfx/gfx_scene_capture.c", "src/pc/platform.c",
                        "src/game/area.c", "src/pc/gfx/gfx_metal_shader.c"]
             sources.extend(sorted((ROOT / "src/pc/fs").glob("*.c")))

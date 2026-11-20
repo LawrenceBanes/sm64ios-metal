@@ -31,6 +31,7 @@
 #include "gfx_texture_override.h"
 #ifdef IOS_O2R_SCENE_RUNTIME
 #include "engine/world_scene_file.h"
+#include "engine/world_scene_view.h"
 static const struct WorldSceneDrawState *scene_draw_state;
 static const struct WorldSceneMaterial *scene_material;
 #ifdef EXTERNAL_DATA
@@ -1367,7 +1368,8 @@ static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
     if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
     if (material->texture[1].name[0]) shader |= SHADER_SCENE_TEX1;
     if (material->flags & WORLD_SCENE_CUTOUT) shader |= SHADER_SCENE_CUTOUT;
-    if (material->flags & WORLD_SCENE_FOG) shader |= SHADER_SCENE_FOG;
+    if ((material->flags & WORLD_SCENE_FOG) && world_scene_view_get_fog_enabled())
+        shader |= SHADER_SCENE_FOG;
     bool blend = (material->flags & WORLD_SCENE_BLEND) != 0;
     if (blend) shader |= SHADER_SCENE_BLEND;
 
@@ -1469,7 +1471,7 @@ static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
             buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 0, vertex->u);
             buf_vbo[buf_vbo_len++] = gfx_scene_uv(&mat->texture[tile], 1, vertex->v);
         }
-        if (mat->flags & WORLD_SCENE_FOG) {
+        if ((mat->flags & WORLD_SCENE_FOG) && world_scene_view_get_fog_enabled()) {
             float w = vertex->w;
             if (fabsf(w) < 0.001f) w = 0.001f;
             float winv = 1.0f / w;
