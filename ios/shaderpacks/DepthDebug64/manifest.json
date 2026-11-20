@@ -1,0 +1,12 @@
+{
+  "formatVersion": 2,
+  "id": "DepthDebug64",
+  "name": "Depth Debug 64",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "passes": [
+    { "id": "raw_depth", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/depth.metal", "scale": 1.0, "sceneDepth": true }
+  ]
+}

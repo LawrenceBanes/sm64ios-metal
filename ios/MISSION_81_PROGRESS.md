@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest committed code checkpoint: `1990596c` (material-class diagnostic channel); the external material-hook implementation is currently in the working tree and awaiting Apple validation.
+- Latest committed code checkpoint: `a6b1f8c3` (material hook plus fixed validation harness); optional scene-depth graph inputs and DepthDebug64 are now in the working tree for the next validation cycle.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -35,6 +35,8 @@
 - Apple validation workflow `44787616391` passed both Linux and Xcode 27 iOS device/simulator compile/link jobs, including UIKit integration and wrapped API 2 GraphDemo/Bliss Metal sources. No GPU or iPhone runtime was executed.
 - Apple validation workflow `44794122672` passed Linux regression and the Xcode 27 iOS device/simulator compile/link plus Metal source validation jobs for code checkpoint `227d1a4b2a8eaca73bddbe893c7b96081a69e276`.
 - Apple validation workflow `44797419474` for `8f959e30` passed portable host checks but exposed a link-only gap in the standalone Metal backend validation executable: the new `gfx_current_render_material_class` symbol is implemented in the gameplay graphics bridge, which that small backend link intentionally omits. Added a class-0 stub only to the backend test executable; the workflow separately compiles the real `gfx_pc.c` implementation. This is test harness wiring, not a production fallback.
+- Apple validation workflow `44797696601` passed both full Linux regression and Xcode 27 device/simulator backend compile/link plus wrapped MSL validation for `a6b1f8c382af35489b9223e30409ea181a7ee4a8`. No GPU execution or physical-device rendering occurred.
+- Added a bounded optional API 2 `sceneDepth` pass input paired with the engine's inverse projection, gated by an explicit manifest boolean. `DepthDebug64` is a raw nonlinear-depth diagnostic example. The graph enables camera capture only while a pack requests the resource; single-sample depth/projection unavailability falls back to the native composite for that frame.
 - Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
 - Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
 - IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
@@ -43,8 +45,8 @@
 
 ## Remaining work / next
 
-1. Run Apple Metal SDK validation for the working external material hook, including the new GraphDemo material source and full Objective-C/UIKit compilation; resolve any actual compiler issue and commit/push the result.
-2. Install the matching private IPA on a test iPhone, import GraphDemo through Graphics → Shader Pack → Import ZIP Pack, and visually verify Mario tint while nearby world materials remain unchanged. Until then, the hook is host-tested and Apple-compiled only, not visually confirmed.
-3. Next API increment: expose a documented engine resource (starting with scene depth) to external graph passes with explicit binding/format/coordinate semantics and safe fallback. Normals, G-buffers, transforms, external textures, graph compute/shadow/history nodes and Bliss's Minecraft-specific inputs remain unsupported.
+1. Complete the new scene-depth integration checks, including generated MSL Apple compilation, full Linux suite, and UI importer/resource-flag wiring; commit/push and run Apple validation.
+2. Install the matching private IPA on a test iPhone, import GraphDemo and DepthDebug64 through Graphics → Shader Pack → Import ZIP Pack; visually verify class-specific Mario tint, raw depth debug, and that ordinary world geometry remains unchanged by the tint. No such output is confirmed yet.
+3. Next data contract: expose actual surface normals/material channels to external shaders, reusing captured source geometry only if its per-pixel association is sound. No normals/G-buffers, material texture bindings, external textures, graph compute/shadow/history nodes, or Bliss Minecraft uniforms are supported yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

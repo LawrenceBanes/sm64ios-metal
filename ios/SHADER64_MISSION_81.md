@@ -35,6 +35,8 @@ The Fast3D/GeoLayout integration tags iOS Metal display-list items as static wor
 
 The hook does **not** yet provide world-space positions, normals, transforms, independent material texture bindings, or engine depth. It is a post-combiner fragment customization point, not a programmable geometry/deferred renderer. Failed shader generation/compilation is logged and falls back to the original Fast3D combiner for that program, preserving gameplay/render recovery rather than presenting an unsupported shader as active success.
 
+An API 2 pass may opt into the auxiliary `sceneDepth` resource with `"sceneDepth": true`. It then implements `shader64_pass_depth(color, uv, image, imageSampler, sceneDepth, depthSampler, inverseProjection, params)`. `sceneDepth` is the native Depth32Float hardware depth sampled over the scene viewport; its values are nonlinear Metal depth in [0,1], and 1 represents clear/background. `inverseProjection` is the current engine inverse projection matrix; screen UV maps x to [-1,1] and flips y to Metal clip coordinates, while depth is mapped from [0,1] to [-1,1] before unprojection. Scene depth is read-only and bound only for opted-in passes. Camera capture is enabled only while a graph requests it. If a valid single-sample depth texture or projection is unavailable, the renderer logs and uses its built-in final composite for that frame. Custom passes that need linear/view-space values must reconstruct them from this documented pair; no normals or world positions are implied.
+
 ```json
 {
   "formatVersion": 2,
@@ -73,7 +75,7 @@ Inspected local archive: `Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip`, SHA-256 `
 |---|---|---|
 | Composite/final image passes | API 2 fullscreen DAG; one image in/out per pass | Basic chained passes executable; no multi-attachment MRT |
 | Final camera-gridline option | API 2 screen-space pass | Included as licensed adaptation pack; GUI hide flag is represented by a pack toggle |
-| Depth-aware motion blur, AO, fog, SSR | Needs named depth/history/depth-reconstruction resources | Not available to API 2 yet |
+| Engine scene depth and camera projection | Optional `sceneDepth` input on API 2 fullscreen nodes plus inverse projection | Implemented for DepthDebug64; custom packs can reconstruct positions, but no normal/history helper or MSAA depth path |
 | Shadow map and shadow color textures | Needs declared depth/comparison textures and shadow pass nodes | Not available to user graphs; built-in engine shadow pass remains private |
 | Deferred/G-buffer surfaces | Needs material/normal/albedo attachments and geometry hook | Not available |
 | Setup compute and voxel lighting | Needs compute nodes, storage buffers, atomic/resource contracts | Not available |

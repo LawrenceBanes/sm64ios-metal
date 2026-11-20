@@ -2,7 +2,7 @@
 
 SHADER64 is an optional user shader interface layered on the existing Metal renderer. The built-in Classic64 path remains the recovery/default path. The initial runtime contract supports one replaceable stage: **postprocess**, after the scene has been rasterized and before the native HUD is drawn. SM64 Fast3D material combiners, world geometry, shadow generation, and HUD rendering continue to use the engine's native code.
 
-Mission 81 adds an incremental API 2 option: a bounded Metal fullscreen render graph with up to four source-compiled raster passes and named sampled intermediate images. API 1 remains supported unchanged. API 2 does not yet expose geometry/material, engine depth, shadow maps, G-buffers, compute, history, or custom texture bindings; see [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md) for the current resource map, graph contract, Bliss workload audit, and limitations.
+Mission 81 adds an incremental API 2 option: a bounded Metal fullscreen render graph with up to four source-compiled raster passes and named sampled intermediate images. API 1 remains supported unchanged. API 2 can optionally expose a post-combiner character/world material hook and per-pass raw scene depth with inverse projection. Geometry-stage control, normals, world-space geometry inputs, shadow maps for custom graphs, full G-buffers, compute, history, and custom texture bindings remain unavailable; see [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md) for the current resource map, graph contract, Bliss workload audit, and limitations.
 
 ## Installing a pack
 
@@ -65,6 +65,19 @@ Set `source` to `shaders/postprocess.metallib` and include the resulting library
 Metal source compilation is not a security sandbox. A pack can contain expensive or faulty GPU work and the runtime cannot reliably preempt every GPU workload on iOS. Install packs from sources you trust, keep the Classic64 recovery action available, and start with small bounded shaders. The app limits archive and source/library sizes, validates metadata and paths, and exposes only the scene texture and four float values, but it does not claim that arbitrary Metal source or libraries are memory-safe or immune to GPU stalls. API 1 supports runtime MSL compilation and Metal's compiled `.metallib` loading.
 
 Version 1 accepts only a single postprocess replacement stage. Future APIs must be introduced with a versioned contract and explicit resources; packs requesting unavailable buffers, materials, passes, or device features must be rejected rather than silently approximated.
+
+## API 2 material and scene depth resources
+
+API 2 packs may add `"materialShader":{"source":"shaders/material.metal"}`. The function contract is:
+
+```metal
+float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
+                         uint materialClass, constant float4 &params);
+```
+
+`materialClass` is 0 unclassified, 1 world, 2 object, or 3 character. The hook executes after Fast3D's combiner/fog output; it does not replace native geometry/material processing. `uv` is zero for an untextured draw. `screenPosition` is raster position, not world position.
+
+An individual API 2 pass can declare `"sceneDepth":true` and implement the `shader64_pass_depth` contract documented in [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md). Raw nonlinear Depth32Float samples and inverse projection are supplied only to those passes. Depth-dependent packs gracefully use the native composite on frames where the renderer cannot provide a single-sample depth texture and valid projection.
 
 ## Reference packs
 

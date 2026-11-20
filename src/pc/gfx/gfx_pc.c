@@ -2684,7 +2684,8 @@ void gfx_run(Gfx *commands) {
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     bool capture_for_post = gfx_metal_ssao_enabled() || gfx_metal_fog_enabled() ||
                             gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled() ||
-                            gfx_metal_sun_intensity() != 0u;
+                            gfx_metal_sun_intensity() != 0u ||
+                            gfx_metal_shader64_needs_scene_depth();
     gfx_scene_capture_set_enabled(capture_for_post);
     gfx_scene_capture_set_triangle_limit(capture_for_post ? 8192u : 0u);
 #endif

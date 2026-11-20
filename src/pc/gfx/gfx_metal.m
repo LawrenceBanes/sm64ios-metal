@@ -68,6 +68,7 @@ struct MetalFragmentParams {
 struct MetalShader64GraphPass {
     char id[33], input[33], output[33];
     float scale;
+    unsigned int resource_flags;
     id<MTLRenderPipelineState> pipeline;
     id<MTLLibrary> library;
     id<MTLTexture> target;
@@ -1533,6 +1534,23 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     }
     if (!graph) return false;
     bool ok = scene_source != nil;
+    bool requires_scene_depth = false;
+    for (size_t i = 0; i < graph->count; ++i)
+        if (graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH)
+            requires_scene_depth = true;
+    float inverse_projection[4][4] = {{0}};
+    if (requires_scene_depth) {
+        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+        if (!metal_depth_texture || metal_depth_samples != 1 || !capture.has_projection_matrix ||
+            !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection)) {
+            static uint32_t depth_unavailable_logs;
+            if (depth_unavailable_logs++ < 8)
+                gfx_ios_diag_log("SHADER64 sceneDepth unavailable this frame depth=%d samples=%lu projection=%d; using native composite",
+                    metal_depth_texture != nil, (unsigned long)metal_depth_samples, capture.has_projection_matrix);
+            gfx_metal_shader64_graph_release(graph);
+            return false;
+        }
+    }
     uint64_t target_bytes = 0;
     for (size_t i = 0; i < graph->count; ++i) if (strcmp(graph->passes[i].output, "present")) {
         unsigned int w = 0, h = 0;
@@ -1571,6 +1589,11 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         [encoder setRenderPipelineState:p->pipeline];
         [encoder setFragmentTexture:input atIndex:0];
         [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
+        if (p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) {
+            [encoder setFragmentTexture:metal_depth_texture atIndex:1];
+            [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
+            [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:1];
+        }
         [encoder setFragmentBytes:&parameters length:sizeof(parameters) atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
@@ -1602,7 +1625,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     }
     for (size_t i = 0; i < pass_count; ++i)
         descriptions[i] = (struct GfxShader64GraphPass){passes[i].id, passes[i].input, passes[i].output,
-                                                       passes[i].resolution_scale, passes[i].node_type};
+            passes[i].resolution_scale, passes[i].node_type, passes[i].resource_flags};
     graph = calloc(1, sizeof(*graph));
     if (!graph) { if (error_out && error_size) snprintf(error_out, error_size, "out of memory preparing graph"); return false; }
     graph->references = 1; graph->count = pass_count;
@@ -1625,17 +1648,25 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     unsigned int width = (unsigned int)MAX(1.0, metal_view.drawableSize.width);
     unsigned int height = (unsigned int)MAX(1.0, metal_view.drawableSize.height);
     if (!gfx_shader64_validate_graph(descriptions, pass_count, width, height, graph->order, error_out, error_size)) {
-        free(graph); return false;
+        gfx_metal_shader64_graph_release(graph); return false;
     }
     for (size_t i = 0; i < pass_count; ++i) {
         char validation[192] = {0};
-        if (!gfx_shader64_validate_pass_source(passes[i].source, passes[i].source_size, validation, sizeof(validation))) {
+        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
+            gfx_shader64_validate_depth_pass_source(passes[i].source, passes[i].source_size,
+                                                    validation, sizeof(validation)) :
+            gfx_shader64_validate_pass_source(passes[i].source, passes[i].source_size,
+                                              validation, sizeof(validation));
+        if (!source_valid) {
             if (error_out && error_size) snprintf(error_out, error_size, "pass %.32s: %.150s", passes[i].id ?: "?", validation);
             gfx_metal_shader64_graph_release(graph); return false;
         }
         size_t capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 1024u;
         char *wrapper = malloc(capacity);
-        if (!wrapper || !gfx_shader64_build_pass_wrapper(passes[i].source, passes[i].source_size, wrapper, capacity)) {
+        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
+            gfx_shader64_build_depth_pass_wrapper(passes[i].source, passes[i].source_size, wrapper, capacity) :
+            gfx_shader64_build_pass_wrapper(passes[i].source, passes[i].source_size, wrapper, capacity));
+        if (!wrapper_ok) {
             free(wrapper); if (error_out && error_size) snprintf(error_out, error_size, "could not wrap pass source");
             gfx_metal_shader64_graph_release(graph); return false;
         }
@@ -1662,6 +1693,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         snprintf(stored->input, sizeof(stored->input), "%s", passes[i].input);
         snprintf(stored->output, sizeof(stored->output), "%s", passes[i].output);
         stored->scale = passes[i].resolution_scale; stored->library = library; stored->pipeline = pipeline;
+        stored->resource_flags = passes[i].resource_flags;
     }
     struct MetalShader64Graph *old;
     @synchronized ([NSObject class]) {
@@ -1691,6 +1723,18 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
                                    char *error_out, size_t error_size) {
     return gfx_metal_load_shader64_graph_with_material(pack_id, passes, pass_count,
         NULL, 0, parameters, error_out, error_size);
+}
+
+bool gfx_metal_shader64_needs_scene_depth(void) {
+    bool needed = false;
+    @synchronized ([NSObject class]) {
+        if (metal_shader64_graph) for (size_t i = 0; i < metal_shader64_graph->count; ++i)
+            if (metal_shader64_graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) {
+                needed = true;
+                break;
+            }
+    }
+    return needed;
 }
 
 static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibrary> library,
@@ -1828,6 +1872,9 @@ static void gfx_metal_restore_shader64_pack(void) {
         BOOL valid = [manifest[@"formatVersion"] integerValue] == 2 && [manifest[@"stage"] isEqualToString:@"render_graph"];
         for (NSUInteger i = 0; valid && i < definitions.count; ++i) {
             NSDictionary *definition = definitions[i];
+            if (![definition isKindOfClass:[NSDictionary class]] ||
+                (definition[@"sceneDepth"] &&
+                 ![definition[@"sceneDepth"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
             NSString *relative = definition[@"source"];
             if (![relative isKindOfClass:[NSString class]] || ![relative hasPrefix:@"shaders/"] ||
                 [relative containsString:@".."] || [relative.pathComponents count] != 2 || ![relative hasSuffix:@".metal"]) { valid = NO; break; }
@@ -1839,7 +1886,8 @@ static void gfx_metal_restore_shader64_pack(void) {
             [sources addObject:source_data];
             graph_passes[i] = (struct GfxShader64GraphSource){
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
-                source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u };
+                source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u,
+                [definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u };
         }
         NSDictionary *material_definition = manifest[@"materialShader"];
         if (valid && material_definition &&

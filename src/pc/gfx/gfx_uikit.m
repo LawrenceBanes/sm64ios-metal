@@ -1472,6 +1472,8 @@ static int sm64RenderDiagnosticMode;
                 [path isKindOfClass:[NSString class]] && [path hasPrefix:@"shaders/"] && ![path containsString:@".."] &&
                 [[path pathComponents] count] == 2 && [path hasSuffix:@".metal"] &&
                 [type isEqualToString:@"fullscreen"] && [scale isKindOfClass:[NSNumber class]] && isfinite(scale.doubleValue) && scale.doubleValue >= 0.25 && scale.doubleValue <= 1.0;
+            id sceneDepth = pass[@"sceneDepth"];
+            if (sceneDepth && ![sceneDepth isKindOfClass:[NSNumber class]]) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }
@@ -1515,7 +1517,8 @@ static int sm64RenderDiagnosticMode;
             [graphSources addObject:bytes];
             graphPasses[i] = (struct GfxShader64GraphSource){
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
-                bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u };
+                bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u,
+                [definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u };
         }
         NSDictionary *materialDefinition = manifest[@"materialShader"];
         if (validation == nil && materialDefinition) {

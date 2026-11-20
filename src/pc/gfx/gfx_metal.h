@@ -24,6 +24,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                    size_t pass_count, const char *material_source,
                                    size_t material_source_size, const float parameters[4],
                                    char *error, size_t error_size);
+bool gfx_metal_shader64_needs_scene_depth(void);
 void gfx_metal_use_classic_shader(void);
 const char *gfx_metal_active_shader64_pack(void);
 void gfx_metal_set_shader64_parameters(const float parameters[4]);
