@@ -1770,13 +1770,25 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         id<MTLTexture> output = final ? drawable.texture : gfx_metal_shader64_target(p, width, height);
         if (!input || !output) { ok = false; break; }
         if (p->node_type == GFX_SHADER64_NODE_COMPUTE) {
-            if (!p->compute_pipeline || final) { ok = false; break; }
+            if (!p->compute_pipeline || final ||
+                ((p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) && !graph->pack_texture_count)) {
+                ok = false; break;
+            }
             id<MTLComputeCommandEncoder> compute = [command computeCommandEncoder];
             if (!compute) { ok = false; break; }
             [compute setComputePipelineState:p->compute_pipeline];
             [compute setTexture:input atIndex:0];
             [compute setTexture:output atIndex:1];
             [compute setBytes:&parameters length:sizeof(parameters) atIndex:0];
+            if (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) {
+                for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index) {
+                    id<MTLTexture> texture = graph->pack_textures[MIN(texture_index,
+                        graph->pack_texture_count - 1u)];
+                    [compute setTexture:texture atIndex:2u + texture_index];
+                }
+                uint32_t texture_count = (uint32_t)graph->pack_texture_count;
+                [compute setBytes:&texture_count length:sizeof(texture_count) atIndex:1];
+            }
             NSUInteger thread_width = MAX(1u, p->compute_pipeline.threadExecutionWidth);
             NSUInteger thread_height = MAX(1u, p->compute_pipeline.maxTotalThreadsPerThreadgroup / thread_width);
             [compute dispatchThreads:MTLSizeMake(width, height, 1)
@@ -1900,9 +1912,14 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     for (size_t i = 0; i < pass_count; ++i) {
         struct MetalShader64GraphPass *stored = &graph->passes[i];
         if (passes[i].node_type == GFX_SHADER64_NODE_COMPUTE) {
+            bool compute_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
             char validation[192] = {0};
-            if (!gfx_shader64_validate_compute_pass_source(passes[i].source, passes[i].source_size,
-                                                           validation, sizeof(validation))) {
+            bool compute_valid = compute_pack_textures ?
+                gfx_shader64_validate_compute_textured_pass_source(passes[i].source, passes[i].source_size,
+                                                                  validation, sizeof(validation)) :
+                gfx_shader64_validate_compute_pass_source(passes[i].source, passes[i].source_size,
+                                                          validation, sizeof(validation));
+            if (!compute_valid) {
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s: %.150s", passes[i].id ?: "?", validation);
                 gfx_metal_shader64_graph_release(graph); return false;
             }
@@ -1919,17 +1936,29 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                                         reflection:&reflection
                                                              error:&pipeline_error] : nil;
             [function release];
-            BOOL input_bound = NO, output_bound = NO, parameters_bound = NO;
-            if (pipeline && reflection.arguments.count == 3u) {
+            BOOL input_bound = NO, output_bound = NO, parameters_bound = NO, texture_count_bound = NO;
+            BOOL pack_texture_bound[GFX_SHADER64_MAX_PACK_TEXTURES] = { NO };
+            if (pipeline && reflection.arguments.count == (compute_pack_textures ? 8u : 3u)) {
                 for (MTLArgument *argument in reflection.arguments) {
                     if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                         argument.index == 0u && argument.access == MTLArgumentAccessReadOnly) input_bound = YES;
                     else if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
                              argument.index == 1u && argument.access == MTLArgumentAccessWriteOnly) output_bound = YES;
                     else if (argument.type == MTLArgumentTypeBuffer && argument.index == 0u) parameters_bound = YES;
+                    else if (compute_pack_textures && argument.type == MTLArgumentTypeBuffer && argument.index == 1u)
+                        texture_count_bound = YES;
+                    else if (compute_pack_textures && argument.type == MTLArgumentTypeTexture &&
+                             argument.textureType == MTLTextureType2D && argument.access == MTLArgumentAccessReadOnly &&
+                             argument.index >= 2u && argument.index < 2u + GFX_SHADER64_MAX_PACK_TEXTURES)
+                        pack_texture_bound[argument.index - 2u] = YES;
                 }
             }
             BOOL abi_valid = input_bound && output_bound && parameters_bound;
+            if (compute_pack_textures) {
+                abi_valid = abi_valid && texture_count_bound;
+                for (NSUInteger texture_index = 0; texture_index < GFX_SHADER64_MAX_PACK_TEXTURES; ++texture_index)
+                    abi_valid = abi_valid && pack_texture_bound[texture_index];
+            }
             if (!library || !pipeline) {
                 const char *message = (pipeline_error ?: compile_error).localizedDescription.UTF8String ?: "Metal rejected compute pass";
                 if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s failed: %.300s", passes[i].id, message);
@@ -1945,6 +1974,7 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             snprintf(stored->output, sizeof(stored->output), "%s", passes[i].output);
             stored->scale = passes[i].resolution_scale;
             stored->node_type = GFX_SHADER64_NODE_COMPUTE;
+            stored->resource_flags = passes[i].resource_flags;
             stored->library = library;
             stored->compute_pipeline = pipeline;
             continue;

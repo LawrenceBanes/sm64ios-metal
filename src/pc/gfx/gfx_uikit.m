@@ -1513,7 +1513,7 @@ static int sm64RenderDiagnosticMode;
             if ([sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue])) passOK = NO;
             if (compute && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
-                [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
+                [sceneShadows boolValue] || [sceneNormals boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }

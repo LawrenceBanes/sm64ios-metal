@@ -1,0 +1,19 @@
+{
+  "formatVersion": 2,
+  "id": "ComputeTexture64",
+  "name": "Compute Texture 64",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "textures": [
+    { "id": "checker", "source": "textures/checker.png" }
+  ],
+  "parameters": [
+    { "name": "mix", "label": "Texture strength", "type": "float", "default": 0.35, "min": 0, "max": 1 }
+  ],
+  "passes": [
+    { "id": "texture_filter", "type": "compute", "input": "sceneColor", "output": "textured", "source": "shaders/filter.metal", "scale": 0.5, "packTextures": true },
+    { "id": "present", "type": "fullscreen", "input": "textured", "output": "present", "source": "shaders/present.metal", "scale": 1.0 }
+  ]
+}

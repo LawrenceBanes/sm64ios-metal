@@ -330,7 +330,8 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP))) ||
-            (p->node_type == GFX_SHADER64_NODE_COMPUTE && p->resource_flags != 0u) ||
+            (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
+             (p->resource_flags & ~GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE && p->output &&
              strcmp(p->output, "present") == 0) ||
             !graph_name(p->id) || !graph_name(p->input) ||
@@ -600,8 +601,8 @@ int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_
     return 1;
 }
 
-int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
-                                             char *error, size_t error_size) {
+static int validate_compute_source(const char *source, size_t size, int pack_textures,
+                                   char *error, size_t error_size) {
     static const char *const required[] = {
         "kernel void shader64_compute(",
         "texture2d<float, access::read> image [[texture(0)]]",
@@ -610,6 +611,13 @@ int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
         "uint2 tid [[thread_position_in_grid]]",
         "#include <metal_stdlib>", "using namespace metal;"
     };
+    static const char *const texture_required[] = {
+        "texture2d<float> packTexture0 [[texture(2)]]",
+        "texture2d<float> packTexture1 [[texture(3)]]",
+        "texture2d<float> packTexture2 [[texture(4)]]",
+        "texture2d<float> packTexture3 [[texture(5)]]",
+        "constant uint &packTextureCount [[buffer(1)]]"
+    };
     if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
         err(error, error_size, "compute pass source is missing, oversized, or contains NUL"); return 0;
     }
@@ -617,22 +625,38 @@ int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
         if (!contains(source, size, required[i])) {
             err(error, error_size, "source does not implement the bounded image compute contract"); return 0;
         }
-    /* API 2 compute has exactly two texture inputs and one parameter buffer.
-     * Reject undeclared engine bindings rather than letting a pipeline compile
-     * with unbound resources. This is a contract check, not a Metal parser. */
+    if (pack_textures)
+        for (size_t i = 0; i < sizeof(texture_required) / sizeof(texture_required[0]); ++i)
+            if (!contains(source, size, texture_required[i])) {
+                err(error, error_size, "textured compute source does not implement the bounded texture contract"); return 0;
+            }
+    /* API 2 compute has two core texture inputs and one parameter buffer;
+     * optional pack textures occupy fixed additional slots. Reject undeclared
+     * bindings rather than compiling with unbound resources. This is a
+     * contract check, not a Metal parser. */
     size_t texture_bindings = 0, buffer_bindings = 0;
     for (size_t i = 0; i + 10u <= size; ++i)
         if (!memcmp(source + i, "[[texture(", 10u)) ++texture_bindings;
     for (size_t i = 0; i + 9u <= size; ++i)
         if (!memcmp(source + i, "[[buffer(", 9u)) ++buffer_bindings;
-    if (texture_bindings != 2u || buffer_bindings != 1u) {
-        err(error, error_size, "compute pass may bind only input/output textures and the parameter buffer"); return 0;
+    if (texture_bindings != (pack_textures ? 6u : 2u) || buffer_bindings != (pack_textures ? 2u : 1u)) {
+        err(error, error_size, "compute pass resource bindings do not match its declared texture contract"); return 0;
     }
     if (contains(source, size, "#include \"")) {
         err(error, error_size, "local shader includes are not supported in API v2"); return 0;
     }
     if (error && error_size) error[0] = '\0';
     return 1;
+}
+
+int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
+                                             char *error, size_t error_size) {
+    return validate_compute_source(source, size, 0, error, error_size);
+}
+
+int gfx_shader64_validate_compute_textured_pass_source(const char *source, size_t size,
+                                                       char *error, size_t error_size) {
+    return validate_compute_source(source, size, 1, error, error_size);
 }
 
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,

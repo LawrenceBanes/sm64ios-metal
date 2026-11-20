@@ -72,6 +72,8 @@ int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_
                                                       char *error, size_t error_size);
 int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size);
+int gfx_shader64_validate_compute_textured_pass_source(const char *source, size_t size,
+                                                       char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size,
