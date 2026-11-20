@@ -107,6 +107,12 @@ def main() -> None:
     ):
         require(token in metal + metal_h + shader_c + uikit,
                 f"missing persisted color-grading path: {token}")
+    for token in (
+        "SM64MetalFogProfile", "fog_density[]", "fog_start[]", "fog_colors[]",
+        "gfx_metal_cycle_fog_profile", "gfx_metal_set_fog_profile", "Fog range: %@",
+    ):
+        require(token in metal + metal_h + uikit,
+                f"missing bounded fog profile setting: {token}")
 
     print("Configurable Metal renderer foundation source checks passed")
 

@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: updated after this checkpoint is committed; most recent verified backend-only source was `a05012e91f9ce7e9ef34383feeab4f0049a35232`.
+- Current source commit: `9d193d7fdaf4b1099e1f67a070162670fcbc57fb`, with the next fog-profile increment in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -47,7 +47,12 @@
 ### M79-D — Color-grade presets (implementation increment)
 
 - Added persisted Neutral, Warm, Vivid, and Cinematic grade selections to the final Metal composite. The shader adjusts saturation, contrast, temperature bias, and brightness before optional tone mapping; non-neutral grades activate the offscreen path. Reset returns to Neutral.
-- UI and shader-generation source checks pass. Full Linux regression passed after this increment. Apple SDK compilation is pending.
+- UI and shader-generation source checks pass. Full Linux regression, Apple SDK/MSL validation, and sanitizer checks passed for `9d193d7f`; Apple workflow [44697713975](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44697713975). Full IPA predates this increment. Visual effect still needs device observation.
+
+### M79-E — Fog controls (implementation increment)
+
+- Added four persisted fog profiles that alter exponential density, start distance, and fog tint; profile cycling and reset are wired into the Graphics panel.
+- Focused source/shader checks and postprocess ASan/UBSan pass. Full Linux regression and Apple SDK validation are running/pending for this follow-up commit.
 
 ### Build candidate status
 
@@ -72,4 +77,4 @@
 
 ## Next task
 
-Run Apple validation for the color-grade checkpoint and rebuild the private IPA if it passes. Then continue with AO controls and HUD isolation, real directional shadow mapping, adjustable fog/sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Commit and validate fog profiles, then build a current private IPA. Continue with AO controls and HUD isolation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
