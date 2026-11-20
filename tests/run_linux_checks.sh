@@ -13,7 +13,16 @@ CC="$cc" "$repo_dir/tests/run_scene_bvh_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_cache_reset_test.sh"
 CC="$cc" "$repo_dir/tests/run_texture_override_test.sh"
 CC="$cc" "$repo_dir/tests/run_fs_writepath_test.sh"
+controller_dpad_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-controller-dpad.XXXXXX")
+trap 'rm -f "$controller_dpad_test_bin"' EXIT HUP INT TERM
+$cc -std=c99 -Wall -Wextra -I"$repo_dir/include" "$repo_dir/tests/controller_dpad_test.c" -o "$controller_dpad_test_bin"
+"$controller_dpad_test_bin"
+rm -f "$controller_dpad_test_bin"
+CC="$cc" sh "$repo_dir/tests/mods/run_host_tests.sh"
+CC="$cc" sh "$repo_dir/tests/mods/run_dynos_actor_tests.sh"
+CC="$cc" sh "$repo_dir/tests/mods/run_zip_import_tests.sh"
 python3 "$repo_dir/ios/test_render_diagnostics.py"
+python3 -m unittest discover -s "$repo_dir/ios" -p 'test_app_identity.py'
 python3 "$repo_dir/ios/test_metal_graphics_foundation.py"
 python3 "$repo_dir/ios/test_hd_texture_overrides.py"
 sh "$repo_dir/tests/run_playground_test.sh"

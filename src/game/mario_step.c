@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "mario_step.h"
 #include "game/ios_reality.h"
+#include "pc/mods/mod_runtime.h"
 
 static s16 sMovingSandSpeeds[] = { 12, 8, 4, 0 };
 
@@ -111,6 +112,19 @@ void mario_bonk_reflection(struct MarioState *m, u32 negateSpeed) {
 }
 
 u32 mario_update_quicksand(struct MarioState *m, f32 sinkingSpeed) {
+    if (m->floor != NULL) {
+        s32 floorType = m->floor->type;
+        bool quicksand = floorType == SURFACE_SHALLOW_QUICKSAND
+            || floorType == SURFACE_DEEP_QUICKSAND || floorType == SURFACE_INSTANT_QUICKSAND
+            || floorType == SURFACE_DEEP_MOVING_QUICKSAND
+            || floorType == SURFACE_SHALLOW_MOVING_QUICKSAND
+            || floorType == SURFACE_QUICKSAND || floorType == SURFACE_MOVING_QUICKSAND
+            || floorType == SURFACE_INSTANT_MOVING_QUICKSAND;
+        if (quicksand && !mod_runtime_allow_hazard_surface(m, 2 /* HAZARD_TYPE_QUICKSAND */)) {
+            m->quicksandDepth = 0.0f;
+            return 0;
+        }
+    }
     if (m->action & ACT_FLAG_RIDING_SHELL) {
         m->quicksandDepth = 0.0f;
     } else {
@@ -196,7 +210,8 @@ u32 mario_update_moving_sand(struct MarioState *m) {
 u32 mario_update_windy_ground(struct MarioState *m) {
     struct Surface *floor = m->floor;
 
-    if (floor->type == SURFACE_HORIZONTAL_WIND) {
+    if (floor->type == SURFACE_HORIZONTAL_WIND
+        && mod_runtime_allow_hazard_surface(m, 3 /* HAZARD_TYPE_HORIZONTAL_WIND */)) {
         f32 pushSpeed;
         s16 pushAngle = floor->force << 8;
 
@@ -332,7 +347,12 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
 s32 perform_ground_step(struct MarioState *m) {
     s32 i;
     u32 stepResult;
+    s32 stepResultOverride;
     Vec3f intendedPos;
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_GROUND, 0, &stepResultOverride)) {
+        return stepResultOverride;
+    }
 
     for (i = 0; i < 4; i++) {
         intendedPos[0] = m->pos[0] + m->floor->normal.y * (m->vel[0] / 4.0f);
@@ -504,7 +524,8 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
         m->wall = upperWall != NULL ? upperWall : lowerWall;
         wallDYaw = atan2s(m->wall->normal.z, m->wall->normal.x) - m->faceAngle[1];
 
-        if (m->wall->type == SURFACE_BURNING) {
+        if (m->wall->type == SURFACE_BURNING
+            && mod_runtime_allow_hazard_surface(m, 1 /* HAZARD_TYPE_LAVA_WALL */)) {
             return AIR_STEP_HIT_LAVA_WALL;
         }
 
@@ -553,6 +574,7 @@ void apply_gravity(struct MarioState *m) {
     const IOSRealityPolicy *policy = ios_reality_global_policy();
     f32 initialVelY = m->vel[1];
     if (policy->zero_gravity) return;
+    if (mod_runtime_mario_gravity(m)) return;
     if (policy->gravity_multiplier < 0.0f && !should_strengthen_gravity_for_jump_ascent(m)) {
         f32 strength = -policy->gravity_multiplier;
         f32 acceleration = 4.0f;
@@ -641,7 +663,9 @@ void apply_vertical_wind(struct MarioState *m) {
     if (m->action != ACT_GROUND_POUND) {
         offsetY = m->pos[1] - -1500.0f;
 
-        if (m->floor->type == SURFACE_VERTICAL_WIND && -3000.0f < offsetY && offsetY < 2000.0f) {
+        if (m->floor->type == SURFACE_VERTICAL_WIND
+            && -3000.0f < offsetY && offsetY < 2000.0f
+            && mod_runtime_allow_hazard_surface(m, 4 /* HAZARD_TYPE_VERTICAL_WIND */)) {
             if (offsetY >= 0.0f) {
                 maxVelY = 10000.0f / (offsetY + 200.0f);
             } else {
@@ -666,9 +690,14 @@ s32 perform_air_step(struct MarioState *m, u32 stepArg) {
     s32 i;
     s32 quarterStepResult;
     s32 stepResult = AIR_STEP_NONE;
+    s32 stepResultOverride;
 #ifdef IOS_HAT_MOVEMENT
     bool hatBounce = false;
 #endif
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_AIR, stepArg, &stepResultOverride)) {
+        return stepResultOverride;
+    }
 
     m->wall = NULL;
 

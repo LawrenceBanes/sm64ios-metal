@@ -11,7 +11,7 @@ WORKFLOW = ROOT / ".github/workflows/ios-metal-ipa.yml"
 class IOSMetalWorkflowTests(unittest.TestCase):
     def test_mission_branches_are_push_triggered_but_build_jobs_require_marker(self):
         workflow = WORKFLOW.read_text()
-        self.assertIn("branches: [ios, ci/ios-metal-m57-25c, 'mission-*']", workflow)
+        self.assertIn("branches: [ios, ci/ios-metal-m57-25c, 'mission-*', unified-build]", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertGreaterEqual(workflow.count("contains(github.event.head_commit.message, '[build-ipa]')"), 3)
         self.assertNotIn("pull_request:", workflow)

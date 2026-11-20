@@ -26,6 +26,9 @@
 #include "rendering_graph_node.h"
 #include "spawn_object.h"
 #include "spawn_sound.h"
+#ifdef IOS_BUILD
+#include "pc/mods/mod_runtime.h"
+#endif
 
 s8 D_8032F0A0[] = { 0xF8, 0x08, 0xFC, 0x04 };
 s16 D_8032F0A4[] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
@@ -1126,6 +1129,9 @@ void cur_obj_get_dropped(void) {
 
 void cur_obj_set_model(s32 modelID) {
     o->header.gfx.sharedChild = gLoadedGraphNodes[modelID];
+#ifdef IOS_BUILD
+    mod_runtime_object_set_model(o, modelID, mod_runtime_extended_model_id(modelID));
+#endif
 }
 
 void mario_set_flag(s32 flag) {

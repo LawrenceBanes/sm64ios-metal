@@ -1,3 +1,4 @@
+#include "pc/mods/mod_runtime.h"
 #include <PR/ultratypes.h>
 
 #include "sm64.h"
@@ -542,6 +543,7 @@ void stub_obj_list_processor_1(void) {
  * Clear objects, dynamic surfaces, and some miscellaneous level data used by objects.
  */
 void clear_objects(void) {
+    mod_runtime_clear_objects();
     s32 i;
 
     gTHIWaterDrained = 0;

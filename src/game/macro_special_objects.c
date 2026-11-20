@@ -11,6 +11,9 @@
 
 #include "special_presets.h"
 
+const unsigned int gMacroObjectPresetCount =
+    sizeof(MacroObjectPresets) / sizeof(MacroObjectPresets[0]);
+
 /*
  * Converts the rotation value supplied by macro objects into one
  * that can be used by in-game objects.

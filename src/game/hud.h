@@ -23,6 +23,7 @@ enum CameraHUDLut {
 
 // Functions
 void set_hud_camera_status(s16 status);
+s16 get_hud_camera_status(void);
 void render_hud(void);
 
 #endif // HUD_H

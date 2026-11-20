@@ -121,6 +121,7 @@ void obj_apply_scale_to_transform(struct Object *obj);
 void obj_copy_scale(struct Object *dst, struct Object *src);
 void obj_scale_xyz(struct Object* obj, f32 xScale, f32 yScale, f32 zScale);
 void obj_scale(struct Object *obj, f32 scale);
+void obj_scale_xyz(struct Object *obj, f32 xScale, f32 yScale, f32 zScale);
 void cur_obj_scale(f32 scale);
 void cur_obj_init_animation_with_sound(s32 animIndex);
 void cur_obj_init_animation_with_accel_and_sound(s32 animIndex, f32 accel);

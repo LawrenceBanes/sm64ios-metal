@@ -16,6 +16,7 @@
 #include "camera.h"
 #include "level_table.h"
 #include "thread6.h"
+#include "pc/mods/mod_runtime.h"
 
 #define POLE_NONE 0
 #define POLE_TOUCHED_FLOOR 1
@@ -303,6 +304,11 @@ s32 perform_hanging_step(struct MarioState *m, Vec3f nextPos) {
     f32 ceilHeight;
     f32 floorHeight;
     f32 ceilOffset;
+    s32 stepResultOverride;
+
+    if (mod_runtime_before_phys_step(m, MOD_RUNTIME_STEP_TYPE_HANG, 0, &stepResultOverride)) {
+        return stepResultOverride;
+    }
 
     m->wall = resolve_and_return_wall_collisions(nextPos, 50.0f, 50.0f);
     floorHeight = find_floor(nextPos[0], nextPos[1], nextPos[2], &floor);

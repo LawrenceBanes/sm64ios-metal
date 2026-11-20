@@ -465,6 +465,7 @@ u8 sNumSoundsPerBank[SOUND_BANK_COUNT] = {
 #undef BANK27_SIZE
 
 f32 gDefaultSoundArgs[3] = { 0.0f, 0.0f, 0.0f };
+f32 gGlobalSoundSource[3] = { 0.0f, 0.0f, 0.0f };
 f32 sUnusedSoundArgs[3] = { 1.0f, 1.0f, 1.0f };
 u8 sSoundBankDisabled[16] = { 0 };
 u8 D_80332108 = 0;

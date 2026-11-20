@@ -23,6 +23,9 @@
 #include "save_file.h"
 #include "skybox.h"
 #include "sound_init.h"
+#ifdef IOS_BUILD
+#include "pc/mods/mod_runtime.h"
+#endif
 
 #define TOAD_STAR_1_REQUIREMENT 12
 #define TOAD_STAR_2_REQUIREMENT 25
@@ -624,6 +627,11 @@ Gfx *geo_render_mirror_mario(s32 callContext, struct GraphNode *node, UNUSED Mat
                 // gMirrorMario.node.flags &= ~1;
                 ((s16 *) &gMirrorMario)[1] &= ~1;
             }
+#ifdef IOS_BUILD
+            if (gMirrorMario.node.flags & GRAPH_RENDER_ACTIVE) {
+                mod_runtime_mirror_mario_render(&gMirrorMario, 0);
+            }
+#endif
             break;
     }
     return NULL;

@@ -24,6 +24,7 @@
 #include "types.h"
 #include "macros.h"
 #include "pc/cheats.h"
+#include "pc/mods/mod_runtime.h"
 #ifdef BETTERCAMERA
 #include "bettercamera.h"
 #endif
@@ -2636,7 +2637,8 @@ s16 render_pause_courses_and_castle(void) {
             render_pause_red_coins();
             
 /* Added support for the "Exit course at any time" cheat */
-            if ((gMarioStates[0].action & ACT_FLAG_PAUSE_EXIT) || (Cheats.EnableCheats && Cheats.ExitAnywhere)) {
+            if ((gMarioStates[0].action & ACT_FLAG_PAUSE_EXIT) || (Cheats.EnableCheats && Cheats.ExitAnywhere) ||
+                mod_runtime_level_value(MOD_LEVEL_VALUE_PAUSE_EXIT_ANYWHERE)) {
                 render_pause_course_options(99, 93, &gDialogLineNum, 15);
             }
 

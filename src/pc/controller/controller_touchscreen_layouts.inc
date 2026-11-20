@@ -76,6 +76,7 @@ static struct ControlElement ControlElementsDefault[] = {
 {.type = Button, .name = "R", .buttonID = R_TRIG},
 {.type = Button, .name = "Up", .buttonID = U_CBUTTONS},
 {.type = Button, .name = "Down", .buttonID = D_CBUTTONS},
+{.type = Button, .name = "D-pad Down", .buttonID = D_JPAD},
 {.type = Button, .name = "Left", .buttonID = L_CBUTTONS},
 {.type = Button, .name = "Right", .buttonID = R_CBUTTONS}
 };

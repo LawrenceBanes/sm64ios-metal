@@ -155,6 +155,7 @@ static int ios_next_touch_id = 1;
     void (*touch_up_callback)(void* event);
     
     GestureRecognizer *gestureRecognizer;
+    OverlayImageView *dpadDownButton;
 #ifdef IOS_HAT_MOVEMENT
     OverlayImageView *hatButton;
 #endif
@@ -167,7 +168,7 @@ static int ios_next_touch_id = 1;
     if (CGRectEqualToRect(lastLoggedBounds, self.view.bounds)) return;
     lastLoggedBounds = self.view.bounds;
     gfx_ios_diag_log("UIKit touch layout bounds=(%.1f,%.1f %.1fx%.1f) frame=(%.1f,%.1f %.1fx%.1f) window=%@ scene=%@ interaction=%d", self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view.frame.origin.x, self.view.frame.origin.y, self.view.frame.size.width, self.view.frame.size.height, self.view.window, self.view.window.windowScene.session.persistentIdentifier, self.view.userInteractionEnabled);
-    OverlayImageView *controls[] = { self.m_iv_l, self.m_iv_r, self.m_iv_a, self.m_iv_b, self.m_iv_z, self.m_iv_up, self.m_iv_down, self.m_iv_left, self.m_iv_right, self.m_iv_start, self.m_iv_menu, self.m_iv_joystick, self.m_iv_joystick_bg };
+    OverlayImageView *controls[] = { self.m_iv_l, self.m_iv_r, self.m_iv_a, self.m_iv_b, self.m_iv_z, self.m_iv_up, self.m_iv_down, self.m_iv_left, self.m_iv_right, self.m_iv_start, self.m_iv_menu, self.m_iv_joystick, self.m_iv_joystick_bg, dpadDownButton };
     for (NSUInteger i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
         OverlayImageView *control = controls[i];
         if (!control) continue;
@@ -201,6 +202,23 @@ static int ios_next_touch_id = 1;
     self.m_group_startmenu.transform = CGAffineTransformMakeScale(scale, scale);
     self.m_group_main.transform = CGAffineTransformMakeScale(scale, scale);
     self.m_group_cbuttons.transform = CGAffineTransformMakeScale(scale, scale);
+
+    // CoopDX possession and other mods use the N64 d-pad independently of
+    // the C buttons. Place a dedicated down control above the left stick.
+    dpadDownButton = [[[OverlayImageView alloc] initWithFrame:CGRectMake(80, -60, 56, 56)] autorelease];
+    dpadDownButton.image = [UIImage imageNamed:@"touch_button"];
+    dpadDownButton.buttonTag = D_JPAD;
+    dpadDownButton.accessibilityLabel = @"D-pad down";
+    dpadDownButton.isAccessibilityElement = YES;
+    [self.m_group_joystick addSubview:dpadDownButton];
+
+    UILabel *dpadLabel = [[[UILabel alloc] initWithFrame:dpadDownButton.bounds] autorelease];
+    dpadLabel.text = @"D↓";
+    dpadLabel.textColor = [UIColor whiteColor];
+    dpadLabel.font = [UIFont boldSystemFontOfSize:16.0];
+    dpadLabel.textAlignment = NSTextAlignmentCenter;
+    dpadLabel.userInteractionEnabled = NO;
+    [dpadDownButton addSubview:dpadLabel];
     
 #ifdef IOS_HAT_MOVEMENT
     // The lower left slot in the A/B/Z cluster is unused.
@@ -252,6 +270,7 @@ static int ios_next_touch_id = 1;
     [imageViews addObject:self.m_iv_menu];
     [imageViews addObject:self.m_iv_joystick];
     [imageViews addObject:self.m_iv_joystick_bg];
+    [imageViews addObject:dpadDownButton];
     touchscreen_set_imageviews(imageViews);
 }
 

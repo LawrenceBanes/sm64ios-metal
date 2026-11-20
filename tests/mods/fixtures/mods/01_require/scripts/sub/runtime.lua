@@ -1,0 +1,1 @@
+return { lifeBonus = 100 }

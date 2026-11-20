@@ -5,6 +5,7 @@
 #include "game/level_update.h"
 #include "game/mario.h"
 #include "game/object_list_processor.h"
+#include "pc/mods/mod_runtime.h"
 #include "surface_collision.h"
 #include "surface_load.h"
 #include "math_util.h"
@@ -129,7 +130,8 @@ static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
             }
 
             // If an object can pass through a vanish cap wall, pass through.
-            if (surf->type == SURFACE_VANISH_CAP_WALLS) {
+            if (mod_runtime_level_value(MOD_LEVEL_VALUE_FIX_VANISH_FLOORS) &&
+                surf->type == SURFACE_VANISH_CAP_WALLS) {
                 // If an object can pass through a vanish cap wall, pass through.
                 if (gCurrentObject != NULL
                     && (gCurrentObject->activeFlags & ACTIVE_FLAG_MOVE_THROUGH_GRATE)) {
@@ -937,7 +939,8 @@ void find_surface_on_ray_cell(s16 cellX, s16 cellZ, Vec3f orig, Vec3f normalized
 	}
 }
 
-void find_surface_on_ray(Vec3f orig, Vec3f dir, struct Surface **hit_surface, Vec3f hit_pos)
+void find_surface_on_ray_with_precision(Vec3f orig, Vec3f dir, struct Surface **hit_surface,
+                                        Vec3f hit_pos, f32 precision)
 {
     f32 max_length;
     s16 cellZ, cellX;
@@ -954,6 +957,7 @@ void find_surface_on_ray(Vec3f orig, Vec3f dir, struct Surface **hit_surface, Ve
     // Get normalized direction
     dir_length = vec3f_length(dir);
     max_length = dir_length;
+    if (dir_length <= 0.00001f) return;
     vec3f_copy(normalized_dir, dir);
     vec3f_normalize(normalized_dir);
     
@@ -969,9 +973,6 @@ void find_surface_on_ray(Vec3f orig, Vec3f dir, struct Surface **hit_surface, Ve
 		find_surface_on_ray_cell(cellX, cellZ, orig, normalized_dir, dir_length, hit_surface, hit_pos, &max_length);
 		return;
 	}
-
-    // increase collision checking precision (normally 1)
-    f32 precision = gCheckingSurfaceCollisionsForCamera ? 3 : 1;
 
     // Get cells we cross using DDA
     if (absx(dir[0]) >= absx(dir[2]))
@@ -992,4 +993,10 @@ void find_surface_on_ray(Vec3f orig, Vec3f dir, struct Surface **hit_surface, Ve
         cellX = (s16)fCellX;
         cellZ = (s16)fCellZ;
     }
+}
+
+void find_surface_on_ray(Vec3f orig, Vec3f dir, struct Surface **hit_surface, Vec3f hit_pos)
+{
+    find_surface_on_ray_with_precision(orig, dir, hit_surface, hit_pos,
+                                       gCheckingSurfaceCollisionsForCamera ? 3.0f : 1.0f);
 }

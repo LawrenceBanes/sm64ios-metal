@@ -29,6 +29,7 @@
 #include "engine/graph_node.h"
 #include "level_table.h"
 #include "pc/configfile.h"
+#include "pc/mods/mod_runtime.h"
 
 #define CBUTTON_MASK (U_CBUTTONS | D_CBUTTONS | L_CBUTTONS | R_CBUTTONS)
 
@@ -2854,6 +2855,7 @@ void transition_to_camera_mode(struct Camera *c, s16 newMode, s16 numFrames) {
  * @param frames number of frames the transition should last, only used when entering C_UP
  */
 void set_camera_mode(struct Camera *c, s16 mode, s16 frames) {
+    if (!mod_runtime_on_set_camera_mode(c, mode, frames)) return;
     struct LinearTransitionPoint *start = &sModeInfo.transitionStart;
     struct LinearTransitionPoint *end = &sModeInfo.transitionEnd;
 
@@ -3035,10 +3037,10 @@ void update_camera(struct Camera *c) {
 #endif
             ) {
             if (gPlayer1Controller->buttonPressed & R_TRIG) {
-                if (set_cam_angle(0) == CAM_ANGLE_LAKITU) {
-                    set_cam_angle(CAM_ANGLE_MARIO);
-                } else {
-                    set_cam_angle(CAM_ANGLE_LAKITU);
+                s32 targetAngle = set_cam_angle(0) == CAM_ANGLE_LAKITU
+                    ? CAM_ANGLE_MARIO : CAM_ANGLE_LAKITU;
+                if (mod_runtime_allow_camera_angle(targetAngle)) {
+                    set_cam_angle(targetAngle);
                 }
             }
         }

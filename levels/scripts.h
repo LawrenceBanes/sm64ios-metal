@@ -5,6 +5,7 @@
 
 // scripts
 extern const LevelScript level_main_scripts_entry[];
+const LevelScript *level_script_for_mod_api(s16 levelNum);
 extern const LevelScript script_func_global_1[];
 extern const LevelScript script_func_global_2[];
 extern const LevelScript script_func_global_3[];

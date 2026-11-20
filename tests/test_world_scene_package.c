@@ -2,12 +2,29 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "src/pc/gfx/gfx_pc.c"
+#include "pc/mods/mod_runtime.h"
 #include "engine/surface_collision.h"
 #include "engine/surface_load.h"
 #include "game/area.h"
 #include "game/object_list_processor.h"
 #include "pc/gfx/gfx_metal_shader.h"
 #include "level_table.h"
+
+/* This focused package replay excludes Lua and DynOS startup while compiling
+ * shared renderer/collision sources, so keep the mod hooks inert here. */
+int32_t mod_runtime_level_value(ModRuntimeLevelValue value) {
+    (void)value;
+    return 0;
+}
+
+bool mod_runtime_dynamic_texture_lookup(const char *key, const uint8_t **rgba,
+                                        uint32_t *width, uint32_t *height) {
+    (void)key;
+    (void)rgba;
+    (void)width;
+    (void)height;
+    return false;
+}
 
 SpatialPartitionCell gStaticSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];
 SpatialPartitionCell gDynamicSurfacePartition[SURFACE_PARTITION_DIM][SURFACE_PARTITION_DIM];

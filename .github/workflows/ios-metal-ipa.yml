@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ios, ci/ios-metal-m57-25c, 'mission-*']
+    branches: [ios, ci/ios-metal-m57-25c, 'mission-*', unified-build]
   workflow_dispatch:
     inputs:
       full_game:
@@ -10,6 +10,11 @@ on:
         type: boolean
         required: true
         default: true
+      compile_only:
+        description: Compile the full app for iPhoneOS arm64 without IPA packaging or upload
+        type: boolean
+        required: false
+        default: false
       asset_bundle_release_tag:
         description: Draft asset release in the private vault; blank uses the configured current tag
         type: string
@@ -62,10 +67,11 @@ jobs:
           tests/check_metal_project_wiring.sh
       - name: Validate Python tools and shell scripts
         run: |
-          python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/stage_ios_runtime.py ios/validate_ipa.py ios/ci_summarize_build_log.py
+          python3 -m py_compile tools/hyrule_importer.py ios/asset_bundle.py ios/asset_checksum.py ios/package_unsigned_ipa.py ios/stage_ios_runtime.py ios/validate_ipa.py ios/validate_app_identity.py ios/ci_summarize_build_log.py
           bash -n ios/build_sdl2_ios.sh ios/build_ios_metal_ci.sh ios/github_api.sh
           python3 -m unittest discover -s ios -p 'test_ci_summarize_build_log.py'
           python3 -m unittest discover -s ios -p 'test_ipa_validation.py'
+          python3 -m unittest discover -s ios -p 'test_app_identity.py'
           python3 -m unittest discover -s ios -p 'test_stage_ios_runtime.py'
           python3 -m unittest discover -s ios -p 'test_github_api.py'
           python3 -m unittest discover -s ios -p 'test_ios_metal_workflow.py'
@@ -94,10 +100,19 @@ jobs:
         shell: bash
         run: bash ios/build_ios_metal_ci.sh validate
 
+      - name: Compile full app for iPhoneOS arm64 without packaging
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.compile_only) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/metal-validation/')) }}
+        shell: bash
+        env:
+          SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
+          SM64_PRIVATE_BUILD_GH_TOKEN: ${{ secrets.SM64_PRIVATE_BUILD_GH_TOKEN }}
+          ASSET_BUNDLE_RELEASE_TAG: ${{ inputs.asset_bundle_release_tag || vars.SM64_ASSET_BUNDLE_RELEASE_TAG }}
+        run: bash ios/build_ios_metal_ci.sh compile
+
       - name: Create scoped private-vault GitHub App token
         id: private-vault-token
         if: >-
-          (inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]'))) &&
+          (inputs.full_game || inputs.compile_only || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]'))) &&
           vars.SM64_PRIVATE_BUILD_USE_GITHUB_APP == 'true'
         uses: actions/create-github-app-token@v3
         with:
@@ -108,7 +123,7 @@ jobs:
           permission-contents: write
 
       - name: Build complete app, package IPA, and upload only to private vault
-        if: ${{ inputs.full_game || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]') && !startsWith(github.ref, 'refs/heads/metal-validation/')) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
