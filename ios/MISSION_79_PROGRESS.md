@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit before the next AO-tuning checkpoint: `d3c6860b` (independent color adjustments); Apple Metal SDK and Linux validation passed in [run 44709405325](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709405325). MSAA-control validation passed in [run 44708618479](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44708618479); Bloom validation passed in [run 44708420275](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44708420275).
+- Current pushed source commit: `dd3d5894` (per-parameter AO tuning); Apple Metal SDK validation and CI Linux suite passed in [run 44709773683](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709773683). A full private IPA workflow for this exact source is running as [44709981511](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709981511).
 - Full IPA workflow [44707824529](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707824529) succeeded for source `6866de41`, including HUD isolation and shadow-map reuse; it predates the adjustable Bloom UI and following controls.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
@@ -33,10 +33,10 @@
 - Added bounded, finite-checked brightness, contrast, saturation, and temperature adjustments, composited with the existing grade presets and persisted independently. The color menu exposes each adjustment and a reset action; Classic/reset restore neutral values.
 - Focused state/source tests, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple SDK/MSL validation passed in [run 44709405325](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709405325). Appearance is still unverified on physical hardware.
 
-## M79-B individual AO tuning (working tree)
+## M79-B individual AO tuning (`dd3d5894`)
 
 - Added persistent, bounded radius, bias, and intensity adjustments layered on the Low / Standard / High sample profiles. The AO menu exposes profile selection, each parameter, and reset; presets and Classic restore neutral tuning.
-- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple Metal SDK validation is pending for these controls. AO remains visually unverified on physical hardware.
+- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple Metal SDK validation and CI Linux suite passed in [run 44709773683](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709773683). AO remains visually unverified on physical hardware.
 
 ## Milestones
 
@@ -162,4 +162,4 @@
 
 The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Next: commit/push individual AO tuning and run Apple validation, then package a fresh private IPA with HUD isolation, Bloom profiles, color adjustments, and AO controls. Continue remaining rendering controls and reliability work afterward; physical-device image and timing review remains required.
+Next: monitor the full IPA workflow for `dd3d5894`, verify its private artifact, then continue implementing the remaining renderer controls and reliability items. Physical-device image and timing review remains required.
