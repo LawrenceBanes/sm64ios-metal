@@ -1476,7 +1476,7 @@ bool gfx_metal_load_shader64_library(const char *pack_id, const void *library_by
         return false;
     }
     dispatch_data_t bytes = dispatch_data_create(library_bytes, library_size,
-        DISPATCH_TARGET_QUEUE_DEFAULT, DISPATCH_DATA_DESTRUCTOR_NONE);
+        DISPATCH_TARGET_QUEUE_DEFAULT, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
     if (!bytes) {
         if (error_out && error_size) snprintf(error_out, error_size, "could not create Metal library data handle");
         return false;
