@@ -1,6 +1,7 @@
 #include "pc/gfx/gfx_metal_state.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,6 +13,25 @@ int main(void) {
     assert(bloom_low.threshold > bloom_standard.threshold && bloom_standard.threshold > bloom_high.threshold);
     assert(bloom_low.intensity < bloom_standard.intensity && bloom_standard.intensity < bloom_high.intensity);
     assert(bloom_invalid.threshold == bloom_standard.threshold && bloom_invalid.intensity == bloom_standard.intensity);
+    struct GfxMetalColorAdjustments color = gfx_metal_color_adjustments_default();
+    assert(color.brightness == 0.0f && color.contrast == 1.0f &&
+           color.saturation == 1.0f && color.temperature == 0.0f);
+    color = gfx_metal_color_adjustments_step(color, GFX_METAL_COLOR_BRIGHTNESS, 1);
+    assert(color.brightness > 0.049f && color.brightness < 0.051f);
+    color = gfx_metal_color_adjustments_step(color, GFX_METAL_COLOR_CONTRAST, -1);
+    assert(color.contrast > 0.899f && color.contrast < 0.901f);
+    color = gfx_metal_color_adjustments_step(color, GFX_METAL_COLOR_SATURATION, 1);
+    assert(color.saturation > 1.099f && color.saturation < 1.101f);
+    color = gfx_metal_color_adjustments_step(color, GFX_METAL_COLOR_TEMPERATURE, -1);
+    assert(color.temperature < -0.024f && color.temperature > -0.026f);
+    color = gfx_metal_color_adjustments_sanitize((struct GfxMetalColorAdjustments){
+        9.0f, -1.0f, 8.0f, -9.0f });
+    assert(color.brightness == 0.25f && color.contrast == 0.5f &&
+           color.saturation == 1.5f && color.temperature == -0.1f);
+    color = gfx_metal_color_adjustments_sanitize((struct GfxMetalColorAdjustments){
+        NAN, INFINITY, -INFINITY, NAN });
+    assert(color.brightness == 0.0f && color.contrast == 1.0f &&
+           color.saturation == 1.0f && color.temperature == 0.0f);
     assert(gfx_metal_sampler_address_mode(0) == GFX_SAMPLER_REPEAT);
     assert(gfx_metal_sampler_address_mode(0x1u) == GFX_SAMPLER_MIRROR);
     assert(gfx_metal_sampler_address_mode(0x2u) == GFX_SAMPLER_CLAMP);

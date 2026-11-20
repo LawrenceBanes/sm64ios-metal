@@ -1,5 +1,7 @@
 #include "gfx_metal_state.h"
 
+#include <math.h>
+
 enum GfxSamplerAddressMode gfx_metal_sampler_address_mode(uint32_t n64_mode) {
     /* These are the G_TX_CLAMP and G_TX_MIRROR bits from PR/gbi.h. */
     if (n64_mode & 0x2u) return GFX_SAMPLER_CLAMP;
@@ -134,4 +136,38 @@ struct GfxMetalBloomSettings gfx_metal_bloom_settings(uint32_t profile) {
     };
     if (profile > 2u) profile = 1u;
     return profiles[profile];
+}
+
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_default(void) {
+    return (struct GfxMetalColorAdjustments){ 0.0f, 1.0f, 1.0f, 0.0f };
+}
+
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_sanitize(
+    struct GfxMetalColorAdjustments adjustments) {
+    if (!isfinite(adjustments.brightness)) adjustments.brightness = 0.0f;
+    if (!isfinite(adjustments.contrast)) adjustments.contrast = 1.0f;
+    if (!isfinite(adjustments.saturation)) adjustments.saturation = 1.0f;
+    if (!isfinite(adjustments.temperature)) adjustments.temperature = 0.0f;
+    if (adjustments.brightness < -0.25f) adjustments.brightness = -0.25f;
+    if (adjustments.brightness > 0.25f) adjustments.brightness = 0.25f;
+    if (adjustments.contrast < 0.5f) adjustments.contrast = 0.5f;
+    if (adjustments.contrast > 1.5f) adjustments.contrast = 1.5f;
+    if (adjustments.saturation < 0.0f) adjustments.saturation = 0.0f;
+    if (adjustments.saturation > 1.5f) adjustments.saturation = 1.5f;
+    if (adjustments.temperature < -0.1f) adjustments.temperature = -0.1f;
+    if (adjustments.temperature > 0.1f) adjustments.temperature = 0.1f;
+    return adjustments;
+}
+
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_step(
+    struct GfxMetalColorAdjustments adjustments, uint32_t parameter, int direction) {
+    float step = direction < 0 ? -1.0f : 1.0f;
+    switch (parameter) {
+        case GFX_METAL_COLOR_BRIGHTNESS: adjustments.brightness += step * 0.05f; break;
+        case GFX_METAL_COLOR_CONTRAST: adjustments.contrast += step * 0.10f; break;
+        case GFX_METAL_COLOR_SATURATION: adjustments.saturation += step * 0.10f; break;
+        case GFX_METAL_COLOR_TEMPERATURE: adjustments.temperature += step * 0.025f; break;
+        default: return gfx_metal_color_adjustments_sanitize(adjustments);
+    }
+    return gfx_metal_color_adjustments_sanitize(adjustments);
 }

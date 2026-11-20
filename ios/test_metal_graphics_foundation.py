@@ -51,6 +51,8 @@ def main() -> None:
         "gfx_metal_enhanced_settings()", "classic_only", "no_4x",
         "gfx_metal_target_size(2796, 1290, 75", "gfx_metal_pipeline_cache_index(4, 15) == 47",
         "gfx_metal_bloom_settings(0u)", "bloom_low.threshold > bloom_standard.threshold",
+        "gfx_metal_color_adjustments_default", "gfx_metal_color_adjustments_sanitize",
+        "gfx_metal_color_adjustments_step", "GFX_METAL_COLOR_TEMPERATURE",
     ):
         require(token in state_test, f"missing host regression case: {token}")
     for token in (
@@ -179,7 +181,10 @@ def main() -> None:
             "CPU timing must cover the game tick separately from Metal GPU timing")
     for token in (
         "SM64MetalColorGrade", "gfx_metal_cycle_color_grade",
-        "gfx_metal_set_color_grade", "grade_style", "Grade: %@",
+        "gfx_metal_set_color_grade", "grade_style", "Color: %@",
+        "gfx_metal_get_color_adjustments", "gfx_metal_adjust_color", "gfx_metal_reset_color_adjustments",
+        "SM64MetalBrightness", "SM64MetalContrast", "SM64MetalSaturation", "SM64MetalTemperature",
+        "Color Grading", "static NSString *const labels[] = { @\"Brightness\", @\"Contrast\", @\"Saturation\", @\"Temperature\" }",
         "gradeStyle [[buffer(5)]]", "gradeStyle.x", "gradeStyle.y",
     ):
         require(token in metal + metal_h + shader_c + uikit,

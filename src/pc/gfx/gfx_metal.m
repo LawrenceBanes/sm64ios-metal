@@ -109,6 +109,7 @@ static bool metal_fxaa_enabled;
 static bool metal_effects_enabled;
 static float metal_exposure_stops;
 static uint32_t metal_color_grade;
+static struct GfxMetalColorAdjustments metal_color_adjustments = { 0.0f, 1.0f, 1.0f, 0.0f };
 static bool metal_fog_is_enabled;
 static uint32_t metal_fog_profile;
 static uint32_t metal_sky_preset;
@@ -301,6 +302,12 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_sun_intensity = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunIntensity"]));
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
+    metal_color_adjustments = gfx_metal_color_adjustments_sanitize((struct GfxMetalColorAdjustments){
+        (float)[defaults doubleForKey:@"SM64MetalBrightness"],
+        [defaults objectForKey:@"SM64MetalContrast"] ? (float)[defaults doubleForKey:@"SM64MetalContrast"] : 1.0f,
+        [defaults objectForKey:@"SM64MetalSaturation"] ? (float)[defaults doubleForKey:@"SM64MetalSaturation"] : 1.0f,
+        (float)[defaults doubleForKey:@"SM64MetalTemperature"]
+    });
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
     metal_fog_profile = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalFogProfile"]));
     metal_sky_preset = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSkyPreset"]));
@@ -516,6 +523,33 @@ void gfx_metal_cycle_color_grade(void) {
 void gfx_metal_set_color_grade(uint32_t grade) {
     @synchronized ([NSObject class]) { metal_color_grade = MIN(grade, 3u); metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_color_grade forKey:@"SM64MetalColorGrade"];
+}
+struct GfxMetalColorAdjustments gfx_metal_get_color_adjustments(void) {
+    @synchronized ([NSObject class]) { return metal_color_adjustments; }
+}
+void gfx_metal_adjust_color(uint32_t parameter, int direction) {
+    struct GfxMetalColorAdjustments value;
+    @synchronized ([NSObject class]) {
+        metal_color_adjustments = gfx_metal_color_adjustments_step(metal_color_adjustments, parameter, direction);
+        metal_offscreen_runtime_failed = false;
+        value = metal_color_adjustments;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value.brightness forKey:@"SM64MetalBrightness"];
+    [defaults setDouble:value.contrast forKey:@"SM64MetalContrast"];
+    [defaults setDouble:value.saturation forKey:@"SM64MetalSaturation"];
+    [defaults setDouble:value.temperature forKey:@"SM64MetalTemperature"];
+}
+void gfx_metal_reset_color_adjustments(void) {
+    @synchronized ([NSObject class]) {
+        metal_color_adjustments = gfx_metal_color_adjustments_default();
+        metal_offscreen_runtime_failed = false;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:0.0 forKey:@"SM64MetalBrightness"];
+    [defaults setDouble:1.0 forKey:@"SM64MetalContrast"];
+    [defaults setDouble:1.0 forKey:@"SM64MetalSaturation"];
+    [defaults setDouble:0.0 forKey:@"SM64MetalTemperature"];
 }
 bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_fog_is_enabled; } }
 void gfx_metal_set_fog_enabled(bool enabled) {
@@ -1502,6 +1536,12 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         { 1.08f, 1.12f, 0.015f, -0.015f } /* cinematic */
     };
     vector_float4 grade_style = grades[gfx_metal_color_grade() % 4u];
+    struct GfxMetalColorAdjustments color_adjustments = gfx_metal_effects_enabled() ?
+        gfx_metal_get_color_adjustments() : gfx_metal_color_adjustments_default();
+    grade_style.x *= color_adjustments.saturation;
+    grade_style.y *= color_adjustments.contrast;
+    grade_style.z += color_adjustments.temperature;
+    grade_style.w += color_adjustments.brightness;
     vector_float4 sky_params = { (float)gfx_metal_sky_preset(), 0.0f, -2.0f, -2.0f };
     if (gfx_metal_sky_preset() != 0u) {
         struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();

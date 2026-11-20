@@ -48,6 +48,20 @@ struct GfxMetalBloomSettings {
     float intensity;
 };
 
+enum GfxMetalColorParameter {
+    GFX_METAL_COLOR_BRIGHTNESS = 0,
+    GFX_METAL_COLOR_CONTRAST = 1,
+    GFX_METAL_COLOR_SATURATION = 2,
+    GFX_METAL_COLOR_TEMPERATURE = 3,
+};
+
+struct GfxMetalColorAdjustments {
+    float brightness;
+    float contrast;
+    float saturation;
+    float temperature;
+};
+
 struct GfxMetalPerformanceStats {
     double cpu_frame_ms;
     double gpu_frame_ms;
@@ -88,5 +102,10 @@ bool gfx_metal_target_size(uint32_t drawable_width, uint32_t drawable_height,
 uint32_t gfx_metal_pipeline_cache_index(uint32_t sample_count,
                                         uint32_t render_state_key);
 struct GfxMetalBloomSettings gfx_metal_bloom_settings(uint32_t profile);
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_default(void);
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_sanitize(
+    struct GfxMetalColorAdjustments adjustments);
+struct GfxMetalColorAdjustments gfx_metal_color_adjustments_step(
+    struct GfxMetalColorAdjustments adjustments, uint32_t parameter, int direction);
 
 #endif

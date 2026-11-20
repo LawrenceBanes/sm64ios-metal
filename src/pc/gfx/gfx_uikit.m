@@ -104,6 +104,7 @@ static int sm64RenderDiagnosticMode;
 - (void)stepExposure;
 - (void)toggleFog;
 - (void)toggleBloom;
+- (void)openColorSettings;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -599,7 +600,7 @@ static int sm64RenderDiagnosticMode;
     self.bloomButton = [self buttonWithTitle:@"Bloom: Off" action:@selector(toggleBloom)];
     self.bloomButton.frame = CGRectMake(14, 278, 92, 30);
     [self.graphicsPanel addSubview:self.bloomButton];
-    self.gradeButton = [self buttonWithTitle:@"Grade: Neutral" action:@selector(cycleColorGrade)];
+    self.gradeButton = [self buttonWithTitle:@"Color: Neutral" action:@selector(openColorSettings)];
     self.gradeButton.frame = CGRectMake(112, 278, 120, 30);
     [self.graphicsPanel addSubview:self.gradeButton];
     self.fogProfileButton = [self buttonWithTitle:@"Fog: Standard" action:@selector(cycleFogProfile)];
@@ -752,7 +753,7 @@ static int sm64RenderDiagnosticMode;
         gfx_metal_bloom_enabled() ? @"On" : @"Off",
         bloom_names[MIN(gfx_metal_bloom_profile(), 2u)]] forState:UIControlStateNormal];
     static NSString *const grade_names[] = { @"Neutral", @"Warm", @"Vivid", @"Cinematic" };
-    [self.gradeButton setTitle:[NSString stringWithFormat:@"Grade: %@", grade_names[MIN(gfx_metal_color_grade(), 3u)]]
+    [self.gradeButton setTitle:[NSString stringWithFormat:@"Color: %@", grade_names[MIN(gfx_metal_color_grade(), 3u)]]
                        forState:UIControlStateNormal];
     static NSString *const fog_names[] = { @"Standard", @"Light", @"Dense", @"Extended" };
     [self.fogProfileButton setTitle:[NSString stringWithFormat:@"Fog range: %@", fog_names[MIN(gfx_metal_fog_profile(), 3u)]]
@@ -884,6 +885,37 @@ static int sm64RenderDiagnosticMode;
 #endif
 }
 
+- (void)openColorSettings {
+#if defined(RAPI_METAL)
+    struct GfxMetalColorAdjustments value = gfx_metal_get_color_adjustments();
+    NSString *message = [NSString stringWithFormat:
+        @"Brightness %+.2f  Contrast %.2f  Saturation %.2f  Temperature %+.2f\nPreset: %@",
+        value.brightness, value.contrast, value.saturation, value.temperature,
+        @[ @"Neutral", @"Warm", @"Vivid", @"Cinematic" ][MIN(gfx_metal_color_grade(), 3u)]];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Color Grading"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cycle grade preset" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_cycle_color_grade(); [self refreshGraphicsSettings]; }]];
+    static NSString *const labels[] = { @"Brightness", @"Contrast", @"Saturation", @"Temperature" };
+    for (uint32_t parameter = 0; parameter < 4u; ++parameter) {
+        for (int direction = -1; direction <= 1; direction += 2) {
+            uint32_t selected_parameter = parameter;
+            int selected_direction = direction;
+            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ %@",
+                labels[parameter], direction < 0 ? @"−" : @"+"] style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction *action) {
+                    gfx_metal_adjust_color(selected_parameter, selected_direction);
+                    [self refreshGraphicsSettings];
+                }]];
+        }
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reset adjustments" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { gfx_metal_reset_color_adjustments(); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+#endif
+}
+
 - (void)cycleFogProfile {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_fog_profile();
@@ -940,6 +972,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_fog_enabled(false);
             gfx_metal_set_fog_profile(0u);
             gfx_metal_set_color_grade(0u);
+            gfx_metal_reset_color_adjustments();
             gfx_metal_set_sky_preset(0u);
             gfx_metal_set_shadows_enabled(false);
             gfx_metal_set_god_rays_enabled(false);
@@ -1039,6 +1072,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_bloom_enabled(false);
     gfx_metal_set_bloom_profile(1u);
     gfx_metal_set_color_grade(0u);
+    gfx_metal_reset_color_adjustments();
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);
     gfx_metal_set_sky_preset(0u);
