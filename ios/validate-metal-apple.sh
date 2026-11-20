@@ -175,8 +175,7 @@ depth_wrapper_tool="$output_dir/shader64-wrap-depth"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_depth_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$depth_wrapper_tool"
-for depth_source in "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal \
-                    "$repo_dir"/ios/shaderpacks/NormalDebug64/shaders/*.metal; do
+for depth_source in "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal; do
     pack=$(basename "$(dirname "$(dirname "$depth_source")")")
     name="shader64-$pack-scene-depth"
     "$depth_wrapper_tool" "$depth_source" > "$shader_dir/$name.metal"
@@ -184,6 +183,18 @@ for depth_source in "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal \
     xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
     echo "compiled and linked SHADER64 $pack scene-depth reference"
 done
+
+normal_wrapper_tool="$output_dir/shader64-wrap-normals"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_normals_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$normal_wrapper_tool"
+normal_source="$repo_dir/ios/shaderpacks/NormalDebug64/shaders/normals.metal"
+"$normal_wrapper_tool" "$normal_source" > "$shader_dir/shader64-normal-debug.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-normal-debug.metal" \
+    -o "$shader_dir/shader64-normal-debug.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-normal-debug.air" \
+    -o "$shader_dir/shader64-normal-debug.metallib"
+echo "compiled and linked SHADER64 native scene-normal debug pass"
 
 echo "Compiling the SHADER64 precompiled-library ABI example for iPhoneOS."
 xcrun --sdk iphoneos metal -c "$repo_dir/ios/shaderpacks/examples/compiled_postprocess.metal" \

@@ -57,9 +57,15 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_depth_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_depth_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_normals_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_normals_pass_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_depth_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_depth_pass_wrapper.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_normals_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_normals_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_lit_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_lit_pass_source.restype = ctypes.c_int
@@ -217,6 +223,22 @@ class ShaderPackTests(unittest.TestCase):
         self.assertFalse(self.api.gfx_shader64_validate_depth_pass_source(
             invalid, len(invalid), error, len(error)))
 
+    def test_scene_normal_pass_contract_and_wrapper(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_pass_normals(float4 color, float2 uv, texture2d<float> image, '
+                  b'sampler imageSampler, texture2d<float> sceneNormals, sampler normalSampler, '
+                  b'constant float4 &params) { return sceneNormals.sample(normalSampler,uv); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_normals_pass_source(
+            source, len(source), error, len(error)), error.value)
+        wrapper = ctypes.create_string_buffer(len(source) + 2048)
+        self.assertTrue(self.api.gfx_shader64_build_normals_pass_wrapper(
+            source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"sceneNormals [[texture(1)]]", wrapper.value)
+        invalid = source.replace(b"sceneNormals", b"fakeNormals")
+        self.assertFalse(self.api.gfx_shader64_validate_normals_pass_source(
+            invalid, len(invalid), error, len(error)))
+
     def test_directional_light_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
                   b'float4 shader64_pass_lit(float4 color, float2 uv, texture2d<float> image, '
@@ -310,12 +332,16 @@ class ShaderPackTests(unittest.TestCase):
             self.GraphPass(b"textured", b"sceneColor", b"present", 1.0, 1, 8))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             texture_resource, 1, 1920, 1080, order, error, len(error)), error.value)
+        normals_resource = (self.GraphPass * 1)(
+            self.GraphPass(b"normals", b"sceneColor", b"present", 1.0, 1, 16))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            normals_resource, 1, 1920, 1080, order, error, len(error)), error.value)
         conflicting_resources = (self.GraphPass * 1)(
             self.GraphPass(b"invalid", b"sceneColor", b"present", 1.0, 1, 9))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             conflicting_resources, 1, 1920, 1080, order, error, len(error)))
         invalid_resource = (self.GraphPass * 1)(
-            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 16))
+            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 17))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resource, 1, 1920, 1080, order, error, len(error)))
         oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
@@ -382,10 +408,12 @@ class ShaderPackTests(unittest.TestCase):
                         source, len(source), error, len(error)), f"{pack_id}: {error.value!r}")
                 else:
                     depth_pass = bool(definition.get("sceneDepth"))
+                    normals_pass = bool(definition.get("sceneNormals"))
                     lighting_pass = bool(definition.get("sceneLighting"))
                     shadow_pass = bool(definition.get("sceneShadows"))
                     texture_pass = bool(definition.get("packTextures"))
                     validator = (self.api.gfx_shader64_validate_textured_pass_source if texture_pass else
+                                 self.api.gfx_shader64_validate_normals_pass_source if normals_pass else
                                  self.api.gfx_shader64_validate_shadow_pass_source if shadow_pass else
                                  self.api.gfx_shader64_validate_lit_pass_source if lighting_pass else
                                  self.api.gfx_shader64_validate_depth_pass_source if depth_pass else
@@ -394,6 +422,7 @@ class ShaderPackTests(unittest.TestCase):
                                     f"{pack_id}: {error.value!r}")
                     wrapper = ctypes.create_string_buffer(len(source) + 2048)
                     builder = (self.api.gfx_shader64_build_textured_pass_wrapper if texture_pass else
+                               self.api.gfx_shader64_build_normals_pass_wrapper if normals_pass else
                                self.api.gfx_shader64_build_shadow_pass_wrapper if shadow_pass else
                                self.api.gfx_shader64_build_lit_pass_wrapper if lighting_pass else
                                self.api.gfx_shader64_build_depth_pass_wrapper if depth_pass else
@@ -410,6 +439,7 @@ class ShaderPackTests(unittest.TestCase):
                                    (1 if p.get("sceneDepth") else 0) |
                                    (2 if p.get("sceneLighting") else 0) |
                                    (4 if p.get("sceneShadows") else 0) |
+                                   (16 if p.get("sceneNormals") else 0) |
                                    (8 if p.get("packTextures") else 0)) for p in definitions])
                 order = (ctypes.c_ubyte * 4)()
                 self.assertTrue(self.api.gfx_shader64_validate_graph(

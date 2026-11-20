@@ -85,6 +85,16 @@ const char *gfx_metal_ssao_shader_source(void) {
         " filteredAO.write(float4(filtered),tid); }\n";
 }
 
+const char *gfx_metal_scene_normals_shader_source(void) {
+    return
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "inline float3 sm64_normal_view_position(float2 uv, float depth, constant float4x4 &invP) { float4 clip=float4(uv.x*2.0-1.0,1.0-uv.y*2.0,depth*2.0-1.0,1.0); float4 p=invP*clip; return p.xyz/(abs(p.w)>1.0e-6?p.w:1.0e-6); }\n"
+        "kernel void sm64_scene_normals(depth2d<float,access::read> depthTex [[texture(0)]], texture2d<float,access::write> normalTex [[texture(1)]], constant float4x4 &inverseProjection [[buffer(0)]], uint2 tid [[thread_position_in_grid]]) {\n"
+        " if(tid.x>=normalTex.get_width()||tid.y>=normalTex.get_height()) return; uint2 size=uint2(depthTex.get_width(),depthTex.get_height()); uint2 p=min(tid*2u+1u,size-1u); float d=depthTex.read(p); if(d>=0.999999){normalTex.write(float4(0.5,0.5,1.0,0.0),tid);return;}\n"
+        " uint2 lp=uint2(max(int(p.x)-1,0),p.y),rp=uint2(min(p.x+1,size.x-1),p.y),up=uint2(p.x,max(int(p.y)-1,0)),dp=uint2(p.x,min(p.y+1,size.y-1)); float dl=depthTex.read(lp),dr=depthTex.read(rp),du=depthTex.read(up),dd=depthTex.read(dp); float lo=min(min(dl,dr),min(du,dd)),hi=max(max(dl,dr),max(du,dd)); if(lo>=0.999999||hi-lo>0.08){normalTex.write(float4(0.5,0.5,1.0,0.0),tid);return;}\n"
+        " float2 invSize=1.0/float2(size); float3 l=sm64_normal_view_position((float2(lp)+0.5)*invSize,dl,inverseProjection),r=sm64_normal_view_position((float2(rp)+0.5)*invSize,dr,inverseProjection),u=sm64_normal_view_position((float2(up)+0.5)*invSize,du,inverseProjection),b=sm64_normal_view_position((float2(dp)+0.5)*invSize,dd,inverseProjection); float3 n=normalize(cross(r-l,b-u)); float3 center=sm64_normal_view_position((float2(p)+0.5)*invSize,d,inverseProjection); if(dot(n,-center)<0.0)n=-n; normalTex.write(float4(n*0.5+0.5,1.0),tid); }\n";
+}
+
 const char *gfx_metal_bloom_shader_source(void) {
     return
         "#include <metal_stdlib>\nusing namespace metal;\n"

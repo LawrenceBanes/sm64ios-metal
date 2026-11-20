@@ -17,9 +17,11 @@
 #define GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT 2u
 #define GFX_SHADER64_RESOURCE_SHADOW_MAP 4u
 #define GFX_SHADER64_RESOURCE_PACK_TEXTURES 8u
+#define GFX_SHADER64_RESOURCE_SCENE_NORMALS 16u
 
 /* API v2 exposes bounded fullscreen raster nodes with opt-in scene-depth,
- * directional-light, shadow-map, or pack-texture resources. */
+ * depth-derived view-normal, directional-light, shadow-map, or pack-texture
+ * resources. Scene normals use a separate binding contract. */
 struct GfxShader64GraphPass {
     const char *id;
     const char *input;
@@ -61,6 +63,8 @@ int gfx_shader64_validate_material_source(const char *source, size_t size,
                                          char *error, size_t error_size);
 int gfx_shader64_validate_material_texture_source(const char *source, size_t size,
                                                  char *error, size_t error_size);
+int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,
+                                             char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size,
@@ -71,6 +75,8 @@ int gfx_shader64_build_shadow_pass_wrapper(const char *source, size_t source_siz
                                            char *output, size_t output_size);
 int gfx_shader64_build_textured_pass_wrapper(const char *source, size_t source_size,
                                              char *output, size_t output_size);
+int gfx_shader64_build_normals_pass_wrapper(const char *source, size_t source_size,
+                                            char *output, size_t output_size);
 
 /* Installs manifest.json, direct-child .metal/.metallib files under shaders/,
  * and bounded direct-child .png files under textures/.

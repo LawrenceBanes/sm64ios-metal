@@ -1501,10 +1501,14 @@ static int sm64RenderDiagnosticMode;
             if (sceneLighting && ![sceneLighting isKindOfClass:[NSNumber class]]) passOK = NO;
             id sceneShadows = pass[@"sceneShadows"];
             if (sceneShadows && ![sceneShadows isKindOfClass:[NSNumber class]]) passOK = NO;
+            id sceneNormals = pass[@"sceneNormals"];
+            if (sceneNormals && ![sceneNormals isKindOfClass:[NSNumber class]]) passOK = NO;
             id packTextures = pass[@"packTextures"];
             if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
             if ([packTextures boolValue] && (!textureList.count || [sceneDepth boolValue] ||
-                [sceneLighting boolValue] || [sceneShadows boolValue])) passOK = NO;
+                [sceneLighting boolValue] || [sceneShadows boolValue] || [sceneNormals boolValue])) passOK = NO;
+            if ([sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
+                [sceneShadows boolValue] || [packTextures boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }
@@ -1554,6 +1558,7 @@ static int sm64RenderDiagnosticMode;
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
+                ([definition[@"sceneNormals"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_NORMALS : 0u) |
                 ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) };
         }
         NSDictionary *materialDefinition = manifest[@"materialShader"];

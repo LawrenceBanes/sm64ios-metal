@@ -94,6 +94,10 @@ static id<MTLTexture> metal_depth_texture;
 static NSUInteger metal_depth_width;
 static NSUInteger metal_depth_height;
 static NSUInteger metal_depth_samples = 1;
+static id<MTLTexture> metal_scene_normals_texture;
+static NSUInteger metal_scene_normals_width;
+static NSUInteger metal_scene_normals_height;
+static bool metal_scene_normals_valid_for_frame;
 static id<MTLTexture> metal_color_target;
 static id<MTLTexture> metal_multisample_color;
 static id<MTLTexture> metal_resolve_texture;
@@ -110,6 +114,7 @@ static uint32_t metal_material_generation = 1;
 static id<MTLSamplerState> metal_present_sampler;
 static id<MTLComputePipelineState> metal_ssao_pipeline;
 static id<MTLComputePipelineState> metal_ssao_denoise_pipeline;
+static id<MTLComputePipelineState> metal_scene_normals_pipeline;
 static id<MTLComputePipelineState> metal_bloom_extract_pipeline;
 static id<MTLComputePipelineState> metal_bloom_blur_pipeline;
 static id<MTLTexture> metal_ssao_texture;
@@ -267,6 +272,9 @@ static void gfx_metal_release_render_targets(void) {
     [metal_multisample_color release]; metal_multisample_color = nil;
     [metal_resolve_texture release]; metal_resolve_texture = nil;
     [metal_depth_texture release]; metal_depth_texture = nil;
+    [metal_scene_normals_texture release]; metal_scene_normals_texture = nil;
+    metal_scene_normals_width = metal_scene_normals_height = 0;
+    metal_scene_normals_valid_for_frame = false;
     [metal_ssao_texture release]; metal_ssao_texture = nil;
     [metal_ssao_filtered_texture release]; metal_ssao_filtered_texture = nil;
     [metal_bloom_extract_texture release]; metal_bloom_extract_texture = nil;
@@ -1656,7 +1664,8 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     for (size_t i = 0; i < graph->count; ++i)
         if (graph->passes[i].resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                                 GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
-                                                GFX_SHADER64_RESOURCE_SHADOW_MAP))
+                                                GFX_SHADER64_RESOURCE_SHADOW_MAP |
+                                                GFX_SHADER64_RESOURCE_SCENE_NORMALS))
             requires_scene_depth = true;
     for (size_t i = 0; i < graph->count; ++i) {
         if (graph->passes[i].resource_flags & (GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
@@ -1693,6 +1702,17 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             sun_direction_and_intensity = (vector_float4){direction[0], direction[1], direction[2],
                 intensities[gfx_metal_sun_intensity() % 4u]};
         }
+    }
+    bool requires_scene_normals = false;
+    for (size_t i = 0; i < graph->count; ++i)
+        if (graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS)
+            requires_scene_normals = true;
+    if (requires_scene_normals && (!metal_scene_normals_texture || !metal_scene_normals_valid_for_frame)) {
+        static uint32_t normal_missing_logs;
+        if (normal_missing_logs++ < 8)
+            gfx_ios_diag_log("SHADER64 sceneNormals missing after reconstruction request");
+        gfx_metal_shader64_graph_release(graph);
+        return false;
     }
     vector_float4 shadow_right_min = {0, 0, 0, 0};
     vector_float4 shadow_up_min = {0, 0, 0, 0};
@@ -1760,6 +1780,10 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             [encoder setFragmentTexture:metal_depth_texture atIndex:1];
             [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
             [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:1];
+        }
+        if (p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) {
+            [encoder setFragmentTexture:metal_scene_normals_texture atIndex:1];
+            [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
         }
         if (p->resource_flags & (GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                  GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
@@ -1858,6 +1882,9 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
             gfx_shader64_validate_textured_pass_source(passes[i].source, passes[i].source_size,
                                                        validation, sizeof(validation)) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?
+            gfx_shader64_validate_normals_pass_source(passes[i].source, passes[i].source_size,
+                                                      validation, sizeof(validation)) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
             gfx_shader64_validate_shadow_pass_source(passes[i].source, passes[i].source_size,
                                                      validation, sizeof(validation)) :
@@ -1878,6 +1905,9 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
             gfx_shader64_build_textured_pass_wrapper(passes[i].source, passes[i].source_size,
                                                      wrapper, capacity) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?
+            gfx_shader64_build_normals_pass_wrapper(passes[i].source, passes[i].source_size,
+                                                    wrapper, capacity) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
             gfx_shader64_build_shadow_pass_wrapper(passes[i].source, passes[i].source_size,
                                                    wrapper, capacity) :
@@ -1952,7 +1982,7 @@ bool gfx_metal_shader64_needs_scene_depth(void) {
         if (metal_shader64_graph) for (size_t i = 0; i < metal_shader64_graph->count; ++i)
             if (metal_shader64_graph->passes[i].resource_flags &
                 (GFX_SHADER64_RESOURCE_SCENE_DEPTH | GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
-                 GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
+                 GFX_SHADER64_RESOURCE_SHADOW_MAP | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) {
                 needed = true;
                 break;
             }
@@ -2114,6 +2144,8 @@ static void gfx_metal_restore_shader64_pack(void) {
                  ![definition[@"sceneLighting"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"sceneShadows"] &&
                  ![definition[@"sceneShadows"] isKindOfClass:[NSNumber class]]) ||
+                (definition[@"sceneNormals"] &&
+                 ![definition[@"sceneNormals"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"packTextures"] &&
                  ![definition[@"packTextures"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
             NSString *relative = definition[@"source"];
@@ -2131,6 +2163,7 @@ static void gfx_metal_restore_shader64_pack(void) {
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
+                ([definition[@"sceneNormals"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_NORMALS : 0u) |
                 ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) };
         }
         NSDictionary *material_definition = manifest[@"materialShader"];
@@ -2297,7 +2330,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         return false;
     }
     NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled() ||
-                          gfx_metal_sun_intensity() != 0u) ? 1u : metal_settings.sample_count;
+                          gfx_metal_sun_intensity() != 0u || gfx_metal_shader64_needs_scene_depth()) ?
+                         1u : metal_settings.sample_count;
     BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
         metal_target_samples == samples && metal_depth_texture != nil &&
         (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
@@ -2594,6 +2628,69 @@ static bool gfx_metal_ensure_ssao_pipeline(void) {
         return false;
     }
     gfx_ios_diag_log("Metal SSAO compute pipeline ready threadsPerGroup=%lu", (unsigned long)metal_ssao_pipeline.maxTotalThreadsPerThreadgroup);
+    return true;
+}
+
+static bool gfx_metal_ensure_scene_normals_pipeline(void) {
+    if (metal_scene_normals_pipeline) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_scene_normals_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    id<MTLFunction> function = library ? [library newFunctionWithName:@"sm64_scene_normals"] : nil;
+    if (function) metal_scene_normals_pipeline = [metal_device newComputePipelineStateWithFunction:function error:&error];
+    [function release]; [library release];
+    if (!metal_scene_normals_pipeline) {
+        gfx_ios_diag_log("Metal scene-normal compute pipeline failed: %s", error.localizedDescription.UTF8String ?: "function or pipeline unavailable");
+        return false;
+    }
+    gfx_ios_diag_log("Metal scene-normal reconstruction ready threadsPerGroup=%lu (view-space, half resolution)",
+                     (unsigned long)metal_scene_normals_pipeline.maxTotalThreadsPerThreadgroup);
+    return true;
+}
+
+static bool gfx_metal_encode_scene_normals(id<MTLCommandBuffer> command) {
+    metal_scene_normals_valid_for_frame = false;
+    bool requested = false;
+    @synchronized ([NSObject class]) {
+        if (metal_shader64_graph) for (size_t i = 0; i < metal_shader64_graph->count; ++i)
+            if (metal_shader64_graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) {
+                requested = true; break;
+            }
+    }
+    if (!requested) return true;
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    float inverse_projection[4][4];
+    if (!metal_depth_texture || metal_depth_samples != 1 || !capture.has_projection_matrix ||
+        !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection) ||
+        !gfx_metal_ensure_scene_normals_pipeline()) return false;
+    NSUInteger width = MAX(1u, metal_depth_width / 2u);
+    NSUInteger height = MAX(1u, metal_depth_height / 2u);
+    if (!metal_scene_normals_texture || metal_scene_normals_width != width || metal_scene_normals_height != height) {
+        [metal_scene_normals_texture release]; metal_scene_normals_texture = nil;
+        MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
+            width:width height:height mipmapped:NO];
+        descriptor.storageMode = MTLStorageModePrivate;
+        descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        metal_scene_normals_texture = [metal_device newTextureWithDescriptor:descriptor];
+        if (!metal_scene_normals_texture) {
+            gfx_ios_diag_log("Metal scene-normal texture allocation failed size=%lux%lu", (unsigned long)width, (unsigned long)height);
+            return false;
+        }
+        metal_scene_normals_texture.label = @"SHADER64 view-space depth normals";
+        metal_scene_normals_width = width; metal_scene_normals_height = height;
+    }
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    if (!encoder) return false;
+    [encoder setComputePipelineState:metal_scene_normals_pipeline];
+    [encoder setTexture:metal_depth_texture atIndex:0];
+    [encoder setTexture:metal_scene_normals_texture atIndex:1];
+    [encoder setBytes:inverse_projection length:sizeof(inverse_projection) atIndex:0];
+    NSUInteger thread_width = metal_scene_normals_pipeline.threadExecutionWidth;
+    NSUInteger thread_height = MAX(1u, metal_scene_normals_pipeline.maxTotalThreadsPerThreadgroup / thread_width);
+    [encoder dispatchThreads:MTLSizeMake(width, height, 1)
+        threadsPerThreadgroup:MTLSizeMake(thread_width, thread_height, 1)];
+    [encoder endEncoding];
+    metal_scene_normals_valid_for_frame = true;
     return true;
 }
 
@@ -2961,6 +3058,11 @@ static bool gfx_metal_encode_scene_composite(void) {
         if (frame_count <= 3 || frame_count % 120 == 0)
             gfx_ios_diag_log("Metal directional shadow map skipped: no bounded world-space caster set or pass resources unavailable");
     }
+    if (!gfx_metal_encode_scene_normals(metal_command)) {
+        static uint32_t normal_unavailable_logs;
+        if (normal_unavailable_logs++ < 8)
+            gfx_ios_diag_log("SHADER64 sceneNormals unavailable; external graph will fall back to the native composite");
+    }
     if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command)) {
         metal_offscreen_runtime_failed = true;
         return false;
@@ -3263,6 +3365,7 @@ static void gfx_metal_shutdown(void) {
     gfx_metal_release_render_targets();
     [metal_ssao_pipeline release]; metal_ssao_pipeline = nil;
     [metal_ssao_denoise_pipeline release]; metal_ssao_denoise_pipeline = nil;
+    [metal_scene_normals_pipeline release]; metal_scene_normals_pipeline = nil;
     [metal_bloom_extract_pipeline release]; metal_bloom_extract_pipeline = nil;
     [metal_bloom_blur_pipeline release]; metal_bloom_blur_pipeline = nil;
     [metal_shadow_pipeline release]; metal_shadow_pipeline = nil;

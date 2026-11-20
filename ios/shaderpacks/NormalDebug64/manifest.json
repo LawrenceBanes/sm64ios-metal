@@ -7,6 +7,6 @@
   "shaderApiVersion": 2,
   "stage": "render_graph",
   "passes": [
-    { "id": "depth_normals", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/normals.metal", "scale": 1.0, "sceneDepth": true }
+    { "id": "depth_normals", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/normals.metal", "scale": 1.0, "sceneNormals": true }
   ]
 }
