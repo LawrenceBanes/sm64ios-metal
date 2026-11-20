@@ -254,6 +254,8 @@ static int sm64RenderDiagnosticMode;
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     [button setTitle:title forState:UIControlStateNormal];
     button.titleLabel.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
+    button.titleLabel.adjustsFontSizeToFitWidth = YES;
+    button.titleLabel.minimumScaleFactor = 0.62;
     button.backgroundColor = [UIColor colorWithWhite:0.23 alpha:1.0];
     button.layer.cornerRadius = 6.0;
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -499,6 +501,37 @@ static int sm64RenderDiagnosticMode;
     CGFloat settingsHeight = MIN(440.0, MAX(418.0, self.view.bounds.size.height - 12.0));
     self.graphicsPanel.frame = CGRectMake((self.view.bounds.size.width - settingsWidth) * 0.5,
         (self.view.bounds.size.height - settingsHeight) * 0.5, settingsWidth, settingsHeight);
+    if (self.graphicsPanel) {
+        CGFloat inner = settingsWidth - 28.0;
+        self.presetControl.frame = CGRectMake(14, 38, inner, 31);
+        self.scaleControl.frame = CGRectMake(14, 96, inner, 31);
+        self.msaaControl.frame = CGRectMake(14, 152, inner, 31);
+        self.anisotropyControl.frame = CGRectMake(14, 208, inner, 31);
+        CGFloat gap = 4.0;
+        CGFloat rowWidth = inner - gap * 4.0;
+        CGFloat widths1[] = { rowWidth * 0.28, rowWidth * 0.15, rowWidth * 0.15, rowWidth * 0.20, rowWidth * 0.22 };
+        UIButton *row1[] = { self.ssaoButton, self.postButton, self.fxaaButton, self.exposureButton, self.fogButton };
+        CGFloat x = 14.0;
+        for (NSUInteger i = 0; i < 5; ++i) {
+            row1[i].frame = CGRectMake(x, 244, widths1[i], 30);
+            x += widths1[i] + gap;
+        }
+        CGFloat widths2[] = { rowWidth * 0.18, rowWidth * 0.22, rowWidth * 0.30, rowWidth * 0.30 };
+        UIButton *row2[] = { self.bloomButton, self.gradeButton, self.fogProfileButton, self.shadowButton };
+        x = 14.0;
+        for (NSUInteger i = 0; i < 4; ++i) {
+            row2[i].frame = CGRectMake(x, 278, widths2[i], 30);
+            x += widths2[i] + gap;
+        }
+        CGFloat widths3[] = { rowWidth * 0.28, rowWidth * 0.24, rowWidth * 0.20, rowWidth * 0.28 };
+        UIButton *row3[] = { self.aoQualityButton, self.skyPresetButton, self.masterEffectsButton, self.godRaysButton };
+        x = 14.0;
+        for (NSUInteger i = 0; i < 4; ++i) {
+            row3[i].frame = CGRectMake(x, 312, widths3[i], 30);
+            x += widths3[i] + gap;
+        }
+        self.performanceLabel.frame = CGRectMake(14, 346, inner, 36);
+    }
     if (self.collapsed) {
         self.titleLabel.hidden = YES;
         self.statusLabel.hidden = YES;

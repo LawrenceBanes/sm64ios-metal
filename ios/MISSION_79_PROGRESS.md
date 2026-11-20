@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `07728beb979fb8d98c8005765604e4a3f7f1751e`; Apple backend/MSL validation passed in workflow `44704150806`. Depth-reconstructed directional sunlight and a shadow receiver projection fix are in the current uncommitted iteration.
+- Current pushed source commit: `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; Apple backend/MSL and Linux regression passed in [run 44704797589](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704797589). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) is building this source. Responsive Graphics panel layout is in the current uncommitted iteration.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -124,6 +124,7 @@
 - Added a camera-projected sun disk on Day/Sunset sky presets. The sun direction is now shared by the light-shaft source and shadow caster and has persisted Afternoon/Morning/Noon/Sunset presets accessible from the sun/shadow control. This current preset-control change is not yet Apple-validated.
 - `07728beb` Apple backend/MSL validation and Linux jobs passed in [run 44704150806](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704150806).
 - Latest local iteration adds an optional sunlight intensity control (Off/Low/Medium/High) using depth-neighbor reconstructed view normals transformed to world space, Lambert diffuse, and shadow-map PCF visibility. It also fixes a demonstrated integration defect: inverse projection was only computed when fog was active, leaving the shadow receiver's depth reconstruction matrix zero whenever shadows were used alone. The inverse camera matrices are now prepared for shadow and sun passes independently of fog. These changes have only focused host/source checks so far and require Apple validation.
+- The Graphics panel controls now reflow against the current iPhone/iPad panel width rather than keeping the 520-point desktop layout. The source regression checks the dynamic row layout; it is not yet included in an Apple build.
 
 ## Next task
 

@@ -92,6 +92,9 @@ def main() -> None:
     require("openGodRaySettings" in uikit and "gfx_metal_cycle_god_ray_quality" in uikit and
             "quarter-resolution screen-space approximation" in uikit,
             "developer UI must expose and correctly label the screen-space light-shaft approximation")
+    require("CGFloat rowWidth = inner - gap * 4.0" in uikit and "UIButton *row1[]" in uikit and
+            "UIButton *row3[]" in uikit and "settingsWidth - 28.0" in uikit,
+            "graphics controls must reflow within the available iPhone panel width")
 
     for token in (
         "supportsTextureSampleCount:2", "supportsTextureSampleCount:4",
