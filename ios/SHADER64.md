@@ -81,6 +81,8 @@ An individual API 2 pass can declare `"sceneDepth":true` and implement the `shad
 
 Reference packs include **DepthDebug64** (raw depth), **NormalDebug64** (screen-space normals reconstructed from neighboring depth samples), and **MaterialDebug64** (world/object/character class colors). Reconstructed normals are an approximation derived from depth discontinuities; the engine does not yet export a native normal attachment.
 
+An API 2 pass can request `"sceneLighting":true` for scene depth, inverse projection/view, and the configured world-space sun direction/intensity. `Lumen64Graph` demonstrates depth-derived directional diffuse lighting. It is a screen-space approximation and does not include custom shadow-map sampling, material-specific BRDFs, or GI.
+
 ## Reference packs
 
 - **Classic64** is the built-in original renderer and recovery path.

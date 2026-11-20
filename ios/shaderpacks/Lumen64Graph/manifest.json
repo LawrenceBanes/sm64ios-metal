@@ -1,0 +1,16 @@
+{
+  "formatVersion": 2,
+  "id": "Lumen64Graph",
+  "name": "Lumen64 2.0 Graph",
+  "author": "SHITBOX LABZ INC.",
+  "version": "2.0.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "ambient", "label": "Ambient floor", "type": "float", "default": 0.28, "min": 0, "max": 1 },
+    { "name": "sunStrength", "label": "Sun contribution", "type": "float", "default": 0.72, "min": 0, "max": 1 }
+  ],
+  "passes": [
+    { "id": "directional_light", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/lighting.metal", "scale": 1.0, "sceneLighting": true }
+  ]
+}

@@ -300,7 +300,8 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
     for (size_t i = 0; i < count; ++i) {
         const struct GfxShader64GraphPass *p = &passes[i];
         if (p->node_type != 1u ||
-            (p->resource_flags & ~GFX_SHADER64_RESOURCE_SCENE_DEPTH) != 0u ||
+            (p->resource_flags & ~(GFX_SHADER64_RESOURCE_SCENE_DEPTH |
+                                   GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)) != 0u ||
             !graph_name(p->id) || !graph_name(p->input) ||
             !p->output || (!graph_name(p->output) && strcmp(p->output, "present") != 0) ||
             !isfinite(p->resolution_scale) || p->resolution_scale < 0.25f ||
@@ -406,6 +407,29 @@ int gfx_shader64_validate_depth_pass_source(const char *source, size_t size,
     return 1;
 }
 
+int gfx_shader64_validate_lit_pass_source(const char *source, size_t size,
+                                         char *error, size_t error_size) {
+    static const char *const required[] = {
+        "float4 shader64_pass_lit(", "float4 color", "float2 uv",
+        "texture2d<float> image", "sampler imageSampler", "depth2d<float> sceneDepth",
+        "sampler depthSampler", "constant float4x4 &inverseProjection",
+        "constant float4x4 &inverseView", "float4 sunDirectionAndIntensity",
+        "constant float4 &params", "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "lit pass source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "source does not implement the directional-light pass contract"); return 0;
+        }
+    if (contains(source, size, "#include \"")) {
+        err(error, error_size, "local shader includes are not supported in API v2"); return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
 int gfx_shader64_validate_material_source(const char *source, size_t size,
                                           char *error, size_t error_size) {
     static const char *const required[] = {
@@ -454,6 +478,23 @@ int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size
     size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
     if (!output || output_size < needed ||
         !gfx_shader64_validate_depth_pass_source(source, source_size, NULL, 0)) return 0;
+    memcpy(output, prefix, sizeof(prefix) - 1u);
+    memcpy(output + sizeof(prefix) - 1u, source, source_size);
+    memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));
+    return 1;
+}
+
+int gfx_shader64_build_lit_pass_wrapper(const char *source, size_t source_size,
+                                        char *output, size_t output_size) {
+    static const char prefix[] =
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct Shader64In { float4 position [[position]]; float2 uv; };\n"
+        "vertex Shader64In sm64_shader64_vertex(uint id [[vertex_id]]) { Shader64In o; o.position = id == 0 ? float4(-1.0,-1.0,0.0,1.0) : (id == 1 ? float4(3.0,-1.0,0.0,1.0) : float4(-1.0,3.0,0.0,1.0)); o.uv = id == 0 ? float2(0.0,1.0) : (id == 1 ? float2(2.0,1.0) : float2(0.0,-1.0)); return o; }\n";
+    static const char suffix[] =
+        "\nfragment float4 sm64_shader64_fragment(Shader64In in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], depth2d<float> sceneDepth [[texture(1)]], sampler depthSampler [[sampler(1)]], constant float4 &parameters [[buffer(0)]], constant float4x4 &inverseProjection [[buffer(1)]], constant float4x4 &inverseView [[buffer(2)]], constant float4 &sunDirectionAndIntensity [[buffer(3)]]) { float4 color=image.sample(imageSampler,in.uv); return shader64_pass_lit(color,in.uv,image,imageSampler,sceneDepth,depthSampler,inverseProjection,inverseView,sunDirectionAndIntensity,parameters); }\n";
+    size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
+    if (!output || output_size < needed ||
+        !gfx_shader64_validate_lit_pass_source(source, source_size, NULL, 0)) return 0;
     memcpy(output, prefix, sizeof(prefix) - 1u);
     memcpy(output + sizeof(prefix) - 1u, source, source_size);
     memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));

@@ -39,6 +39,8 @@ An API 2 pass may opt into the auxiliary `sceneDepth` resource with `"sceneDepth
 
 Reference diagnostic packs now use only these public resources: `DepthDebug64` shades raw nonlinear depth, `NormalDebug64` reconstructs a view-space normal approximation from neighboring depth samples and inverse projection, and `MaterialDebug64` colors the existing world/object/character class signal through the external material hook. The normal display is a screen-space depth-gradient reconstruction, not a native per-vertex normal attachment; it is expected to have discontinuity artifacts at silhouettes.
 
+Passes may also request `"sceneLighting": true`. This implies scene depth and supplies the current inverse projection, inverse view, and `sunDirectionAndIntensity` (world-space direction in xyz, configured engine intensity in w). The pass must implement `shader64_pass_lit`; `Lumen64Graph` demonstrates per-pixel directional diffuse shading from a view normal reconstructed from depth. Its ambient floor is a pack parameter. This is a depth-derived screen-space lighting technique: it has silhouette/edge artifacts, no material-specific roughness or world position, and no custom shadow-map input. It is separate from the built-in engine shadow-map receiver and does not claim global illumination.
+
 ```json
 {
   "formatVersion": 2,
@@ -78,6 +80,7 @@ Inspected local archive: `Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip`, SHA-256 `
 | Composite/final image passes | API 2 fullscreen DAG; one image in/out per pass | Basic chained passes executable; no multi-attachment MRT |
 | Final camera-gridline option | API 2 screen-space pass | Included as licensed adaptation pack; GUI hide flag is represented by a pack toggle |
 | Engine scene depth and camera projection | Optional `sceneDepth` input on API 2 fullscreen nodes plus inverse projection | Implemented; DepthDebug64 shades raw values and NormalDebug64 demonstrates depth-derived view-space normals. No native normal attachment or MSAA depth path |
+| Configured directional sun and camera transforms | Optional `sceneLighting` resource on API 2 fullscreen nodes | Implemented for Lumen64Graph; depth-derived screen-space diffuse only, no external shadow map |
 | Shadow map and shadow color textures | Needs declared depth/comparison textures and shadow pass nodes | Not available to user graphs; built-in engine shadow pass remains private |
 | Material categories and post-combiner shading | Optional API 2 material hook with world/object/character category | Implemented; MaterialDebug64 exposes categories as actual surface colors. No normals, world position, or full albedo/roughness G-buffer |
 | Setup compute and voxel lighting | Needs compute nodes, storage buffers, atomic/resource contracts | Not available |

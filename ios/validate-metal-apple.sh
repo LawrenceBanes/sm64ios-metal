@@ -99,8 +99,9 @@ xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx"
     -o "$wrapper_v2_tool"
 for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/BlissGridlines/shaders/*.metal \
-             "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal; do
-    if [[ "$(basename "$source")" == "material.metal" || "$(basename "$source")" == "depth.metal" || "$(basename "$source")" == "normals.metal" ]]; then
+             "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal \
+             "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/*.metal; do
+    if [[ "$(basename "$source")" == "material.metal" || "$(basename "$source")" == "depth.metal" || "$(basename "$source")" == "normals.metal" || "$(basename "$source")" == "lighting.metal" ]]; then
         continue
     fi
     pack=$(basename "$(dirname "$(dirname "$source")")")
@@ -110,6 +111,18 @@ for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
     xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
     echo "compiled and linked SHADER64 API 2 reference $name"
 done
+
+lit_source="$repo_dir/ios/shaderpacks/Lumen64Graph/shaders/lighting.metal"
+lit_wrapper_tool="$output_dir/shader64-wrap-lit"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_lit_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$lit_wrapper_tool"
+"$lit_wrapper_tool" "$lit_source" > "$shader_dir/shader64-lumen64graph-lighting.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-lumen64graph-lighting.metal" \
+    -o "$shader_dir/shader64-lumen64graph-lighting.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-lumen64graph-lighting.air" \
+    -o "$shader_dir/shader64-lumen64graph-lighting.metallib"
+echo "compiled and linked SHADER64 Lumen64Graph directional-light pass"
 
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \

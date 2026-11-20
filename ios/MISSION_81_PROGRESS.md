@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest committed code checkpoint: `5d27783c` (scene-depth API and DepthDebug64); NormalDebug64 and MaterialDebug64 are in the working tree for the next validation cycle.
+- Latest committed code checkpoint: `647e0842` (depth/material diagnostics); optional directional-light graph resource and Lumen64Graph are in the working tree for the next validation cycle.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -23,6 +23,7 @@
 - Added an iOS Metal-only render-classification channel: GeoLayout master-list entries record world/object/Mario ownership, bounded tagged no-op commands carry the class through the Fast3D interpreter, and the Metal fragment parameter contract plus a Material Class diagnostic can observe it. The original combiner output remains unchanged.
 - Added an optional API 2 post-combiner `shader64_material` function with bounded MSL source validation, pack parameter binding, material-class/UV/raster-position inputs, per-renderer shader regeneration, startup restore, and safe fallback to the native combiner on shader failure. This is a material fragment hook, not a world-space geometry or deferred shading API.
 - GraphDemo now uses its fourth parameter to apply a Mario-only tint through the class-3 hook. The world and object classes return the untouched Fast3D combiner color. The production ZIP-importer test includes and validates the optional material source.
+- Current working-tree targeted validation: `python3 ios/test_shader64_pack.py` (17 tests; includes production ZIP import of all reference packs and ASan/UBSan importer smoke), `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, and `bash -n ios/validate-metal-apple.sh` all pass. `CC=clang tests/run_linux_checks.sh` passes the complete regression suite; standard fixture warnings/invalid-input diagnostics remain.
 - Fixed the earlier Apple compile error by removing the `gfx_pc.h` include from Objective-C Metal code (which exposed a host `Gfx` type unavailable in that translation unit) and using a narrow getter declaration instead.
 
 ## Tests so far
@@ -39,6 +40,8 @@
 - Added a bounded optional API 2 `sceneDepth` pass input paired with the engine's inverse projection, gated by an explicit manifest boolean. `DepthDebug64` is a raw nonlinear-depth diagnostic example. The graph enables camera capture only while a pack requests the resource; single-sample depth/projection unavailability falls back to the native composite for that frame.
 - Apple validation workflow `44799029668` passed both full Linux regression and Xcode 27 iOS device/simulator compilation plus API 1/API 2 GraphDemo, BlissGridlines, material-hook, and scene-depth MSL compile/link for `5d27783c002fa410f661376587c13381b8164750`.
 - Added `NormalDebug64`, which reconstructs a view-space normal approximation from actual depth-neighbor samples, and `MaterialDebug64`, which colors actual world/object/character draws through the user-facing material hook. Apple validation now compiles all reference material and scene-depth sources rather than just GraphDemo's examples.
+- Apple validation workflow `44799573736` passed Linux and Xcode 27 MSL/backend validation for `647e08427c82104d8766b35ae2446372816923b2`, including NormalDebug64 depth reconstruction and MaterialDebug64 classification MSL. No GPU run or device pixels were observed.
+- Added an opt-in `sceneLighting` graph resource exposing the configured directional sun and inverse camera transforms alongside scene depth. Lumen64Graph demonstrates directional diffuse shading using a normal reconstructed from depth; external shadow-map access remains unavailable.
 - Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
 - Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
 - IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
@@ -47,8 +50,8 @@
 
 ## Remaining work / next
 
-1. Run pack import tests, complete host regressions, and Apple compilation for NormalDebug64 and MaterialDebug64, then commit and push those diagnostics.
-2. Install a matching IPA on a test iPhone; import GraphDemo, DepthDebug64, NormalDebug64, and MaterialDebug64 through Graphics → Shader Pack → Import ZIP Pack. Verify tint class separation and diagnostic views visually. No device output is confirmed yet.
-3. Next data contract: only add geometry/material attributes when their per-pixel association is proven. Current normals are screen-space reconstructed from depth; native normals, material textures, external textures, graph shadow/compute/history nodes, and Bliss Minecraft uniforms remain unsupported.
+1. Run full Linux and Apple validation for the new `sceneLighting` contract and Lumen64Graph; fix shader or iOS compile failures and push a verified checkpoint.
+2. Install a matching IPA on a test iPhone; import GraphDemo, DepthDebug64, NormalDebug64, MaterialDebug64, and Lumen64Graph. Visually verify class separation, depth, reconstructed normals, and lighting. No device output is confirmed yet.
+3. Next reusable engine resources: expose built-in shadow maps and transforms, then textures/history/compute only after bounded contracts and renderer lifetimes are defined. Native vertex normals, G-buffers, external shadow-map sampling, external textures, and Bliss Minecraft uniforms remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

@@ -12,6 +12,7 @@
 #define GFX_SHADER64_MAX_GRAPH_TARGET_BYTES (32u * 1024u * 1024u)
 #define GFX_SHADER64_PARAMETER_ABS_MAX 16.0f
 #define GFX_SHADER64_RESOURCE_SCENE_DEPTH 1u
+#define GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT 2u
 
 /* API v2 exposes bounded fullscreen raster nodes and an optional scene-depth
  * auxiliary resource. Geometry, compute, and other external resources remain
@@ -47,12 +48,16 @@ int gfx_shader64_validate_pass_source(const char *source, size_t size,
                                       char *error, size_t error_size);
 int gfx_shader64_validate_depth_pass_source(const char *source, size_t size,
                                             char *error, size_t error_size);
+int gfx_shader64_validate_lit_pass_source(const char *source, size_t size,
+                                          char *error, size_t error_size);
 int gfx_shader64_validate_material_source(const char *source, size_t size,
                                          char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size,
                                           char *output, size_t output_size);
+int gfx_shader64_build_lit_pass_wrapper(const char *source, size_t source_size,
+                                        char *output, size_t output_size);
 
 /* Installs only manifest.json and direct-child .metal/.metallib files under shaders/.
  * The destination must be a new private directory. Partial recognized files
