@@ -83,6 +83,10 @@ def main() -> None:
     require("gfx_metal_get_sun_direction" in metal and "gfx_metal_cycle_sun_preset" in uikit and
             "Change sun direction" in uikit and "sun_ray[axis] = -sun_ray[axis]" in metal,
             "sun direction presets must drive both projected sky/light shafts and the directional shadow pass")
+    require("gfx_metal_sun_intensity" in metal and "shadowVisibility" in shader_c and
+            "max(dot(worldNormal,normalize(sunParams.xyz)),0.0)" in shader_c and
+            "sunParams.w>0.0" in shader_c and "inverse_projection_valid" in metal,
+            "sun intensity must apply a depth-reconstructed world-normal diffuse contribution")
     require("openShadowSettings" in uikit and "gfx_metal_cycle_shadow_resolution" in uikit,
             "developer UI must expose a shadow toggle and resolution control")
     require("openGodRaySettings" in uikit and "gfx_metal_cycle_god_ray_quality" in uikit and

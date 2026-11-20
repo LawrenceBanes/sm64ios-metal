@@ -111,6 +111,7 @@ static bool metal_bloom_is_enabled;
 static bool metal_shadows_is_enabled;
 static uint32_t metal_shadow_resolution = 512u;
 static uint32_t metal_sun_preset;
+static uint32_t metal_sun_intensity;
 static bool metal_god_rays_is_enabled;
 static uint32_t metal_god_ray_quality = 1u;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
@@ -285,6 +286,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_shadow_resolution = saved_shadow_resolution == 1024 || saved_shadow_resolution == 2048 ?
                               (uint32_t)saved_shadow_resolution : 512u;
     metal_sun_preset = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunPreset"]));
+    metal_sun_intensity = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunIntensity"]));
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
@@ -437,6 +439,17 @@ void gfx_metal_get_sun_direction(float direction[3]) {
 const char *gfx_metal_sun_preset_name(void) {
     static const char *const names[] = { "Afternoon", "Morning", "Noon", "Sunset" };
     return names[gfx_metal_sun_preset() % 4u];
+}
+uint32_t gfx_metal_sun_intensity(void) {
+    @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_sun_intensity : 0u; }
+}
+void gfx_metal_set_sun_intensity(uint32_t intensity) {
+    uint32_t sanitized = MIN(intensity, 3u);
+    @synchronized ([NSObject class]) { metal_sun_intensity = sanitized; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalSunIntensity"];
+}
+void gfx_metal_cycle_sun_intensity(void) {
+    gfx_metal_set_sun_intensity((gfx_metal_sun_intensity() + 1u) % 4u);
 }
 bool gfx_metal_god_rays_enabled(void) {
     @synchronized ([NSObject class]) { return metal_effects_enabled && metal_god_rays_is_enabled; }
@@ -1247,7 +1260,7 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
         !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u &&
-        !gfx_metal_shadows_enabled() && !gfx_metal_god_rays_enabled()) return false;
+        !gfx_metal_shadows_enabled() && !gfx_metal_god_rays_enabled() && gfx_metal_sun_intensity() == 0u) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1259,7 +1272,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         gfx_metal_fallback_to_direct("invalid drawable dimensions or scale");
         return false;
     }
-    NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled()) ? 1u : metal_settings.sample_count;
+    NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled() ||
+                          gfx_metal_sun_intensity() != 0u) ? 1u : metal_settings.sample_count;
     BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
         metal_target_samples == samples && metal_depth_texture != nil &&
         (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
@@ -1420,22 +1434,21 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
                                    fog_density[fog_profile], fog_start[fog_profile] };
     float inverse_projection[4][4] = {{0}};
     float inverse_view[4][4] = {{0}};
-    if (gfx_metal_fog_enabled()) {
-        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
-        if (!capture.has_projection_matrix ||
-            !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection)) {
-            grade_params.y = 0.0f;
-            gfx_ios_diag_log("Metal distance fog disabled for frame: inverse projection unavailable");
-        }
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    bool inverse_projection_valid = capture.has_projection_matrix &&
+        gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection);
+    bool inverse_view_valid = capture.has_view_matrix &&
+        gfx_postprocess_invert_matrix(capture.view_matrix, inverse_view);
+    if (gfx_metal_fog_enabled() && !inverse_projection_valid) {
+        grade_params.y = 0.0f;
+        gfx_ios_diag_log("Metal distance fog disabled for frame: inverse projection unavailable");
     }
     vector_float4 shadow_right_min = {0, 0, 0, 0};
     vector_float4 shadow_up_min = {0, 0, 0, 0};
     vector_float4 shadow_forward_min = {0, 0, 0, 0};
     vector_float4 shadow_ranges = {1, 1, 1, 0};
     if (gfx_metal_shadows_enabled() && metal_shadow_transform_valid) {
-        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
-        if (capture.has_view_matrix &&
-            gfx_postprocess_invert_matrix(capture.view_matrix, inverse_view)) {
+        if (inverse_view_valid && inverse_projection_valid) {
             shadow_right_min = (vector_float4){ metal_shadow_transform.right[0], metal_shadow_transform.right[1],
                 metal_shadow_transform.right[2], metal_shadow_transform.minimum[0] };
             shadow_up_min = (vector_float4){ metal_shadow_transform.up[0], metal_shadow_transform.up[1],
@@ -1445,7 +1458,7 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
             shadow_ranges = (vector_float4){ metal_shadow_transform.range[0], metal_shadow_transform.range[1],
                 metal_shadow_transform.range[2], 0.0025f };
         } else {
-            gfx_ios_diag_log("Metal shadow receiving disabled for frame: inverse view unavailable");
+            gfx_ios_diag_log("Metal shadow receiving disabled for frame: inverse camera matrices unavailable");
         }
     }
     vector_float4 fog_color = fog_colors[fog_profile];
@@ -1486,6 +1499,12 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:11];
     float ray_params = gfx_metal_god_rays_enabled() ? 1.0f : 0.0f;
     [encoder setFragmentBytes:&ray_params length:sizeof(ray_params) atIndex:12];
+    float sun_direction[3];
+    gfx_metal_get_sun_direction(sun_direction);
+    static const float sun_intensities[] = { 0.0f, 0.12f, 0.24f, 0.36f };
+    vector_float4 sun_params = { sun_direction[0], sun_direction[1], sun_direction[2],
+        inverse_projection_valid && inverse_view_valid ? sun_intensities[gfx_metal_sun_intensity()] : 0.0f };
+    [encoder setFragmentBytes:&sun_params length:sizeof(sun_params) atIndex:13];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;
