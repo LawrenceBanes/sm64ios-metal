@@ -1,5 +1,6 @@
 /* Host replay through the production decoder, Gfx interpreter, and partition. */
 #include <assert.h>
+#include <stdlib.h>
 #include "src/pc/gfx/gfx_pc.c"
 #include "engine/surface_collision.h"
 #include "engine/surface_load.h"
@@ -504,14 +505,14 @@ static void check_wsc5_texture_limit(struct WorldSceneRuntime *runtime) {
 }
 
 static void check_external_scene_probe(struct WorldSceneRuntime *runtime, u32 sceneId,
-                                       u32 minimumTriangles) {
+                                       u32 minimumTriangles, u32 minimumUploads,
+                                       u32 expectedCollisionTriangles) {
     struct WorldSceneDestination destination;
     assert(world_scene_open(runtime, sceneId, 0, &destination) == WORLD_SCENE_OK);
     assert(world_region_count() == 1);
     struct WorldRegionInfo region;
-    assert(world_region_info_at(0, &region) && region.active && region.renderList
-           && region.translucentList);
-    assert(region.triangleCount > 0);
+    assert(world_region_info_at(0, &region) && region.active && region.renderList);
+    assert(region.triangleCount == expectedCollisionTriangles);
     assert(destination.position.x >= region.min.x && destination.position.x <= region.max.x);
     assert(destination.position.y >= region.min.y && destination.position.y <= region.max.y);
     assert(destination.position.z >= region.min.z && destination.position.z <= region.max.z);
@@ -520,14 +521,21 @@ static void check_external_scene_probe(struct WorldSceneRuntime *runtime, u32 sc
                             (f32)destination.position.z, &floor);
     assert(floor && floorY == (f32)destination.position.y - 16.0f);
 
-    Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
-    frame[0].words.w1 = (uintptr_t)region.renderList;
-    frame[1].words.w1 = (uintptr_t)region.translucentList;
     prepare_projection();
     check_scene_probe = true;
     triangles = textures = scene_probe_draws = scene_probe_uploads = 0;
-    gfx_run_dl(frame);
-    assert(triangles >= minimumTriangles && scene_probe_draws > 0 && scene_probe_uploads > 0);
+    if (region.translucentList) {
+        Gfx frame[] = {gsSPDisplayList(NULL), gsSPDisplayList(NULL), gsSPEndDisplayList()};
+        frame[0].words.w1 = (uintptr_t)region.renderList;
+        frame[1].words.w1 = (uintptr_t)region.translucentList;
+        gfx_run_dl(frame);
+    } else {
+        Gfx frame[] = {gsSPDisplayList(NULL), gsSPEndDisplayList()};
+        frame[0].words.w1 = (uintptr_t)region.renderList;
+        gfx_run_dl(frame);
+    }
+    assert(triangles >= minimumTriangles && scene_probe_draws > 0
+           && scene_probe_uploads >= minimumUploads);
     printf("WSC scene %u host probe: submitted-triangles=%u draw-calls=%u texture-uploads=%u collision-triangles=%u spawn=(%lld,%lld,%lld) room-bounds=(%lld,%lld,%lld)..(%lld,%lld,%lld) floor=%.1f\n",
            sceneId, triangles, scene_probe_draws, scene_probe_uploads, region.triangleCount,
            (long long)destination.position.x, (long long)destination.position.y,
@@ -537,6 +545,69 @@ static void check_external_scene_probe(struct WorldSceneRuntime *runtime, u32 sc
     check_scene_probe = false;
     world_scene_close(runtime);
     assert(world_region_count() == 0);
+
+    /* Exercise the production area-selection, package activation and spawn
+     * clearance path as well as the lower-level package reader. */
+    static struct GraphNodeRoot root;
+    static s16 terrain;
+    gObjParentGraphNode.children = &inactive_object.header.gfx.node;
+    inactive_object.header.gfx.node.next = gObjParentGraphNode.children;
+    gCurrLevelNum = LEVEL_CASTLE_GROUNDS;
+    gAreaData[SCENE_EXTERNAL_AREA] = (struct Area){.index = SCENE_EXTERNAL_AREA,
+        .unk04 = &root, .terrainData = &terrain};
+    world_region_reset((struct WorldPoint){0, 0, 0});
+    assert(area_external_scene_available(sceneId));
+    assert(area_external_scene_select(sceneId));
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(area_external_scene_is_active() && area_scene_package_id() == sceneId);
+    struct SpawnInfo spawn = {0};
+    assert(area_external_scene_spawn(&spawn));
+    assert(spawn.startPos[0] == destination.position.x
+           && spawn.startPos[1] == destination.position.y
+           && spawn.startPos[2] == destination.position.z);
+    area_external_scene_track((f32[]){destination.position.x, destination.position.y,
+                                       destination.position.z});
+    unload_area();
+    assert(!area_external_scene_is_active() && world_region_count() == 0);
+}
+
+static void check_external_scene_switching(void) {
+    static struct GraphNodeRoot root;
+    static s16 terrain;
+    gObjParentGraphNode.children = &inactive_object.header.gfx.node;
+    inactive_object.header.gfx.node.next = gObjParentGraphNode.children;
+    gCurrLevelNum = LEVEL_CASTLE_GROUNDS;
+    gAreaData[SCENE_EXTERNAL_AREA] = (struct Area){.index = SCENE_EXTERNAL_AREA,
+        .unk04 = &root, .terrainData = &terrain};
+    world_region_reset((struct WorldPoint){0, 0, 0});
+    assert(area_external_scene_available(SCENE_EXTERNAL_PACKAGE));
+    assert(area_external_scene_available(SCENE_EXTERNAL_PACKAGE_MARKET_DAY));
+    assert(area_external_scene_select(SCENE_EXTERNAL_PACKAGE));
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(area_external_scene_is_active() && area_scene_package_id() == SCENE_EXTERNAL_PACKAGE);
+
+    /* Selection occurs before the normal SM64 area unload/reload boundary, so
+     * the prior scene ID is preserved while its resources are released. */
+    assert(area_external_scene_select(SCENE_EXTERNAL_PACKAGE_MARKET_DAY));
+    assert(area_external_scene_previous_id() == SCENE_EXTERNAL_PACKAGE);
+    unload_area();
+    assert(world_region_count() == 0 && !area_external_scene_is_active());
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(area_external_scene_is_active()
+           && area_scene_package_id() == SCENE_EXTERNAL_PACKAGE_MARKET_DAY);
+    struct SpawnInfo spawn = {0};
+    assert(area_external_scene_spawn(&spawn));
+    assert(spawn.startPos[0] == -9 && spawn.startPos[1] == 16 && spawn.startPos[2] == 1616);
+
+    u32 previous = area_external_scene_previous_id();
+    assert(previous == SCENE_EXTERNAL_PACKAGE);
+    assert(area_external_scene_select(previous));
+    assert(area_external_scene_previous_id() == SCENE_EXTERNAL_PACKAGE_MARKET_DAY);
+    unload_area();
+    load_area(SCENE_EXTERNAL_AREA);
+    assert(area_external_scene_is_active() && area_scene_package_id() == SCENE_EXTERNAL_PACKAGE);
+    unload_area();
+    assert(world_region_count() == 0 && !area_external_scene_is_active());
 }
 
 static void check_imported_scene(const char *texture_path) {
@@ -550,7 +621,8 @@ static void check_imported_scene(const char *texture_path) {
         .unk04 = &root, .terrainData = &terrain};
     check_import = true;
     textures = 0;
-    assert(area_external_scene_available());
+    assert(area_external_scene_available(SCENE_EXTERNAL_PACKAGE));
+    assert(area_external_scene_select(SCENE_EXTERNAL_PACKAGE));
     for (int visit = 0; visit < 2; ++visit) {
         load_area(SCENE_EXTERNAL_AREA);
         assert(area_scene_package_id() == SCENE_EXTERNAL_PACKAGE && world_region_count() == 2);
@@ -593,13 +665,13 @@ static void check_imported_scene(const char *texture_path) {
     const char *path = fs_get_write_path("scenes/4100.wsc");
     FILE *file = fopen(path, "r+b");
     assert(file && fputc('X', file) != EOF && fclose(file) == 0);
-    assert(area_external_scene_available());
+    assert(area_external_scene_available(SCENE_EXTERNAL_PACKAGE));
     load_area(SCENE_EXTERNAL_AREA);
     assert(!area_external_scene_spawn(NULL) && !world_region_count());
     unload_area();
 
     path = fs_get_write_path("scenes/4100.wsc");
-    assert(remove(path) == 0 && !area_external_scene_available());
+    assert(remove(path) == 0 && !area_external_scene_available(SCENE_EXTERNAL_PACKAGE));
     load_area(SCENE_EXTERNAL_AREA);
     assert(!area_external_scene_spawn(NULL) && !world_region_count());
     unload_area();
@@ -608,13 +680,23 @@ static void check_imported_scene(const char *texture_path) {
 
 int main(int argc, char **argv) {
     const char *rodirs[] = { NULL };
-    if (argc == 3 && !strcmp(argv[1], "--probe-wsc5-scene")) {
+    if (argc == 3 && !strcmp(argv[1], "--probe-wsc5-scenes")) {
+        assert(fs_init(rodirs, argv[2], argv[2]));
+        prepare_projection();
+        check_external_scene_switching();
+        puts("Imported WSC scene selection, spawn validation, switch, return, reload and teardown passed");
+        return 0;
+    }
+    if (argc == 7 && !strcmp(argv[1], "--probe-wsc5-scene")) {
         assert(fs_init(rodirs, argv[2], argv[2]));
         world_region_reset((struct WorldPoint){0, 0, 0});
         prepare_projection();
         struct WorldSceneRuntime runtime;
         world_scene_runtime_init(&runtime, &gWorldSceneFileProvider, NULL);
-        check_external_scene_probe(&runtime, SCENE_EXTERNAL_PACKAGE, 1);
+        check_external_scene_probe(&runtime, (u32)strtoul(argv[3], NULL, 0),
+                                   (u32)strtoul(argv[4], NULL, 0),
+                                   (u32)strtoul(argv[5], NULL, 0),
+                                   (u32)strtoul(argv[6], NULL, 0));
         world_scene_close(&runtime);
         puts("WSC scene probe load/render/collision/teardown passed");
         return 0;

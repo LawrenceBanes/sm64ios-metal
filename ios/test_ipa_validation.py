@@ -132,7 +132,9 @@ class IpaValidationTests(unittest.TestCase):
 
     def test_local_scene_loader_validator_requires_the_wsc5_hyrule_actions(self):
         self.assertEqual(LOCAL_SCENE_STRINGS, (
-            b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc", b"oot-assets/runtime-index.tsv"
+            b"Load Hyrule Field (WSC5)", b"Load OoT Market",
+            b"Return to Castle Grounds", b"scenes/%u.wsc",
+            b"oot-assets/runtime-index.tsv"
         ))
 
     def test_valid_arm64_ipa_structure(self) -> None:

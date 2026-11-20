@@ -158,6 +158,30 @@ class PassTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 setup.HyruleFieldInputs(*args)
 
+    def test_explicit_static_scene_lighting_profile_is_provenanced_and_bounded(self):
+        row = {"ambient": [50, 50, 50], "light1_direction": [0, 0, 0],
+               "light1_color": [255, 255, 255], "light2_direction": [0, 0, 0],
+               "light2_color": [0, 0, 0], "fog_color": [20, 30, 40],
+               "fog_near": 2020, "fog_far": 2000}
+        profile = setup.StaticSceneLightingInputs("scenes/shared/market_day_scene/market_day_scene",
+                                                  0, (128, 128, 128, 128))
+        selected = profile.lighting([{"id": 15, "lighting_settings": [row]}])
+        self.assertEqual(selected["setting"], row)
+        self.assertEqual(selected["provenance"]["origin"], "reconstructed")
+        self.assertEqual(selected["fog_factor"]["multiplier"], 0)
+        self.assertEqual(selected["fog_factor"]["offset_coefficient"], 0)
+        state = trace.PassState({})
+        profile.seed(state, [{"id": 15, "lighting_settings": [row]}])
+        self.assertEqual(state.num_directional_lights["count"], 2)
+        self.assertEqual(state.lights["2"]["color"], [50, 50, 50])
+        self.assertEqual(len(profile.prelude("opaque", 0).commands), 2)
+        self.assertEqual(len(profile.prelude("translucent", 0).commands), 2)
+        self.assertEqual(len(profile.prelude("opaque", 3).commands), 3)
+        with self.assertRaisesRegex(ValueError, "lighting table"):
+            profile.lighting([{"id": 15, "lighting_settings": [row]}] * 2)
+        with self.assertRaises(ValueError):
+            setup.StaticSceneLightingInputs("scenes/market", 1, (256, 0, 0, 0))
+
 
 class MaterialTests(unittest.TestCase):
     def test_effective_combiner_dependency(self):

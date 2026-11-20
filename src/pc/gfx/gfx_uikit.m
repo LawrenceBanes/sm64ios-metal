@@ -323,14 +323,32 @@ static int sm64RenderDiagnosticMode;
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_WSC3);
     }]];
-    NSString *externalTitle = area_scene_package_id() == SCENE_EXTERNAL_PACKAGE ?
-        @"Leave Hyrule Field" : @"Load Hyrule Field (WSC5)";
+    BOOL importedSceneActive = area_external_scene_is_active();
+    NSString *externalTitle = importedSceneActive ? @"Return to Castle Grounds" : @"Load Hyrule Field (WSC5)";
     [menu addAction:[UIAlertAction actionWithTitle:externalTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
-        gfx_ios_diag_log("Gameplay menu queued Hyrule Field WSC5 %s package=4100",
-                         area_scene_package_id() == SCENE_EXTERNAL_PACKAGE ? "leave" : "load");
-        scene_diagnostic_request(SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL);
+        if (area_external_scene_is_active()) {
+            gfx_ios_diag_log("Gameplay menu queued return from imported scene package=%u", area_scene_package_id());
+            scene_diagnostic_request_external(SCENE_EXTERNAL_RETURN_TO_CASTLE);
+        } else {
+            gfx_ios_diag_log("Gameplay menu queued Hyrule Field WSC5 load package=%u", SCENE_EXTERNAL_PACKAGE);
+            scene_diagnostic_request_external(SCENE_EXTERNAL_PACKAGE);
+        }
     }]];
+    if (!importedSceneActive) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Load OoT Market" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            gfx_ios_diag_log("Gameplay menu queued OoT Market WSC5 load package=%u", SCENE_EXTERNAL_PACKAGE_MARKET_DAY);
+            scene_diagnostic_request_external(SCENE_EXTERNAL_PACKAGE_MARKET_DAY);
+        }]];
+    } else if (area_external_scene_previous_id() != 0) {
+        u32 previousSceneId = area_external_scene_previous_id();
+        [menu addAction:[UIAlertAction actionWithTitle:@"Return to previous imported scene" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            gfx_ios_diag_log("Gameplay menu queued imported-scene return package=%u", previousSceneId);
+            scene_diagnostic_request_external(SCENE_EXTERNAL_RETURN_TO_PREVIOUS);
+        }]];
+    }
     [menu addAction:[UIAlertAction actionWithTitle:@"Probe WSC2 failed-load recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
         scene_diagnostic_request(SCENE_DIAGNOSTIC_CHECK_FAILED_LOAD);

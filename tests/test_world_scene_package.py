@@ -255,13 +255,23 @@ class ScenePackageTest(unittest.TestCase):
                            cwd=work, check=True)
             real_scene_dir = os.environ.get("SM64_WSC5_PROBE_DIR")
             if real_scene_dir:
-                result = subprocess.run([executable, "--probe-wsc5-scene", real_scene_dir],
+                result = subprocess.run([executable, "--probe-wsc5-scene", real_scene_dir,
+                                         os.environ.get("SM64_WSC5_SCENE_ID", "4100"),
+                                         os.environ.get("SM64_WSC5_MIN_TRIANGLES", "1"),
+                                         os.environ.get("SM64_WSC5_MIN_UPLOADS", "1"),
+                                         os.environ.get("SM64_WSC5_COLLISION_TRIANGLES", "1579")],
                                         cwd=work, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 print(result.stdout.rstrip())
-                self.assertIn("collision-triangles=1579", result.stdout)
+                self.assertIn("collision-triangles=" + os.environ.get("SM64_WSC5_COLLISION_TRIANGLES", "1579"), result.stdout)
                 self.assertIn("spawn=" + os.environ.get("SM64_WSC5_EXPECT_SPAWN", "(160,16,1415)"), result.stdout)
                 self.assertIn("room-bounds=", result.stdout)
+            multiple_scene_dir = os.environ.get("SM64_WSC5_MULTI_PROBE_DIR")
+            if multiple_scene_dir:
+                result = subprocess.run([executable, "--probe-wsc5-scenes", multiple_scene_dir],
+                                        cwd=work, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                print(result.stdout.rstrip())
 
 
 if __name__ == "__main__":

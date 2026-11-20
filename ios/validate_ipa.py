@@ -138,7 +138,9 @@ def check_scene_diagnostic(resource_pack: zipfile.ZipFile) -> None:
             raise ValueError("WSC2/WSC3 diagnostic textures must be 16x16 RGBA PNGs")
 
 
-LOCAL_SCENE_STRINGS = (b"Load Hyrule Field (WSC5)", b"Leave Hyrule Field", b"scenes/4100.wsc", b"oot-assets/runtime-index.tsv")
+LOCAL_SCENE_STRINGS = (b"Load Hyrule Field (WSC5)", b"Load OoT Market",
+                       b"Return to Castle Grounds", b"scenes/%u.wsc",
+                       b"oot-assets/runtime-index.tsv")
 STOCK_AUDIO = ("sound/sequences.bin", "sound/sound_data.ctl", "sound/sound_data.tbl")
 BUNDLED_SCENE_PACKAGES = {
     "scene-diagnostic/scenes/4098.wsc",

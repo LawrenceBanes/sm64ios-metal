@@ -418,6 +418,12 @@ static bool read_room(struct SceneReader *reader, struct WorldSceneRoomDesc *des
     return !reader->failed && build_display_lists(room, legacy);
 }
 
+#ifdef IOS_SCENE_DIAGNOSTIC
+static bool is_external_scene_package_id(u32 id) {
+    return id >= SCENE_EXTERNAL_PACKAGE_MIN && id <= SCENE_EXTERNAL_PACKAGE_MAX;
+}
+#endif
+
 static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) {
     char path[48];
     uint64_t size = 0;
@@ -459,8 +465,8 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
         goto fail;
     }
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (id == SCENE_EXTERNAL_PACKAGE && !materialFormat) {
-        fprintf(stderr, "External scene slot requires a WSC3, WSC4, or WSC5 package\n");
+    if (is_external_scene_package_id(id) && !materialFormat) {
+        fprintf(stderr, "Imported region %u requires a WSC3, WSC4, or WSC5 package\n", id);
         goto fail;
     }
 #endif
@@ -497,7 +503,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
     }
     if (reader.failed || reader.remaining != 0) goto fail;
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (id == SCENE_EXTERNAL_PACKAGE) {
+    if (is_external_scene_package_id(id)) {
         char format[5] = {0};
         u32 batchCount = 0, renderTriangles = 0, collisionTriangles = 0, textureReferences = 0;
         memcpy(format, magic, 4);
@@ -515,7 +521,7 @@ static s32 load_scene(void *context, u32 id, struct WorldScenePackage *package) 
                 }
             }
         }
-        WSC_DIAG_LOG("External scene package parsed id=%u format=%s rooms=%u entrances=%u exits=%u batches=%u renderTriangles=%u collisionTriangles=%u textureReferences=%u bytes=%llu",
+        WSC_DIAG_LOG("Imported scene package parsed id=%u format=%s rooms=%u entrances=%u exits=%u batches=%u renderTriangles=%u collisionTriangles=%u textureReferences=%u bytes=%llu",
                      id, format, rooms, entrances, exits, batchCount, renderTriangles,
                      collisionTriangles, textureReferences, (unsigned long long)size);
     }

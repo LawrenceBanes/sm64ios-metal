@@ -165,8 +165,26 @@ def export_fixture(work, *, shared=False):
 
 
 class ImportTest(unittest.TestCase):
-    def convert(self, path, layout=None, *, scale=Fraction(1), offset=(0, 0, 0), expanded=False):
-        return convert_archive(path, ROOT, layout or {}, scale, offset, expanded, {})
+    def convert(self, path, layout=None, *, scale=Fraction(1), offset=(0, 0, 0), expanded=False,
+                scene_id=4100):
+        return convert_archive(path, ROOT, layout or {}, scale, offset, expanded, {}, scene_id=scene_id)
+
+    def test_scene_id_is_serialized_and_uniform_scale_plus_recenter_is_applied_once(self):
+        from tools.o2r_to_wsc3 import Conversion
+        transform = Conversion(None, ROOT, Fraction(9, 4), (4856, 0, -16622), {}, True, 4101)
+        self.assertEqual(transform.point([-400, 100, 1000]), [3956, 225, -14372])
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "scene.o2r"
+            fixture(path)
+            package, _, report = self.convert(path, scale=Fraction(9, 4),
+                                               offset=(4856, 0, -16622), expanded=True,
+                                               scene_id=4101)
+            self.assertIsNotNone(package, report)
+            self.assertEqual(package[:8], struct.pack("<4sI", b"WSC3", 4101))
+            self.assertEqual(report["scene_id"], 4101)
+            self.assertEqual(report["world_transform"], {
+                "scale": "9/4", "offset": [4856, 0, -16622],
+                "runtime_scaling": False, "spatial_units": "SM64 world units"})
 
     def test_uniform_world_scale_preserves_materials_and_transforms_bounds(self):
         from tools.o2r_to_wsc3 import Conversion

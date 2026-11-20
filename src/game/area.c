@@ -2,6 +2,7 @@
 
 #include "prevent_bss_reordering.h"
 #include "area.h"
+#include <stdio.h>
 #include "sm64.h"
 #include "gfx_dimensions.h"
 #include "behavior_data.h"
@@ -77,6 +78,10 @@ struct Area *gAreas = gAreaData;
 struct Area *gCurrentArea = NULL;
 #ifdef IOS_O2R_SCENE_RUNTIME
 static struct WorldSceneRuntime sAreaScene;
+#ifdef IOS_SCENE_DIAGNOSTIC
+static u32 sExternalSelectedSceneId = SCENE_EXTERNAL_PACKAGE;
+static u32 sExternalPreviousSceneId;
+#endif
 
 #ifdef IOS_SCENE_DIAGNOSTIC
 _Static_assert(SCENE_DIAGNOSTIC_PACKAGE == (LEVEL_CASTLE_GROUNDS << 8 | SCENE_DIAGNOSTIC_AREA),
@@ -92,16 +97,41 @@ static struct WorldSceneDestination sExternalSpawn;
 #define SCENE_DIAG_LOG(...) ((void)0)
 #endif
 
-bool area_external_scene_available(void) {
+bool area_external_scene_available(u32 packageId) {
+    if (packageId < SCENE_EXTERNAL_PACKAGE_MIN || packageId > SCENE_EXTERNAL_PACKAGE_MAX)
+        return false;
     fs_scene_library_reset();
-    void *bytes = fs_load_scene_resource("scenes/4100.wsc", 16 * 1024 * 1024, NULL);
+    char path[48];
+    snprintf(path, sizeof(path), "scenes/%u.wsc", packageId);
+    void *bytes = fs_load_scene_resource(path, 16 * 1024 * 1024, NULL);
     bool available = bytes != NULL;
     free(bytes);
     return available;
 }
 
+bool area_external_scene_select(u32 packageId) {
+    if (!area_external_scene_available(packageId)) return false;
+    u32 active = area_scene_package_id();
+    if (active >= SCENE_EXTERNAL_PACKAGE_MIN && active <= SCENE_EXTERNAL_PACKAGE_MAX
+        && active != packageId) {
+        sExternalPreviousSceneId = active;
+    }
+    sExternalSelectedSceneId = packageId;
+    return true;
+}
+
+bool area_external_scene_is_active(void) {
+    u32 active = area_scene_package_id();
+    return gCurrentArea != NULL && gCurrentArea->index == SCENE_EXTERNAL_AREA
+        && active >= SCENE_EXTERNAL_PACKAGE_MIN && active <= SCENE_EXTERNAL_PACKAGE_MAX;
+}
+
+u32 area_external_scene_previous_id(void) {
+    return sExternalPreviousSceneId;
+}
+
 bool area_external_scene_spawn(struct SpawnInfo *spawn) {
-    if (area_scene_package_id() != SCENE_EXTERNAL_PACKAGE) return false;
+    if (!area_external_scene_is_active()) return false;
     if (spawn != NULL) {
         spawn->startPos[0] = sExternalSpawn.position.x;
         spawn->startPos[1] = sExternalSpawn.position.y;
@@ -151,7 +181,7 @@ static bool external_spawn_has_clearance(struct WorldPoint point) {
 }
 
 void area_external_scene_track(const f32 *position) {
-    if (area_scene_package_id() != SCENE_EXTERNAL_PACKAGE
+    if (!area_external_scene_is_active()
         || !isfinite(position[0]) || !isfinite(position[1]) || !isfinite(position[2])
         || position[0] < -32768 || position[0] > 32767
         || position[1] < -32768 || position[1] > 32767
@@ -193,19 +223,25 @@ u32 area_scene_package_id(void) {
 static void load_area_scene(s32 index) {
     /* Namespaced by stock level and area so saves and level tables keep their
      * original IDs. Entry 0 is the package's default room. */
-    u32 sceneId = ((u32)gCurrLevelNum << 8) | (u32)index;
+    u32 areaId = ((u32)gCurrLevelNum << 8) | (u32)index;
+    u32 sceneId = areaId;
+#ifdef IOS_SCENE_DIAGNOSTIC
+    bool externalSlot = areaId == SCENE_EXTERNAL_PACKAGE;
+    if (externalSlot) sceneId = sExternalSelectedSceneId;
+#endif
     world_scene_runtime_init(&sAreaScene, &gWorldSceneFileProvider, NULL);
     struct WorldSceneDestination destination = {0};
     enum WorldSceneResult result = world_scene_open(&sAreaScene, sceneId, 0, &destination);
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (sceneId == SCENE_EXTERNAL_PACKAGE) {
+    if (externalSlot) {
         if (result == WORLD_SCENE_OK)
             result = world_scene_update_residency(&sAreaScene, destination.position, UINT32_MAX, 0);
         if (result == WORLD_SCENE_OK && !external_spawn_has_clearance(destination.position))
             result = WORLD_SCENE_BAD_PACKAGE;
         if (result == WORLD_SCENE_OK) sExternalSpawn = destination;
         else world_scene_close(&sAreaScene);
-        SCENE_DIAG_LOG("Hyrule WSC5 activation result=%d room=%u activeRooms=%u spawn=(%lld,%lld,%lld) yaw=%d",
+        SCENE_DIAG_LOG("Imported WSC5 activation package=%u result=%d room=%u activeRooms=%u spawn=(%lld,%lld,%lld) yaw=%d",
+                       sceneId,
                        result, world_scene_current_room(&sAreaScene),
                        world_scene_active_room_count(&sAreaScene),
                        (long long)destination.position.x, (long long)destination.position.y,

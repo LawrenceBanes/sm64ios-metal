@@ -219,3 +219,72 @@ class HyruleFieldInputs:
                            "daytime": self.daytime},
                 "sources": [HYRULE_CONFIG, HYRULE_LIGHTING, FOG_RANGE, FOG_POSITION, ROOM_DRAW],
                 "scope": "explicit scene lighting-row snapshot and daytime segment branch; type-2 visibility and camera-dependent translucent sorting are not evaluated"}
+
+
+@dataclass(frozen=True)
+class StaticSceneLightingInputs:
+    """Explicit NTSC 1.0 static-scene lighting and common room-pass setup.
+
+    This profile is for scenes whose room lists have no runtime-generated
+    material segments. It does not infer day/night selection or resolve
+    scene-specific animated commands; the caller chooses a lighting row and
+    environment color explicitly.
+    """
+    scene: str
+    lighting_setting: int
+    environment_rgba: tuple[int, int, int, int] = (128, 128, 128, 128)
+    marker = NTSC_10
+    name = "oot-ntsc10-explicit-static-scene-lighting-snapshot"
+
+    def __post_init__(self):
+        if (not isinstance(self.scene, str) or not self.scene.startswith("scenes/")
+                or type(self.lighting_setting) is not int or not 0 <= self.lighting_setting < 256
+                or len(self.environment_rgba) != 4
+                or any(type(value) is not int or not 0 <= value <= 255
+                       for value in self.environment_rgba)):
+            raise ValueError("static scene context requires a scene path, lighting row and RGBA environment color")
+
+    def lighting(self, scene_commands):
+        entries = [command.get("lighting_settings", []) for command in scene_commands
+                   if command["id"] == 15]
+        if len(entries) != 1 or self.lighting_setting >= len(entries[0]):
+            raise ValueError("static scene context requires the selected row from exactly one decoded lighting table")
+        setting = entries[0][self.lighting_setting]
+        signed_direction = lambda values: [value - 256 if value >= 128 else value for value in values]
+        provenance = {"origin": "reconstructed", "source": SCENE_ORDER,
+                      "lighting_setting_index": self.lighting_setting}
+        lights = {
+            "0": {"color": setting["light1_color"],
+                  "direction": signed_direction(setting["light1_direction"])},
+            "1": {"color": setting["light2_color"],
+                  "direction": signed_direction(setting["light2_direction"])},
+            "2": {"color": setting["ambient"], "direction": [0, 0, 0]},
+        }
+        fog = fog_factor_for_setting(setting)
+        fog_color = {"rgba": [*setting["fog_color"], 0], **provenance}
+        return {"setting": setting, "lights": lights, "provenance": provenance,
+                "fog_factor": fog, "fog_color": fog_color}
+
+    def seed(self, state, scene_commands):
+        selected = self.lighting(scene_commands)
+        state.num_directional_lights = {"count": 2, **selected["provenance"]}
+        state.lights = selected["lights"]
+        state.fog_factor = selected["fog_factor"]
+        state.colors["fog"] = selected["fog_color"]
+
+    def prelude(self, pass_name, room_type):
+        if pass_name not in ("opaque", "translucent"):
+            raise ValueError("unknown room pass")
+        source = "explicit static-scene pass configuration"
+        commands = (env_color(*self.environment_rgba, source), ROOM_SETUP_25)
+        if pass_name == "opaque" and room_type == 3:
+            commands += (GeneratedList(OPAQUE_DITHER, ((0xE3001801, 0xC0),
+                                                       (0xDF000000, 0))),)
+        return PassPrelude({}, commands)
+
+    def metadata(self):
+        return {"name": self.name,
+                "inputs": {"lighting_setting": self.lighting_setting,
+                           "environment_rgba": list(self.environment_rgba)},
+                "sources": [SCENE_ORDER, ROOM_SETUP, ROOM_DRAW, FOG_RANGE, FOG_POSITION],
+                "scope": "explicit static NTSC 1.0 lighting-row snapshot and common room setup; dynamic scene segments and time selection are not inferred"}

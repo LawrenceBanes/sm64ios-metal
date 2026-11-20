@@ -1022,9 +1022,16 @@ int gPressedStart = 0;
 /* UIKit and the iOS game tick both run on the main thread. Perform scene
  * changes at the usual warp boundary, outside any UIKit presentation callback. */
 static enum SceneDiagnosticRequest sSceneDiagnosticRequest;
+static u32 sSceneExternalPackageRequest;
 
 void scene_diagnostic_request(enum SceneDiagnosticRequest request) {
     sSceneDiagnosticRequest = request;
+    if (request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) sSceneExternalPackageRequest = 0;
+}
+
+void scene_diagnostic_request_external(u32 packageId) {
+    sSceneExternalPackageRequest = packageId;
+    sSceneDiagnosticRequest = SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL;
 }
 
 static void apply_scene_diagnostic_request(void) {
@@ -1047,14 +1054,44 @@ static void apply_scene_diagnostic_request(void) {
             gfx_ios_diag_log("Scene warp ignored: dismount before changing area");
             return;
         }
-        s16 sceneArea = request == SCENE_DIAGNOSTIC_TOGGLE_WSC3 ? SCENE_DIAGNOSTIC_WSC3_AREA : SCENE_DIAGNOSTIC_AREA;
         if (request == SCENE_DIAGNOSTIC_TOGGLE_EXTERNAL) {
-            sceneArea = SCENE_EXTERNAL_AREA;
-            if (gCurrentArea->index != sceneArea && !area_external_scene_available()) {
-                gfx_ios_portal_status("Install the WSC5 package and gfx/scenes textures in Documents first.");
+            bool active = area_external_scene_is_active();
+            u32 target = sSceneExternalPackageRequest;
+            sSceneExternalPackageRequest = 0;
+            if (target == 0 && active) target = SCENE_EXTERNAL_RETURN_TO_CASTLE;
+            else if (target == 0) target = SCENE_EXTERNAL_PACKAGE;
+            if (target == SCENE_EXTERNAL_RETURN_TO_PREVIOUS) {
+                target = area_external_scene_previous_id();
+                if (target == 0) {
+                    gfx_ios_portal_status("No previous imported scene is available.");
+                    return;
+                }
+            }
+            if (target == SCENE_EXTERNAL_RETURN_TO_CASTLE) {
+                if (!active) {
+                    gfx_ios_diag_log("Imported-scene return ignored: Mario is already in Castle Grounds");
+                    return;
+                }
+                gfx_ios_diag_log("Imported scene %u returning to Castle Grounds", area_scene_package_id());
+                initiate_warp(LEVEL_CASTLE_GROUNDS, 1, SCENE_DIAGNOSTIC_NODE, 0);
                 return;
             }
+            if (!area_external_scene_available(target)) {
+                gfx_ios_portal_status("Install this WSC5 scene in Documents/oot-assets before entering it.");
+                gfx_ios_diag_log("Imported scene request rejected: package=%u is unavailable", target);
+                return;
+            }
+            if (!area_external_scene_select(target)) {
+                gfx_ios_portal_status("The selected WSC5 scene could not be selected.");
+                return;
+            }
+            s16 sceneArea = active ? gCurrentArea->index : SCENE_EXTERNAL_AREA;
+            gfx_ios_diag_log("Imported scene request package=%u sourceArea=%d destinationArea=%d",
+                             target, gCurrentArea->index, sceneArea);
+            initiate_warp(LEVEL_CASTLE_GROUNDS, sceneArea, SCENE_DIAGNOSTIC_NODE, 0);
+            return;
         }
+        s16 sceneArea = request == SCENE_DIAGNOSTIC_TOGGLE_WSC3 ? SCENE_DIAGNOSTIC_WSC3_AREA : SCENE_DIAGNOSTIC_AREA;
         s16 destination = gCurrentArea->index == sceneArea ? 1 : sceneArea;
         initiate_warp(LEVEL_CASTLE_GROUNDS, destination, SCENE_DIAGNOSTIC_NODE, 0);
     }
@@ -1088,7 +1125,7 @@ s32 play_mode_normal(void) {
     update_hud_values();
 
 #ifdef IOS_SCENE_DIAGNOSTIC
-    if (area_scene_package_id() == SCENE_EXTERNAL_PACKAGE) {
+    if (area_external_scene_is_active()) {
         area_external_scene_track(gMarioState->pos);
         if (gMarioState->pos[1] < -10000 && !gWarpTransition.isActive
             && sDelayedWarpOp == WARP_OP_NONE && sWarpDest.type == WARP_TYPE_NOT_WARPING) {

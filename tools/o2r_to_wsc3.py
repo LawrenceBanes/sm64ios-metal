@@ -345,16 +345,18 @@ def lower_material(draw, resources, entries, pngs, *, vertex_alpha_opaque=False)
 
 
 class Conversion:
-    def __init__(self, resources, root, scale, offset, layout, expanded):
+    def __init__(self, resources, root, scale, offset, layout, expanded, scene_id=SCENE_ID):
         self.resources, self.root = resources, root
         self.scale, self.offset, self.layout = scale, offset, layout
+        self.scene_id = scene_id
         self.boundary = 32768 if expanded else 8192
         self.pngs, self.batches, self.failures = {}, defaultdict(list), []
         self.converted_sources = set()
         self.vertex_alpha_cache = {}
         self.accepted_approximation_counts = Counter()
         self.report = {"schema_version": 1, "status": "rejected", "source_scene": root,
-                       "source_room_paths": [], "candidate_draws": 0, "rooms": [], "entrances": [],
+                       "source_room_paths": [], "scene_id": scene_id,
+                       "candidate_draws": 0, "rooms": [], "entrances": [],
                        "world_transform": {"scale": str(scale), "offset": list(offset),
                                            "runtime_scaling": False, "spatial_units": "SM64 world units"},
                        "trace_issues": [], "draw_issues": self.failures, "scene_issues": [],
@@ -502,17 +504,28 @@ class Conversion:
 
     def scene_profile(self):
         context = self.layout.get("hyrule_context")
-        if context is None:
+        static_context = self.layout.get("static_lighting_context")
+        if context is not None and static_context is not None:
+            raise ValueError("select only one lighting context")
+        if context is None and static_context is None:
             return None
-        if self.root != fast3d_pass_state.HYRULE_SCENE:
-            raise ValueError("hyrule_context is restricted to the exact NTSC 1.0 Hyrule Field scene resource")
-        if not isinstance(context, dict) or set(context) != {"frame", "lighting_setting", "daytime"}:
-            raise ValueError("hyrule_context requires exactly frame, lighting_setting, and daytime")
         marker = self.resources.archive.read("version")[:len(fast3d_pass_state.NTSC_10)]
         if marker != fast3d_pass_state.NTSC_10:
-            raise ValueError("hyrule_context requires the OoT NTSC 1.0 archive marker")
-        return fast3d_pass_state.HyruleFieldInputs(context["frame"], context["lighting_setting"],
-                                                    context["daytime"])
+            raise ValueError("the selected lighting context requires the OoT NTSC 1.0 archive marker")
+        if context is not None:
+            if self.root != fast3d_pass_state.HYRULE_SCENE:
+                raise ValueError("hyrule_context is restricted to the exact NTSC 1.0 Hyrule Field scene resource")
+            if not isinstance(context, dict) or set(context) != {"frame", "lighting_setting", "daytime"}:
+                raise ValueError("hyrule_context requires exactly frame, lighting_setting, and daytime")
+            return fast3d_pass_state.HyruleFieldInputs(context["frame"], context["lighting_setting"],
+                                                        context["daytime"])
+        if not isinstance(static_context, dict) or set(static_context) != {"lighting_setting", "environment_rgba"}:
+            raise ValueError("static_lighting_context requires exactly lighting_setting and environment_rgba")
+        color = static_context["environment_rgba"]
+        if not isinstance(color, list):
+            raise ValueError("static_lighting_context environment_rgba must be a four-element array")
+        return fast3d_pass_state.StaticSceneLightingInputs(
+            self.root, static_context["lighting_setting"], tuple(color))
 
     def convert(self, segments):
         source = self.resources.read(self.root, ("Scene",))
@@ -605,7 +618,7 @@ class Conversion:
         all_materials = [batch["material"] for room in rooms for batch in room["batches"]]
         version = (5 if any(material.get("decal") for material in all_materials)
                    else 4 if any(material.get("fog") for material in all_materials) else 3)
-        return {"version": version, "id": SCENE_ID, "rooms": rooms, "entrances": entrances}
+        return {"version": version, "id": self.scene_id, "rooms": rooms, "entrances": entrances}
 
     def compatibility_summary(self, package=None):
         reasons = Counter(failure["reason"] for failure in self.failures)
@@ -848,18 +861,22 @@ CONVERSION_ERRORS = (OSError, BadZipFile, KeyError, TypeError, ValueError, ZeroD
                      struct.error, o2r.ImportFailure, trace.TraceError)
 
 
-def convert_archive(archive_path, source, layout, scale, offset, expanded, segments, *, audit=False):
+def convert_archive(archive_path, source, layout, scale, offset, expanded, segments, *, audit=False,
+                    scene_id=SCENE_ID):
     if archive_path.stat().st_size > trace.MAX_ARCHIVE_FILE_BYTES:
         raise ValueError("archive file exceeds the O2R size limit")
     if scale <= 0 or scale > 1024:
         raise ValueError("--scale must be positive and no greater than 1024")
+    scene_id = wsc.integer(scene_id, 1, 0xFFFFFFFF, "scene ID")
     allowed = {"bounds", "collision_rooms", "links", "surface_map", "entrance", "pass_preludes", "room_segments",
-               "hyrule_context", "ignore_water_boxes", "ignore_collision_vertex_flags", "exclude_entrances"}
+               "hyrule_context", "static_lighting_context", "ignore_water_boxes",
+               "ignore_collision_vertex_flags", "exclude_entrances"}
     if not isinstance(layout, dict) or set(layout) - allowed:
         raise ValueError("invalid layout fields")
     with ZipFile(archive_path) as archive:
         resources = trace.ArchiveResources(archive)
-        conversion = Conversion(resources, o2r.safe_archive_path(source), scale, offset, layout, expanded)
+        conversion = Conversion(resources, o2r.safe_archive_path(source), scale, offset, layout,
+                                expanded, scene_id)
         stage = "scene, collision and entrances"
         package = None
         try:
@@ -892,6 +909,8 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="print compatibility JSON to stdout without staging files")
     parser.add_argument("--layout", type=Path, help="optional scene-independent JSON ownership and room metadata")
     parser.add_argument("--scale", type=Fraction, default=Fraction(1), help="units multiplier, e.g. 1/2")
+    parser.add_argument("--scene-id", type=lambda value: int(value, 0), default=SCENE_ID,
+                        help="WSC package identifier (default: 4100)")
     parser.add_argument("--offset", type=int, nargs=3, default=(0, 0, 0), metavar=("X", "Y", "Z"))
     parser.add_argument("--installed-library", type=Path, help="existing oot-assets directory; omit byte-identical PNGs already installed there")
     parser.add_argument("--expanded-grid", action="store_true", help="target a build with the expanded collision grid")
@@ -909,7 +928,8 @@ def main(argv=None):
             layout = json.loads(args.layout.read_text(encoding="utf-8"))
         segments = parse_segments(args.segment)
         package, pngs, report = convert_archive(args.archive, args.scene, layout, args.scale,
-                                               args.offset, args.expanded_grid, segments, audit=True)
+                                               args.offset, args.expanded_grid, segments, audit=True,
+                                               scene_id=args.scene_id)
         if args.dry_run:
             report["status"] = "compatible" if package is not None else "rejected"
         encoded_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
@@ -930,7 +950,7 @@ def main(argv=None):
                     installed = args.installed_library / "gfx" / (name + ".png")
                     if installed.is_file() and sha256(installed.read_bytes()).digest() == sha256(destination.read_bytes()).digest():
                         destination.unlink()
-            (output / "scenes" / f"{SCENE_ID}.wsc").write_bytes(package)
+            (output / "scenes" / f"{args.scene_id}.wsc").write_bytes(package)
             (output / "conversion-report.json").write_text(encoded_report, encoding="utf-8")
             if args.output.exists():
                 raise ValueError("output already exists")
