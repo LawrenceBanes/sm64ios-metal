@@ -103,7 +103,8 @@
 
 - Added `frameInfo: true` for generic API 2 fullscreen passes, with `shader64_pass_frame` and a fixed binding at fragment buffer 8. The common float4 carries elapsed seconds, clamped frame delta, frame index, and output aspect ratio. This initial variant cannot be combined with the separately bound scene or pack texture interfaces.
 - Added AnimatedGraph64, a source-defined time-varying color pulse, plus C validator/wrapper tests and graph resource-combination tests.
-- Focused Shader64 validation passes (27 tests, including production importer and ASan/UBSan archive smoke), as do Metal codegen, Xcode project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh`. Apple MSL/backend validation is pending. No GPU timing or rendered output is verified.
-- Previous compute-time work is host-tested and Apple-compiled at `fbbd49b8` / workflow `44817761017`. No final `main` merge yet.
+- Focused Shader64 validation passes (27 tests, including production importer and ASan/UBSan archive smoke), as do Metal codegen, Xcode project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh`.
+- Commit `288973e3b4832e87218df4b7b4f9398fc19e213e` passed Apple workflow [44818900682](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44818900682), including Xcode 27 iOS Metal backend and AnimatedGraph64 wrapper MSL compilation plus Linux regressions. This validates compile/link only; no runtime GPU result or screenshot is available.
+- Next: implement bounded temporal history support for graph passes, including invalidation on pack switch and scene/resolution discontinuities. No final `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
