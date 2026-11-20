@@ -23,12 +23,14 @@
 #include "gfx_cc.h"
 #include "gfx_scene_capture.h"
 #include "gfx_postprocess.h"
+#include "gfx_shadow_map.h"
 #include "gfx_uikit.h"
 #include "../configfile.h"
 
 #define METAL_SHADER_CAP 128
 #define METAL_TEXTURE_CAP 8192
 #define METAL_PIPELINE_STATE_CAP 96
+#define METAL_SHADOW_VERTEX_LIMIT (8192u * 3u)
 
 struct MetalProgram {
     uint32_t shader_id;
@@ -81,6 +83,14 @@ static id<MTLTexture> metal_ssao_filtered_texture;
 static id<MTLTexture> metal_bloom_extract_texture;
 static id<MTLTexture> metal_bloom_temp_texture;
 static id<MTLTexture> metal_bloom_output_texture;
+static id<MTLTexture> metal_shadow_texture;
+static id<MTLRenderPipelineState> metal_shadow_pipeline;
+static id<MTLDepthStencilState> metal_shadow_depth_state;
+static id<MTLBuffer> metal_shadow_vertex_buffer;
+static float (*metal_shadow_world_positions)[3];
+static struct GfxShadowMapTransform metal_shadow_transform;
+static bool metal_shadow_transform_valid;
+static NSUInteger metal_shadow_texture_size;
 static NSUInteger metal_ssao_width, metal_ssao_height;
 static NSUInteger metal_bloom_width, metal_bloom_height;
 static bool metal_ssao_is_enabled;
@@ -95,6 +105,8 @@ static bool metal_fog_is_enabled;
 static uint32_t metal_fog_profile;
 static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
+static bool metal_shadows_is_enabled;
+static uint32_t metal_shadow_resolution = 512u;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -204,6 +216,9 @@ static void gfx_metal_release_render_targets(void) {
     [metal_bloom_extract_texture release]; metal_bloom_extract_texture = nil;
     [metal_bloom_temp_texture release]; metal_bloom_temp_texture = nil;
     [metal_bloom_output_texture release]; metal_bloom_output_texture = nil;
+    [metal_shadow_texture release]; metal_shadow_texture = nil;
+    metal_shadow_texture_size = 0;
+    metal_shadow_transform_valid = false;
     metal_ssao_width = metal_ssao_height = 0;
     metal_bloom_width = metal_bloom_height = 0;
     metal_depth_width = metal_depth_height = 0;
@@ -212,6 +227,7 @@ static void gfx_metal_release_render_targets(void) {
     @synchronized ([NSObject class]) {
         metal_performance_stats.ssao_pixels = 0;
         metal_performance_stats.bloom_pixels = 0;
+        metal_performance_stats.shadow_triangles = 0;
         metal_performance_stats.estimated_target_bytes = 0;
     }
 }
@@ -251,6 +267,10 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_effects_enabled = ![defaults objectForKey:@"SM64MetalEffectsEnabled"] ||
                             [defaults boolForKey:@"SM64MetalEffectsEnabled"];
+    metal_shadows_is_enabled = [defaults boolForKey:@"SM64MetalShadowsEnabled"];
+    NSInteger saved_shadow_resolution = [defaults integerForKey:@"SM64MetalShadowResolution"];
+    metal_shadow_resolution = saved_shadow_resolution == 1024 || saved_shadow_resolution == 2048 ?
+                              (uint32_t)saved_shadow_resolution : 512u;
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
@@ -342,9 +362,43 @@ void gfx_metal_set_effects_enabled(bool enabled) {
         if (!enabled) {
             metal_performance_stats.ssao_pixels = 0;
             metal_performance_stats.bloom_pixels = 0;
+            metal_performance_stats.shadow_triangles = 0;
         }
     }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalEffectsEnabled"];
+}
+bool gfx_metal_shadows_enabled(void) {
+    @synchronized ([NSObject class]) { return metal_effects_enabled && metal_shadows_is_enabled; }
+}
+void gfx_metal_set_shadows_enabled(bool enabled) {
+    @synchronized ([NSObject class]) {
+        metal_shadows_is_enabled = enabled;
+        metal_offscreen_runtime_failed = false;
+        if (!enabled) metal_performance_stats.shadow_triangles = 0;
+    }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalShadowsEnabled"];
+    gfx_metal_release_render_targets();
+}
+uint32_t gfx_metal_shadow_resolution(void) { @synchronized ([NSObject class]) { return metal_shadow_resolution; } }
+void gfx_metal_set_shadow_resolution(uint32_t resolution) {
+    uint32_t sanitized = resolution == 1024u || resolution == 2048u ? resolution : 512u;
+    @synchronized ([NSObject class]) {
+        if (metal_shadow_resolution == sanitized) return;
+        metal_shadow_resolution = sanitized;
+        gfx_metal_release_render_targets();
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalShadowResolution"];
+}
+void gfx_metal_cycle_shadow_resolution(void) {
+    uint32_t next = gfx_metal_shadow_resolution() == 512u ? 1024u :
+                    (gfx_metal_shadow_resolution() == 1024u ? 2048u : 512u);
+    @synchronized ([NSObject class]) {
+        metal_shadow_resolution = next;
+        metal_offscreen_runtime_failed = false;
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)next forKey:@"SM64MetalShadowResolution"];
+    [metal_shadow_texture release]; metal_shadow_texture = nil;
+    metal_shadow_texture_size = 0;
 }
 bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_post_enabled; } }
 void gfx_metal_set_post_enabled(bool enabled) {
@@ -1102,6 +1156,24 @@ static id<MTLTexture> gfx_metal_new_target_texture(NSUInteger width, NSUInteger 
     return [metal_device newTextureWithDescriptor:descriptor];
 }
 
+static bool gfx_metal_ensure_shadow_texture(void) {
+    NSUInteger resolution = gfx_metal_shadow_resolution();
+    if (metal_shadow_texture && metal_shadow_texture_size == resolution) return true;
+    [metal_shadow_texture release]; metal_shadow_texture = nil;
+    metal_shadow_texture_size = 0;
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                           width:resolution
+                                                                                          height:resolution
+                                                                                       mipmapped:NO];
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    metal_shadow_texture = [metal_device newTextureWithDescriptor:descriptor];
+    if (!metal_shadow_texture) return false;
+    metal_shadow_texture.label = @"SM64 directional shadow depth";
+    metal_shadow_texture_size = resolution;
+    return true;
+}
+
 static void gfx_metal_fallback_to_direct(const char *reason) {
     struct GfxMetalSettings fallback = metal_settings;
     fallback.render_scale_percent = 100u;
@@ -1113,7 +1185,8 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
-        !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u) return false;
+        !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u &&
+        !gfx_metal_shadows_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1125,7 +1198,7 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         gfx_metal_fallback_to_direct("invalid drawable dimensions or scale");
         return false;
     }
-    NSUInteger samples = gfx_metal_ssao_enabled() ? 1u : metal_settings.sample_count;
+    NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled()) ? 1u : metal_settings.sample_count;
     BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
         metal_target_samples == samples && metal_depth_texture != nil &&
         (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
@@ -1134,10 +1207,15 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         (!gfx_metal_bloom_enabled() || (metal_bloom_extract_texture && metal_bloom_temp_texture &&
          metal_bloom_output_texture && metal_bloom_width == (size.width + 3u) / 4u &&
          metal_bloom_height == (size.height + 3u) / 4u)) &&
+        (!gfx_metal_shadows_enabled() || (metal_shadow_texture && metal_shadow_texture_size == gfx_metal_shadow_resolution())) &&
         (samples > 1 ? (metal_multisample_color && metal_resolve_texture) : metal_color_target != nil);
     if (target_ready) return true;
 
     gfx_metal_release_render_targets();
+    if (gfx_metal_shadows_enabled() && !gfx_metal_ensure_shadow_texture()) {
+        gfx_ios_diag_log("Metal directional shadows disabled: depth target allocation failed");
+        gfx_metal_set_shadows_enabled(false);
+    }
     if (samples > 1) {
         metal_multisample_color = gfx_metal_new_target_texture(size.width, size.height, samples,
         MTLPixelFormatRGBA16Float, MTLTextureUsageRenderTarget);
@@ -1209,6 +1287,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         estimated_bytes += (uint64_t)metal_ssao_width * metal_ssao_height * 2u;
     if (gfx_metal_bloom_enabled())
         estimated_bytes += (uint64_t)metal_bloom_width * metal_bloom_height * 24u;
+    if (gfx_metal_shadows_enabled())
+        estimated_bytes += (uint64_t)metal_shadow_texture_size * metal_shadow_texture_size * 4u;
     @synchronized ([NSObject class]) { metal_performance_stats.estimated_target_bytes = estimated_bytes; }
     gfx_ios_diag_log("Metal offscreen targets ready size=%lux%lu scale=%u%% samples=%lu color=%@ resolve=%@ depth=%@", (unsigned long)size.width, (unsigned long)size.height, metal_settings.render_scale_percent, (unsigned long)samples, samples > 1 ? metal_multisample_color : metal_color_target, samples > 1 ? metal_resolve_texture : nil, depth);
     return true;
@@ -1238,6 +1318,10 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
     [encoder setFragmentTexture:metal_depth_texture atIndex:2];
     [encoder setFragmentTexture:(gfx_metal_bloom_enabled() ? metal_bloom_output_texture : source) atIndex:3];
+    /* Always bind a valid depth texture and zero the shadow range when the
+     * shadow pass did not produce a map. This keeps the shared presentation
+     * pipeline's resource bindings deterministic on the Classic path. */
+    [encoder setFragmentTexture:(metal_shadow_texture ?: metal_depth_texture) atIndex:4];
     uint32_t debug_mode = gfx_metal_ssao_debug_mode();
     vector_uint4 present_flags = { gfx_metal_ssao_enabled() ? 1u : 0u,
                                    debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u),
@@ -1253,12 +1337,33 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     vector_float4 grade_params = { gfx_metal_exposure_stops(), gfx_metal_fog_enabled() ? 1.0f : 0.0f,
                                    fog_density[fog_profile], fog_start[fog_profile] };
     float inverse_projection[4][4] = {{0}};
+    float inverse_view[4][4] = {{0}};
     if (gfx_metal_fog_enabled()) {
         struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
         if (!capture.has_projection_matrix ||
             !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection)) {
             grade_params.y = 0.0f;
             gfx_ios_diag_log("Metal distance fog disabled for frame: inverse projection unavailable");
+        }
+    }
+    vector_float4 shadow_right_min = {0, 0, 0, 0};
+    vector_float4 shadow_up_min = {0, 0, 0, 0};
+    vector_float4 shadow_forward_min = {0, 0, 0, 0};
+    vector_float4 shadow_ranges = {1, 1, 1, 0};
+    if (gfx_metal_shadows_enabled() && metal_shadow_transform_valid) {
+        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+        if (capture.has_view_matrix &&
+            gfx_postprocess_invert_matrix(capture.view_matrix, inverse_view)) {
+            shadow_right_min = (vector_float4){ metal_shadow_transform.right[0], metal_shadow_transform.right[1],
+                metal_shadow_transform.right[2], metal_shadow_transform.minimum[0] };
+            shadow_up_min = (vector_float4){ metal_shadow_transform.up[0], metal_shadow_transform.up[1],
+                metal_shadow_transform.up[2], metal_shadow_transform.minimum[1] };
+            shadow_forward_min = (vector_float4){ metal_shadow_transform.forward[0], metal_shadow_transform.forward[1],
+                metal_shadow_transform.forward[2], metal_shadow_transform.minimum[2] };
+            shadow_ranges = (vector_float4){ metal_shadow_transform.range[0], metal_shadow_transform.range[1],
+                metal_shadow_transform.range[2], 0.0025f };
+        } else {
+            gfx_ios_diag_log("Metal shadow receiving disabled for frame: inverse view unavailable");
         }
     }
     vector_float4 fog_color = fog_colors[fog_profile];
@@ -1279,6 +1384,11 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentBytes:&bloom_params length:sizeof(bloom_params) atIndex:4];
     [encoder setFragmentBytes:&grade_style length:sizeof(grade_style) atIndex:5];
     [encoder setFragmentBytes:&sky_params length:sizeof(sky_params) atIndex:6];
+    [encoder setFragmentBytes:inverse_view length:sizeof(inverse_view) atIndex:7];
+    [encoder setFragmentBytes:&shadow_right_min length:sizeof(shadow_right_min) atIndex:8];
+    [encoder setFragmentBytes:&shadow_up_min length:sizeof(shadow_up_min) atIndex:9];
+    [encoder setFragmentBytes:&shadow_forward_min length:sizeof(shadow_forward_min) atIndex:10];
+    [encoder setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:11];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;
@@ -1354,6 +1464,96 @@ static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
     @synchronized ([NSObject class]) {
         metal_performance_stats.ssao_pixels = width * height;
     }
+    return true;
+}
+
+static bool gfx_metal_ensure_shadow_pipeline(void) {
+    if (metal_shadow_pipeline && metal_shadow_depth_state && metal_shadow_vertex_buffer) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_shadow_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    id<MTLFunction> vertex = library ? [library newFunctionWithName:@"sm64_shadow_vertex"] : nil;
+    MTLRenderPipelineDescriptor *descriptor = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
+    descriptor.vertexFunction = vertex;
+    descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    descriptor.label = @"SM64 directional shadow depth pipeline";
+    metal_shadow_pipeline = [metal_device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    [vertex release]; [library release];
+    if (!metal_shadow_pipeline) {
+        gfx_ios_diag_log("Metal shadow depth pipeline creation failed: %s", error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    MTLDepthStencilDescriptor *depth = [[[MTLDepthStencilDescriptor alloc] init] autorelease];
+    depth.depthCompareFunction = MTLCompareFunctionLess;
+    depth.depthWriteEnabled = YES;
+    metal_shadow_depth_state = [metal_device newDepthStencilStateWithDescriptor:depth];
+    if (!metal_shadow_vertex_buffer) {
+        metal_shadow_vertex_buffer = [metal_device newBufferWithLength:METAL_SHADOW_VERTEX_LIMIT * sizeof(vector_float4)
+                                                               options:MTLResourceStorageModeShared];
+        metal_shadow_vertex_buffer.label = @"SM64 bounded shadow vertices";
+    }
+    if (!metal_shadow_world_positions)
+        metal_shadow_world_positions = calloc(METAL_SHADOW_VERTEX_LIMIT, sizeof(*metal_shadow_world_positions));
+    if (!metal_shadow_depth_state || !metal_shadow_vertex_buffer || !metal_shadow_world_positions) {
+        gfx_ios_diag_log("Metal shadow depth resources unavailable (state=%d buffer=%d cpu=%d)",
+                         metal_shadow_depth_state != nil, metal_shadow_vertex_buffer != nil,
+                         metal_shadow_world_positions != NULL);
+        return false;
+    }
+    gfx_ios_diag_log("Metal shadow depth pipeline ready vertexLimit=%u", METAL_SHADOW_VERTEX_LIMIT);
+    return true;
+}
+
+static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
+    if (!gfx_metal_shadows_enabled()) return true;
+    metal_shadow_transform_valid = false;
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    if (!capture.triangles || capture.triangle_count == 0 || !metal_shadow_texture ||
+        !gfx_metal_ensure_shadow_pipeline()) return false;
+    size_t limit = capture.triangle_count < 8192u ? capture.triangle_count : 8192u;
+    size_t vertex_count = 0;
+    for (size_t t = 0; t < limit; ++t) {
+        const struct GfxSceneCaptureTriangle *triangle = &capture.triangles[t];
+        if (!triangle->has_world_transform) continue;
+        if (vertex_count + 3u > METAL_SHADOW_VERTEX_LIMIT) break;
+        for (size_t v = 0; v < 3; ++v) {
+            const float *local = triangle->vertices[v].position;
+            float *world = metal_shadow_world_positions[vertex_count++];
+            for (int column = 0; column < 3; ++column)
+                world[column] = local[0] * triangle->object_transform[0][column] +
+                                local[1] * triangle->object_transform[1][column] +
+                                local[2] * triangle->object_transform[2][column] +
+                                triangle->object_transform[3][column];
+        }
+    }
+    if (vertex_count < 3u) return false;
+    const float sun_ray[3] = { -0.35f, -1.0f, -0.25f };
+    if (!gfx_shadow_map_fit((const float (*)[3])metal_shadow_world_positions, vertex_count,
+                            sun_ray, (uint32_t)metal_shadow_texture_size, &metal_shadow_transform))
+        return false;
+    vector_float4 *clip_positions = metal_shadow_vertex_buffer.contents;
+    for (size_t i = 0; i < vertex_count; ++i) {
+        float clip[3], uv_depth[3];
+        if (!gfx_shadow_map_project(&metal_shadow_transform, metal_shadow_world_positions[i], clip, uv_depth))
+            return false;
+        clip_positions[i] = (vector_float4){ clip[0], clip[1], clip[2], 1.0f };
+    }
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.depthAttachment.texture = metal_shadow_texture;
+    pass.depthAttachment.loadAction = MTLLoadActionClear;
+    pass.depthAttachment.storeAction = MTLStoreActionStore;
+    pass.depthAttachment.clearDepth = 1.0;
+    id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+    if (!encoder) return false;
+    [encoder setRenderPipelineState:metal_shadow_pipeline];
+    [encoder setDepthStencilState:metal_shadow_depth_state];
+    [encoder setViewport:(MTLViewport){ 0.0, 0.0, (double)metal_shadow_texture_size,
+                                        (double)metal_shadow_texture_size, 0.0, 1.0 }];
+    [encoder setVertexBuffer:metal_shadow_vertex_buffer offset:0 atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertex_count];
+    [encoder endEncoding];
+    metal_shadow_transform_valid = true;
+    @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = vertex_count / 3u; }
     return true;
 }
 
@@ -1611,6 +1811,12 @@ static void gfx_metal_end_frame(void) {
         gfx_metal_set_ssao_enabled(false);
         gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
     }
+    if (!gfx_metal_encode_shadows(metal_command)) {
+        metal_shadow_transform_valid = false;
+        @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = 0; }
+        if (frame_count <= 3 || frame_count % 120 == 0)
+            gfx_ios_diag_log("Metal directional shadow map skipped: no bounded world-space caster set or pass resources unavailable");
+    }
     if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))
         metal_offscreen_runtime_failed = true;
     @synchronized ([NSObject class]) {
@@ -1717,6 +1923,10 @@ static void gfx_metal_shutdown(void) {
     [metal_ssao_denoise_pipeline release]; metal_ssao_denoise_pipeline = nil;
     [metal_bloom_extract_pipeline release]; metal_bloom_extract_pipeline = nil;
     [metal_bloom_blur_pipeline release]; metal_bloom_blur_pipeline = nil;
+    [metal_shadow_pipeline release]; metal_shadow_pipeline = nil;
+    [metal_shadow_depth_state release]; metal_shadow_depth_state = nil;
+    [metal_shadow_vertex_buffer release]; metal_shadow_vertex_buffer = nil;
+    free(metal_shadow_world_positions); metal_shadow_world_positions = NULL;
     [metal_present_pipeline release]; metal_present_pipeline = nil;
     [metal_present_sampler release]; metal_present_sampler = nil;
     for (size_t i = 0; i < program_count; ++i) {

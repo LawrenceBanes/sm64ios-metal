@@ -68,7 +68,10 @@ bool gfx_shadow_map_fit(const float (*positions)[3], size_t count,
     memcpy(transform->up, up, sizeof(up));
     memcpy(transform->forward, forward, sizeof(forward));
     memcpy(transform->minimum, minv, sizeof(minv));
-    for (int c = 0; c < 3; ++c) transform->range[c] = maxv[c] - minv[c];
+    /* The XY projection is the stabilized square, not the original AABB
+     * width. Keep the maximum on both axes aligned with the snapped center. */
+    transform->range[0] = transform->range[1] = 2.0f * half_extent;
+    transform->range[2] = maxv[2] - minv[2];
     return isfinite(transform->range[0]) && isfinite(transform->range[1]) &&
            isfinite(transform->range[2]) && transform->range[0] > 0.0f &&
            transform->range[1] > 0.0f && transform->range[2] > 0.0f;

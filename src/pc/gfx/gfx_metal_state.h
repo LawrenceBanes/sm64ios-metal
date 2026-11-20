@@ -58,6 +58,7 @@ struct GfxMetalPerformanceStats {
     uint32_t anisotropy;
     uint64_t ssao_pixels;
     uint64_t bloom_pixels;
+    uint64_t shadow_triangles;
     uint64_t estimated_target_bytes;
 };
 

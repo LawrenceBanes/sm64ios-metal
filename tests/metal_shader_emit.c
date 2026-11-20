@@ -80,6 +80,21 @@ static int emit_bloom_shader(const char *directory) {
     return ok;
 }
 
+static int emit_shadow_shader(const char *directory) {
+    char path[1024];
+    int length = snprintf(path, sizeof(path), "%s/%s.metal", directory, "shadow_depth");
+    if (length < 0 || (size_t)length >= sizeof(path)) return 0;
+    FILE *file = fopen(path, "wb");
+    if (!file) { perror(path); return 0; }
+    const char *source = gfx_metal_shadow_shader_source();
+    size_t size = strlen(source);
+    int ok = fwrite(source, 1, size, file) == size;
+    if (fclose(file) != 0) ok = 0;
+    if (!ok) fprintf(stderr, "could not write %s\n", path);
+    else printf("generated %s\n", path);
+    return ok;
+}
+
 static int emit(const char *directory, const char *name, const uint8_t rgb[4],
                 const uint8_t alpha[4], uint32_t options) {
     return emit_shader_id(directory, name, make_shader(rgb, alpha, options));
@@ -112,5 +127,6 @@ int main(int argc, char **argv) {
                                                         SHADER_SCENE_TEX1 | SHADER_SCENE_BLEND) &&
            emit_shader_id(argv[1], "wsc3_dual_cutout", SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX0 |
                                                          SHADER_SCENE_TEX1 | SHADER_SCENE_CUTOUT) &&
-           emit_present_shader(argv[1]) && emit_ssao_shader(argv[1]) && emit_bloom_shader(argv[1]) ? 0 : 1;
+           emit_present_shader(argv[1]) && emit_ssao_shader(argv[1]) && emit_bloom_shader(argv[1]) &&
+           emit_shadow_shader(argv[1]) ? 0 : 1;
 }

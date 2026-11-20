@@ -21,6 +21,17 @@ int main(void) {
         assert(uv_depth[2] >= 0.0f && uv_depth[2] <= 1.0f);
         assert(fabsf(clip[0]) <= 1.0f && fabsf(clip[1]) <= 1.0f);
     }
+    const float asymmetric[][3] = {
+        { -310.0f, 12.0f, -40.0f }, { 71.0f, 16.0f, -35.0f },
+        { 34.0f, 18.0f, 95.0f }, { -289.0f, 11.0f, 72.0f }
+    };
+    struct GfxShadowMapTransform asymmetric_transform;
+    assert(gfx_shadow_map_fit(asymmetric, 4, sun_ray, 512, &asymmetric_transform));
+    for (size_t i = 0; i < 4; ++i) {
+        float clip[3], uv_depth[3];
+        assert(gfx_shadow_map_project(&asymmetric_transform, asymmetric[i], clip, uv_depth));
+        assert(fabsf(clip[0]) <= 1.00001f && fabsf(clip[1]) <= 1.00001f);
+    }
     struct GfxShadowMapTransform shifted;
     const float shifted_vertices[][3] = {
         { -100.0f + 0.02f, 0.0f, -100.0f }, { 100.0f + 0.02f, 0.0f, -100.0f },

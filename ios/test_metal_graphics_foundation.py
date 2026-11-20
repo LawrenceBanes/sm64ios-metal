@@ -65,6 +65,16 @@ def main() -> None:
             "Apple validation must compile the production SSAO compute source")
     require('"bloom_compute"' in shader_emit and "gfx_metal_bloom_shader_source" in shader_emit,
             "Apple validation must compile the production bloom compute source")
+    require('"shadow_depth"' in shader_emit and "gfx_metal_shadow_shader_source" in shader_emit,
+            "Apple validation must compile the production shadow-depth vertex source")
+    require("gfx_metal_encode_shadows(metal_command)" in metal and
+            "setFragmentTexture:(metal_shadow_texture ?: metal_depth_texture) atIndex:4" in metal and
+            "setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:11" in metal,
+            "directional depth pass must feed the production final-pass receiver bindings")
+    require("shadowMap.sample(shadowSampler" in shader_c and "shadowRanges.w>0.0" in shader_c,
+            "receiver shader must sample the depth map with bounded PCF only when a valid fit exists")
+    require("openShadowSettings" in uikit and "gfx_metal_cycle_shadow_resolution" in uikit,
+            "developer UI must expose a shadow toggle and resolution control")
 
     for token in (
         "supportsTextureSampleCount:2", "supportsTextureSampleCount:4",

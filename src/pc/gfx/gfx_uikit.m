@@ -68,6 +68,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *bloomButton;
 @property(nonatomic, strong) UIButton *gradeButton;
 @property(nonatomic, strong) UIButton *fogProfileButton;
+@property(nonatomic, strong) UIButton *shadowButton;
 @property(nonatomic, strong) UIButton *aoQualityButton;
 @property(nonatomic, strong) UIButton *skyPresetButton;
 @property(nonatomic, strong) UIButton *masterEffectsButton;
@@ -562,14 +563,17 @@ static int sm64RenderDiagnosticMode;
     self.fogButton.frame = CGRectMake(422, 244, 84, 30);
     [self.graphicsPanel addSubview:self.fogButton];
     self.bloomButton = [self buttonWithTitle:@"Bloom: Off" action:@selector(toggleBloom)];
-    self.bloomButton.frame = CGRectMake(14, 278, 108, 30);
+    self.bloomButton.frame = CGRectMake(14, 278, 92, 30);
     [self.graphicsPanel addSubview:self.bloomButton];
     self.gradeButton = [self buttonWithTitle:@"Grade: Neutral" action:@selector(cycleColorGrade)];
-    self.gradeButton.frame = CGRectMake(128, 278, 160, 30);
+    self.gradeButton.frame = CGRectMake(112, 278, 120, 30);
     [self.graphicsPanel addSubview:self.gradeButton];
     self.fogProfileButton = [self buttonWithTitle:@"Fog: Standard" action:@selector(cycleFogProfile)];
-    self.fogProfileButton.frame = CGRectMake(294, 278, 180, 30);
+    self.fogProfileButton.frame = CGRectMake(238, 278, 154, 30);
     [self.graphicsPanel addSubview:self.fogProfileButton];
+    self.shadowButton = [self buttonWithTitle:@"Shadows: Off" action:@selector(openShadowSettings)];
+    self.shadowButton.frame = CGRectMake(398, 278, 108, 30);
+    [self.graphicsPanel addSubview:self.shadowButton];
     self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(cycleAOQuality)];
     self.aoQualityButton.frame = CGRectMake(14, 312, 172, 30);
     [self.graphicsPanel addSubview:self.aoQualityButton];
@@ -720,6 +724,32 @@ static int sm64RenderDiagnosticMode;
                            forState:UIControlStateNormal];
     [self.masterEffectsButton setTitle:gfx_metal_effects_enabled() ? @"Effects: On" : @"Effects: Off"
                                forState:UIControlStateNormal];
+    [self.shadowButton setTitle:[NSString stringWithFormat:@"Shadows: %@ %u", gfx_metal_shadows_enabled() ? @"On" : @"Off",
+                                gfx_metal_shadow_resolution()]
+                       forState:UIControlStateNormal];
+#endif
+}
+
+- (void)openShadowSettings {
+#if defined(RAPI_METAL)
+    NSString *message = @"Directional shadow maps render captured world geometry into a depth texture. Coverage is bounded to the first 8,192 captured triangles per frame.";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Directional Shadows"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    BOOL enabled = gfx_metal_shadows_enabled();
+    [alert addAction:[UIAlertAction actionWithTitle:enabled ? @"Turn Off" : @"Turn On"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            gfx_metal_set_shadows_enabled(!enabled);
+            [self refreshGraphicsSettings];
+            [self refreshGraphicsPerformance];
+            [self appendStatus:gfx_metal_shadows_enabled() ? @"Directional shadow map enabled" : @"Directional shadow map disabled"];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Resolution: %u → next", gfx_metal_shadow_resolution()]
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            gfx_metal_cycle_shadow_resolution();
+            [self refreshGraphicsSettings];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 
@@ -822,6 +852,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_fog_profile(0u);
             gfx_metal_set_color_grade(0u);
             gfx_metal_set_sky_preset(0u);
+            gfx_metal_set_shadows_enabled(false);
             gfx_metal_set_effects_enabled(false);
         } else {
             if (preset == GFX_METAL_PRESET_CINEMATIC) settings = gfx_metal_cinematic_settings();
@@ -850,6 +881,9 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_fog_profile(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
             gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
             gfx_metal_set_sky_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
+            gfx_metal_set_shadow_resolution(preset == GFX_METAL_PRESET_CINEMATIC ? 1024u : 512u);
+            gfx_metal_set_shadows_enabled(preset == GFX_METAL_PRESET_ENHANCED ||
+                                          preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_effects_enabled(true);
         }
     } else {
@@ -879,7 +913,7 @@ static int sm64RenderDiagnosticMode;
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = [NSString stringWithUTF8String:gfx_metal_preset_name(stats.preset)];
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | targets ~%.1f MiB",
+        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | Shadows %@ %llu tris | targets ~%.1f MiB",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
@@ -888,6 +922,8 @@ static int sm64RenderDiagnosticMode;
         (unsigned long long)stats.ssao_pixels,
         gfx_metal_bloom_enabled() ? @"on" : @"off",
         (unsigned long long)stats.bloom_pixels,
+        gfx_metal_shadows_enabled() ? @"on" : @"off",
+        (unsigned long long)stats.shadow_triangles,
         (double)stats.estimated_target_bytes / (1024.0 * 1024.0)];
 #endif
 }
@@ -903,6 +939,8 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);
     gfx_metal_set_sky_preset(0u);
+    gfx_metal_set_shadows_enabled(false);
+    gfx_metal_set_shadow_resolution(512u);
     gfx_metal_set_effects_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];

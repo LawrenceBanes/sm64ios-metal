@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `af1f4469337a5037b4056b4f1fc3a1732f28f2bd`, with directional shadow-fit math in progress.
+- Current source commit: `945e6467b7ce90f7e77580071c66eb3b3c5c7536` (latest pushed); native shadow-map integration is being validated.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -74,10 +74,12 @@
 - Added a persisted master switch that gates AO, tone mapping, FXAA, exposure, bloom, fog, color grading, and sky presentation without deleting the individual saved choices. Turning effects off clears the AO/bloom work counters; Classic preset/reset disable it.
 - Focused source checks and full Linux regression pass. Apple SDK/MSL validation passed in [run 44700236497](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44700236497). Physical switch usability and resulting visual fallback remain unverified.
 
-### M79-C — Directional shadow-fit groundwork
+### M79-C — Directional shadow mapping (first integration increment)
 
-- Added bounded CPU math for directional-light basis construction, stabilized light-space bounds, and world-point projection to shadow-map clip/UV/depth coordinates. Invalid, non-finite, degenerate, and unreasonable-resolution input is rejected.
-- Added host geometry/bounds/stabilization regression cases and Linux/Apple workflow coverage. Unit and sanitizer tests pass. This is only the math foundation: no Metal shadow depth texture, geometry pass, or receiver sampling is integrated yet.
+- Added bounded CPU math for directional-light basis construction, stabilized light-space bounds, and world-point projection to shadow-map clip/UV/depth coordinates. XY projection now uses the stabilized square extent; regression tests include asymmetric bounds.
+- Added a Depth32Float map, depth-only Metal pipeline, bounded conversion of up to 8,192 captured world-space triangles, map submission, and 3x3 PCF receiver sampling in final composition. The developer Graphics panel exposes Off/On and 512/1024/2048 resolution choices. Enhanced and Cinematic presets enable shadows at 512 and 1024 respectively; Classic/Performance keep them off. Shadow allocations and pipeline resources are released on shutdown/settings changes.
+- The map currently uses a fixed directional vector and darkens the existing rasterized color based on the actual depth comparison. It is a first directional shadow pass, not a full physically lit sunlight model; actor/material-specific shadow exclusions, cascades, and dynamic/static caster separation remain open.
+- Focused shadow math, shader-emission/source checks, and the full Linux suite pass. The `945e6467` Apple SDK validation workflow [44700879289](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44700879289) passed before this integration was added; a new Apple run is still required. No physical GPU output is verified.
 
 ### Build candidate status
 
@@ -85,13 +87,13 @@
 - A newer full game build from source `3303360fa275b3b9d3726be51fa9a9c81a96e8e4` passed compile, IPA structure checks, and private upload in [workflow 44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366). Private draft: [unsigned build 44698163366.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-f4ffbc277ed244358b57); IPA SHA-256 `df42a01c548d61b7f8369dc6c36079e0f54ccd35684edc5980bc499d2b8966a`. It contains color grading and fog profiles but predates the AO quality control and sky gradient.
 - Full game build from source `300cc597685623222c2e96301ea801eeb8152cef` passed arm64 compilation, IPA structural validation, and private upload in [workflow 44699134859](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44699134859). Private draft: [unsigned build 44699134859.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-dff6475bfe493acf287f); IPA SHA-256 `7d5d98a0fa527fc508b53d8cc228b36904e89029cff53b4122ddded384fae472`. It includes AO quality and day/sunset horizon gradient, and predates four unified presets.
 
-### M79-C — Directional lighting and shadows (not implemented)
+### M79-C — Remaining
 
-- No shadow-depth pass, directional light, PCF filtering, or world-geometry receiver path exists yet.
+- No physical scene image has confirmed visible/contact-correct shadows. Sun direction/intensity controls, more robust caster coverage than the bounded capture set, and large-world cascades remain open.
 
 ### Remaining M79-D/M79-E/M79-F/M79-G/M79-H work
 
-- Bloom, full color grading, adjustable fog and sky/god rays, unified visual presets, device performance measurements, successful full app build, IPA, and private release remain outstanding.
+- God rays, genuine sky/sun presentation beyond gradients, HUD/UI isolation, device performance measurements, screenshot-based visual acceptance, and final integrated build remain outstanding. Bloom, tone map/exposure, grade, fog, settings presets, and controls have source/host/Apple compile coverage but no physical visual verification.
 
 ## Current validation
 
@@ -100,8 +102,14 @@
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
 - Tone-map/FXAA is committed as `2e1911824acd5791796c013979792b5c1c348971`; focused checks, the full Linux suite, and Apple SDK/MSL validation passed (workflow [44694655649](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694655649)).
-- No physical-device visual, AO quality, postprocessing quality, or performance claim exists. The available private IPA predates color grading and estimated-memory/effect-pixel counters.
+- The latest completed full IPA predates the master switch and shadow integration. No physical-device visual, AO contact-occlusion, shadow, postprocessing quality, or performance claim exists.
+
+## Latest shadow integration checkpoint (working tree after `945e6467`)
+
+- Implemented a production-path depth-map pass from `gfx_scene_capture` and a final-pass receiver. The map's fitting, capture conversion, Metal depth writes, and PCF output are separate observable stages; triangle counts report processed bounded casters, not GPU frame-time measurement.
+- `tests/run_shadow_map_test.sh`, `python3 ios/test_metal_graphics_foundation.py`, `tests/run_metal_shader_codegen_test.sh`, `tests/run_gfx_postprocess_test.sh`, and `git diff --check` passed. A direct Clang ASan/UBSan build/run of `tests/shadow_map_test.c` passed. The full `tests/run_linux_checks.sh` passed twice during this increment; the second used `CC=clang`.
+- Apple SDK validation for the integration has not yet run. No physical iPhone/iPad output or performance data exists. Do not call shadows visually validated until the GPU output is inspected.
 
 ## Next task
 
-Finish Apple validation for the shadow-fit tests, integrate the actual Metal depth pass and receiver path, then continue with AO/HUD separation, sun disk/light shafts, and device performance evidence.
+Commit and push the current shadow-map integration, run the Apple Metal/iPhoneOS validation, fix any actual compiler/shader errors, then produce an updated full IPA if its source/configuration checks pass. Continue after that with AO/HUD isolation, god rays/sky refinement, and remaining effect controls; physical-device image and timing review is still needed.
