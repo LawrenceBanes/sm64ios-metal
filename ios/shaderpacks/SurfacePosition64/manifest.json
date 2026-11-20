@@ -1,0 +1,16 @@
+{
+  "formatVersion": 2,
+  "id": "SurfacePosition64",
+  "name": "View Space Position Material",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "positionScale", "label": "Position scale", "type": "float", "default": 0.01, "min": 0.001, "max": 0.1 }
+  ],
+  "materialShader": { "source": "shaders/material.metal", "vertexPositions": true },
+  "passes": [
+    { "id": "preserve_scene", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/passthrough.metal", "scale": 1.0 }
+  ]
+}

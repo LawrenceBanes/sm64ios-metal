@@ -15,14 +15,15 @@ enum GfxMetalVertexFormat {
 };
 
 struct GfxMetalVertexLayout {
-    uint8_t format[9];
-    uint16_t offset[9];
+    uint8_t format[10];
+    uint16_t offset[10];
     uint8_t attribute_count;
     uint16_t stride;
     uint8_t uv_attribute;
     uint8_t uv1_attribute;
     uint8_t fog_attribute;
     uint8_t normal_attribute;
+    uint8_t position_attribute;
     uint8_t input_attribute[4];
     bool has_uv;
     bool has_fog;
@@ -85,6 +86,24 @@ static inline bool gfx_metal_transform_view_direction(const float direction[3],
     return true;
 }
 
+/* Transform an object-space point by SM64's row-vector modelview matrix. */
+static inline bool gfx_metal_transform_view_position(const float position[3],
+                                                      const float modelview[4][4],
+                                                      float view_position[3]) {
+    if (!position || !modelview || !view_position) return false;
+    float transformed[4];
+    for (int column = 0; column < 4; ++column)
+        transformed[column] = position[0] * modelview[0][column] +
+                              position[1] * modelview[1][column] +
+                              position[2] * modelview[2][column] + modelview[3][column];
+    if (!isfinite(transformed[3]) || fabsf(transformed[3]) < 1.0e-8f) return false;
+    for (int axis = 0; axis < 3; ++axis) {
+        view_position[axis] = transformed[axis] / transformed[3];
+        if (!isfinite(view_position[axis])) return false;
+    }
+    return true;
+}
+
 /* Shared by MSL source generation and MTLVertexDescriptor construction so the
  * explicit shader slots and the packed CPU vertex stream cannot drift apart. */
 static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features,
@@ -99,6 +118,7 @@ static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features
     layout->uv1_attribute = UINT8_MAX;
     layout->fog_attribute = UINT8_MAX;
     layout->normal_attribute = UINT8_MAX;
+    layout->position_attribute = UINT8_MAX;
     layout->attribute_count = 0;
     layout->stride = 0;
 
@@ -125,6 +145,12 @@ static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features
     }
     if (features->material_normals) {
         layout->normal_attribute = count;
+        layout->format[count] = GFX_METAL_VERTEX_FLOAT4;
+        layout->offset[count++] = offset;
+        offset += 4 * sizeof(float);
+    }
+    if (features->material_positions) {
+        layout->position_attribute = count;
         layout->format[count] = GFX_METAL_VERTEX_FLOAT4;
         layout->offset[count++] = offset;
         offset += 4 * sizeof(float);

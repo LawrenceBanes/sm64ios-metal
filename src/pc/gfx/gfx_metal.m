@@ -97,6 +97,7 @@ struct MetalShader64Graph {
     bool material_pack_textures;
     bool material_vertex_normals;
     bool material_directional_light;
+    bool material_vertex_positions;
     unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES];
     NSUInteger pack_texture_count;
     id<MTLTexture> pack_textures[GFX_SHADER64_MAX_PACK_TEXTURES];
@@ -126,6 +127,7 @@ static id<MTLLibrary> metal_shader64_library;
 static struct MetalShader64Graph *metal_shader64_graph;
 static atomic_bool metal_shader64_material_normals_active = ATOMIC_VAR_INIT(false);
 static atomic_bool metal_shader64_material_light_active = ATOMIC_VAR_INIT(false);
+static atomic_bool metal_shader64_material_positions_active = ATOMIC_VAR_INIT(false);
 static char metal_shader64_active_id[65];
 static vector_float4 metal_shader64_parameters = { 1.0f, 0.0f, 0.0f, 0.0f };
 static uint32_t metal_material_generation = 1;
@@ -1118,6 +1120,7 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     char *material_source = NULL;
     size_t material_size = 0;
     bool material_pack_textures = false;
+    bool material_vertex_positions = false;
     for (size_t i = 0; i < program_count; ++i)
         if (programs[i].material_generation != metal_material_generation)
             gfx_metal_release_program(&programs[i]);
@@ -1133,6 +1136,7 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     if (!p) return NULL;
     @synchronized ([NSObject class]) {
         struct MetalShader64Graph *graph = metal_shader64_graph;
+        if (graph) material_vertex_positions = graph->material_vertex_positions;
         if (graph && graph->material_source && graph->material_source_size) {
             material_source = malloc(graph->material_source_size);
             if (material_source) {
@@ -1148,12 +1152,18 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
     struct CCFeatures features;
     NSError *error = nil;
     bool generated = material_source ? gfx_metal_build_shader_with_material(
-        shader_id, material_source, material_size, material_pack_textures, source, source_capacity, &features) :
+        shader_id, material_source, material_size, material_pack_textures, material_vertex_positions,
+        source, source_capacity, &features) : material_vertex_positions ?
+        gfx_metal_build_shader_with_material(shader_id, NULL, 0, false, true,
+            source, source_capacity, &features) :
         gfx_metal_build_shader(shader_id, source, source_capacity, &features);
     if (!generated && material_source) {
         gfx_ios_diag_log("SHADER64 material hook rejected by generated shader shader=0x%08x; using Fast3D combiner", shader_id);
         free(material_source); material_source = NULL; material_size = 0;
-        generated = gfx_metal_build_shader(shader_id, source, source_capacity, &features);
+        generated = material_vertex_positions ?
+            gfx_metal_build_shader_with_material(shader_id, NULL, 0, false, true,
+                source, source_capacity, &features) :
+            gfx_metal_build_shader(shader_id, source, source_capacity, &features);
     }
     if (!generated) {
         free(source); free(material_source);
@@ -1927,13 +1937,14 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                    size_t pass_count, const char *material_source,
                                    size_t material_source_size, bool material_pack_textures,
                                    bool material_vertex_normals, bool material_directional_light,
+                                   bool material_vertex_positions,
                                    const float parameters[4],
                                    char *error_out, size_t error_size) {
     struct GfxShader64GraphPass descriptions[GFX_SHADER64_MAX_GRAPH_PASSES];
     struct MetalShader64Graph *graph;
     if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) || !passes ||
         ((material_source == NULL) != (material_source_size == 0)) ||
-        ((material_pack_textures || material_vertex_normals || material_directional_light) && !material_source) ||
+        ((material_pack_textures || material_vertex_normals || material_directional_light || material_vertex_positions) && !material_source) ||
         (material_directional_light && !material_vertex_normals) ||
         !pass_count || pass_count > GFX_SHADER64_MAX_GRAPH_PASSES) {
         if (error_out && error_size) snprintf(error_out, error_size, "invalid API v2 graph or Metal device unavailable");
@@ -1948,11 +1959,13 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     graph->material_pack_textures = material_pack_textures;
     graph->material_vertex_normals = material_vertex_normals;
     graph->material_directional_light = material_directional_light;
+    graph->material_vertex_positions = material_vertex_positions;
     if (material_source) {
         char validation[192] = {0};
-        bool material_valid = material_vertex_normals ?
-            gfx_shader64_validate_material_normal_source(material_source, material_source_size,
-                material_pack_textures, material_directional_light, validation, sizeof(validation)) : material_pack_textures ?
+        bool material_valid = (material_vertex_normals || material_directional_light || material_vertex_positions) ?
+            gfx_shader64_validate_material_resources_source(material_source, material_source_size,
+                material_pack_textures, material_vertex_normals, material_directional_light,
+                material_vertex_positions, validation, sizeof(validation)) : material_pack_textures ?
             gfx_shader64_validate_material_texture_source(material_source, material_source_size,
                                                           validation, sizeof(validation)) :
             gfx_shader64_validate_material_source(material_source, material_source_size,
@@ -2201,6 +2214,8 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                               graph->material_vertex_normals, memory_order_release);
         atomic_store_explicit(&metal_shader64_material_light_active,
                               graph->material_directional_light, memory_order_release);
+        atomic_store_explicit(&metal_shader64_material_positions_active,
+                              graph->material_vertex_positions, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
@@ -2225,7 +2240,7 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
                                    size_t pass_count, const float parameters[4],
                                    char *error_out, size_t error_size) {
     return gfx_metal_load_shader64_graph_with_material(pack_id, passes, pass_count,
-        NULL, 0, false, false, false, parameters, error_out, error_size);
+        NULL, 0, false, false, false, false, parameters, error_out, error_size);
 }
 
 bool gfx_metal_shader64_needs_scene_depth(void) {
@@ -2281,6 +2296,7 @@ static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibra
         metal_shader64_graph = NULL;
         atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
         atomic_store_explicit(&metal_shader64_material_light_active, false, memory_order_release);
+        atomic_store_explicit(&metal_shader64_material_positions_active, false, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release];
@@ -2457,9 +2473,11 @@ static void gfx_metal_restore_shader64_pack(void) {
         bool material_pack_textures = [material_definition[@"packTextures"] boolValue];
         bool material_vertex_normals = [material_definition[@"vertexNormals"] boolValue];
         bool material_directional_light = [material_definition[@"directionalLight"] boolValue];
+        bool material_vertex_positions = [material_definition[@"vertexPositions"] boolValue];
         bool loaded = valid && gfx_metal_load_shader64_graph_with_material(packID.UTF8String,
             graph_passes, sources.count, material_source.bytes, material_source.length,
             material_pack_textures, material_vertex_normals, material_directional_light,
+            material_vertex_positions,
             parameters, error, sizeof(error));
         if (!loaded) {
             [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
@@ -2505,6 +2523,7 @@ void gfx_metal_use_classic_shader(void) {
         old_graph = metal_shader64_graph; metal_shader64_graph = NULL;
         atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
         atomic_store_explicit(&metal_shader64_material_light_active, false, memory_order_release);
+        atomic_store_explicit(&metal_shader64_material_positions_active, false, memory_order_release);
         ++metal_material_generation;
         if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
@@ -2528,6 +2547,10 @@ bool gfx_metal_shader64_material_vertex_normals_enabled(void) {
 
 bool gfx_metal_shader64_material_directional_light_enabled(void) {
     return atomic_load_explicit(&metal_shader64_material_light_active, memory_order_acquire);
+}
+
+bool gfx_metal_shader64_material_vertex_positions_enabled(void) {
+    return atomic_load_explicit(&metal_shader64_material_positions_active, memory_order_acquire);
 }
 
 static bool gfx_metal_shader64_is_active(void) {
@@ -3655,6 +3678,7 @@ static void gfx_metal_shutdown(void) {
     metal_shader64_graph = NULL;
     atomic_store_explicit(&metal_shader64_material_normals_active, false, memory_order_release);
     atomic_store_explicit(&metal_shader64_material_light_active, false, memory_order_release);
+    atomic_store_explicit(&metal_shader64_material_positions_active, false, memory_order_release);
     gfx_metal_shader64_graph_release(old_shader_graph);
     [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
     [metal_shader64_library release]; metal_shader64_library = nil;

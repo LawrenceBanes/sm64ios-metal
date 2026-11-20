@@ -53,8 +53,11 @@ class ShaderPackTests(unittest.TestCase):
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_texture_source.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_material_normal_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
-            ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_normal_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_material_resources_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_material_resources_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_frame_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
@@ -244,19 +247,26 @@ class ShaderPackTests(unittest.TestCase):
                   b'if (normalValid) baseColor.rgb *= abs(viewNormal); return baseColor; }')
         error = ctypes.create_string_buffer(256)
         self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
-            source, len(source), 0, 0, error, len(error)), error.value)
+            source, len(source), 0, 0, 0, error, len(error)), error.value)
         invalid = source.replace(b"bool normalValid", b"bool badFlag")
         self.assertFalse(self.api.gfx_shader64_validate_material_normal_source(
-            invalid, len(invalid), 0, 0, error, len(error)))
+            invalid, len(invalid), 0, 0, 0, error, len(error)))
         self.assertIn(b"vertex-normal", error.value)
         lit_source = source.replace(b"bool normalValid, constant float4 &params",
             b"bool normalValid, float3 sunDirectionView, float sunIntensity, constant float4 &params")
         self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
-            lit_source, len(lit_source), 0, 1, error, len(error)), error.value)
+            lit_source, len(lit_source), 0, 1, 0, error, len(error)), error.value)
         no_light = lit_source.replace(b"float3 sunDirectionView, float sunIntensity, ", b"")
         self.assertFalse(self.api.gfx_shader64_validate_material_normal_source(
-            no_light, len(no_light), 0, 1, error, len(error)))
+            no_light, len(no_light), 0, 1, 0, error, len(error)))
         self.assertIn(b"directional-light", error.value)
+        position_source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+            b'float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, '
+            b'float3 viewPosition, bool positionValid, constant float4 &params) { return baseColor; }')
+        self.assertTrue(self.api.gfx_shader64_validate_material_resources_source(
+            position_source, len(position_source), 0, 0, 0, 1, error, len(error)), error.value)
+        self.assertFalse(self.api.gfx_shader64_validate_material_resources_source(
+            source, len(source), 0, 0, 0, 1, error, len(error)))
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
@@ -645,7 +655,7 @@ class ShaderPackTests(unittest.TestCase):
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
-                         "VertexNormal64", "SunlitMaterial64")
+                         "VertexNormal64", "SunlitMaterial64", "SurfacePosition64")
         reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
@@ -733,10 +743,13 @@ class ShaderPackTests(unittest.TestCase):
                     material_path = material_definition["source"]
                     self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
                     material_source = (directory / material_path).read_bytes()
-                    if material_definition.get("vertexNormals"):
-                        self.assertTrue(self.api.gfx_shader64_validate_material_normal_source(
+                    if any(material_definition.get(key) for key in
+                           ("vertexNormals", "directionalLight", "vertexPositions")):
+                        self.assertTrue(self.api.gfx_shader64_validate_material_resources_source(
                             material_source, len(material_source), int(bool(material_definition.get("packTextures"))),
+                            int(bool(material_definition.get("vertexNormals"))),
                             int(bool(material_definition.get("directionalLight"))),
+                            int(bool(material_definition.get("vertexPositions"))),
                             error, len(error)), f"{pack_id} material hook: {error.value!r}")
                     else:
                         material_validator = (self.api.gfx_shader64_validate_material_texture_source
@@ -802,6 +815,7 @@ class ShaderPackTests(unittest.TestCase):
             self.assertIn(token, metal)
         self.assertIn("material_vertex_normals", metal)
         self.assertIn("material_directional_light", metal)
+        self.assertIn("material_vertex_positions", metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT", pack_header)
@@ -819,8 +833,10 @@ class ShaderPackTests(unittest.TestCase):
             self.assertIn(token, ui)
         self.assertIn('materialDefinition[@"vertexNormals"]', ui)
         self.assertIn('materialDefinition[@"directionalLight"]', ui)
+        self.assertIn('materialDefinition[@"vertexPositions"]', ui)
         self.assertIn('[directionalLight boolValue] && ![vertexNormals boolValue]', ui)
         self.assertIn("gfx_metal_shader64_material_vertex_normals_enabled", (ROOT / "src/pc/gfx/gfx_pc.c").read_text())
+        self.assertIn("gfx_metal_shader64_material_vertex_positions_enabled", (ROOT / "src/pc/gfx/gfx_pc.c").read_text())
         importer_start = ui.index("- (void)installShaderArchiveAtURL:(NSURL *)url {")
         importer = ui[importer_start:ui.index("\n}", importer_start) + 2]
         self.assertLess(importer.index("getResourceValue:&fileSize"), importer.index("dataWithContentsOfURL:url"))

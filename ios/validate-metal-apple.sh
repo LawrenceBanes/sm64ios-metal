@@ -249,6 +249,34 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-SunlitMaterial64-material.ai
     -o "$shader_dir/shader64-SunlitMaterial64-material.metallib"
 echo "compiled and linked SHADER64 API 2 SunlitMaterial64 material hook"
 
+position_material_wrapper_tool="$output_dir/shader64-wrap-material-positions"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_material_positions.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$position_material_wrapper_tool"
+position_material_source="$repo_dir/ios/shaderpacks/SurfacePosition64/shaders/material.metal"
+"$position_material_wrapper_tool" "$position_material_source" > "$shader_dir/shader64-SurfacePosition64-material.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-SurfacePosition64-material.metal" \
+    -o "$shader_dir/shader64-SurfacePosition64-material.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-SurfacePosition64-material.air" \
+    -o "$shader_dir/shader64-SurfacePosition64-material.metallib"
+echo "compiled and linked SHADER64 API 2 SurfacePosition64 material hook"
+
+material_codegen_tool="$output_dir/shader64-material-codegen"
+xcrun --sdk macosx clang -std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 \
+    -I"$repo_dir/include" -I"$repo_dir/src" -I"$repo_dir/src/pc/gfx" -I"$repo_dir" \
+    "$repo_dir/tests/shader64_material_codegen_emit.c" \
+    "$repo_dir/src/pc/gfx/gfx_metal_shader.c" "$repo_dir/src/pc/gfx/gfx_cc.c" \
+    -o "$material_codegen_tool"
+for mode_pack in "positions SurfacePosition64" "normals VertexNormal64" "lighting SunlitMaterial64"; do
+    read -r mode pack <<< "$mode_pack"
+    source="$repo_dir/ios/shaderpacks/$pack/shaders/material.metal"
+    name="shader64-generated-material-$pack"
+    "$material_codegen_tool" "$source" "$mode" > "$shader_dir/$name.metal"
+    xcrun --sdk iphoneos metal -c "$shader_dir/$name.metal" -o "$shader_dir/$name.air"
+    xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
+    echo "compiled and linked generated Fast3D material variant $pack ($mode)"
+done
+
 depth_wrapper_tool="$output_dir/shader64-wrap-depth"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_depth_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

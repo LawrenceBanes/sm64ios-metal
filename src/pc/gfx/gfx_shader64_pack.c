@@ -601,15 +601,21 @@ int gfx_shader64_validate_material_texture_source(const char *source, size_t siz
     return 1;
 }
 
-int gfx_shader64_validate_material_normal_source(const char *source, size_t size,
-                                                int pack_textures, int directional_light,
-                                                char *error, size_t error_size) {
+int gfx_shader64_validate_material_resources_source(const char *source, size_t size,
+                                                    int pack_textures, int vertex_normals,
+                                                    int directional_light, int vertex_positions,
+                                                    char *error, size_t error_size) {
     if (pack_textures) {
         if (!gfx_shader64_validate_material_texture_source(source, size, error, error_size)) return 0;
     } else if (!gfx_shader64_validate_material_source(source, size, error, error_size)) {
         return 0;
     }
-    if (!contains(source, size, "float3 viewNormal") || !contains(source, size, "bool normalValid")) {
+    if (directional_light && !vertex_normals) {
+        err(error, error_size, "directional material lighting requires vertex normals");
+        return 0;
+    }
+    if (vertex_normals && (!contains(source, size, "float3 viewNormal") ||
+                           !contains(source, size, "bool normalValid"))) {
         err(error, error_size, "material source is missing the optional view-space vertex-normal parameters");
         return 0;
     }
@@ -618,8 +624,21 @@ int gfx_shader64_validate_material_normal_source(const char *source, size_t size
         err(error, error_size, "material source is missing the optional view-space directional-light parameters");
         return 0;
     }
+    if (vertex_positions && (!contains(source, size, "float3 viewPosition") ||
+                             !contains(source, size, "bool positionValid"))) {
+        err(error, error_size, "material source is missing the optional view-space vertex-position parameters");
+        return 0;
+    }
     if (error && error_size) error[0] = '\0';
     return 1;
+}
+
+int gfx_shader64_validate_material_normal_source(const char *source, size_t size,
+                                                int pack_textures, int directional_light,
+                                                int vertex_positions,
+                                                char *error, size_t error_size) {
+    return gfx_shader64_validate_material_resources_source(source, size, pack_textures, 1,
+        directional_light, vertex_positions, error, error_size);
 }
 
 int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,

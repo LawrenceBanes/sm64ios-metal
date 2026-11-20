@@ -21,9 +21,10 @@ static void assert_dense_vertex_attributes(const char *source, const struct CCFe
     assert(gfx_metal_get_vertex_layout(features, &layout));
     bool uv1 = layout.uv1_attribute != UINT8_MAX;
     assert(layout.attribute_count == 1 + layout.has_uv + uv1 + layout.has_fog +
-           features->material_normals + features->num_inputs);
+           features->material_normals + features->material_positions + features->num_inputs);
     assert(layout.stride == 16 + (layout.has_uv ? 8 : 0) + (uv1 ? 8 : 0) + (layout.has_fog ? 16 : 0) +
-           (features->material_normals ? 16 : 0) + features->num_inputs * (features->opt_alpha ? 16 : 12));
+           (features->material_normals ? 16 : 0) + (features->material_positions ? 16 : 0) +
+           features->num_inputs * (features->opt_alpha ? 16 : 12));
     uint16_t expected_offset = 0;
     for (int i = 0; i < layout.attribute_count; ++i) {
         assert(layout.offset[i] == expected_offset);
@@ -83,6 +84,14 @@ int main(void) {
         const float world_direction[3] = {1,0,0};
         assert(gfx_metal_transform_view_direction(world_direction, view_rotated, normal_out));
         assert(normal_out[0] == 0.0f && normal_out[1] == 1.0f && normal_out[2] == 0.0f);
+        const float point[3] = {2.0f, 3.0f, 4.0f};
+        const float translated_view[4][4] = {
+            {1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {-10,5,-2,1}
+        };
+        assert(gfx_metal_transform_view_position(point, translated_view, normal_out));
+        assert(normal_out[0] == -8.0f && normal_out[1] == 8.0f && normal_out[2] == 2.0f);
+        const float invalid_position_matrix[4][4] = {{0}};
+        assert(!gfx_metal_transform_view_position(point, invalid_position_matrix, normal_out));
     }
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
@@ -129,7 +138,7 @@ int main(void) {
         "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, constant float4 &params) { "
         "if(materialClass==3u) baseColor.rgb=mix(baseColor.rgb,float3(1.0,0.1,0.8),params.x); return baseColor; }";
     assert(gfx_metal_build_shader_with_material(id, material_source, strlen(material_source), false,
-                                                 source, sizeof(source), &features));
+                                                 false, source, sizeof(source), &features));
     assert(strstr(source, "shader64_material(float4 baseColor") != NULL);
     assert(strstr(source, "shader64_material(color,float2(0.0),in.pos,params.materialClass,shader64Parameters)") != NULL);
     assert(strstr(source, "constant float4 &shader64Parameters [[buffer(2)]]") != NULL);
@@ -141,27 +150,27 @@ int main(void) {
         "texture2d<float> materialTexture3, sampler materialSampler3, uint materialTextureCount, "
         "constant float4 &params) { if(materialTextureCount>0u) baseColor*=materialTexture0.sample(materialSampler0,uv); return baseColor; }";
     assert(gfx_metal_build_shader_with_material(id, material_texture_source,
-        strlen(material_texture_source), true, source, sizeof(source), &features));
+        strlen(material_texture_source), true, false, source, sizeof(source), &features));
     assert(strstr(source, "materialTexture0 [[texture(4)]]") != NULL);
     assert(strstr(source, "materialTexture3 [[texture(7)]]") != NULL);
     assert(strstr(source, "materialTextureCount [[buffer(3)]]") != NULL);
     assert(strstr(source, "materialTextureCount,shader64Parameters") != NULL);
     assert(!gfx_metal_build_shader_with_material(id, material_source, strlen(material_source), true,
-        source, sizeof(source), &features));
+        false, source, sizeof(source), &features));
     const char *material_normal_source =
         "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
         "float3 viewNormal, bool normalValid, constant float4 &params) { "
         "if (normalValid) baseColor.rgb *= 0.5 + 0.5 * abs(viewNormal); return baseColor; }";
     uint32_t normal_id = id | SHADER_OPT_MATERIAL_NORMAL;
     assert(gfx_metal_build_shader_with_material(normal_id, material_normal_source,
-        strlen(material_normal_source), false, source, sizeof(source), &features));
+        strlen(material_normal_source), false, false, source, sizeof(source), &features));
     assert(features.material_normals);
     assert(strstr(source, "float4 viewNormal [[attribute(") != NULL);
     assert(strstr(source, "in.viewNormal.xyz,in.viewNormal.w>0.5") != NULL);
     assert(strstr(source, "float3 viewNormal, bool normalValid") != NULL);
     assert_dense_vertex_attributes(source, &features);
     assert(!gfx_metal_build_shader_with_material(normal_id, material_source,
-        strlen(material_source), false, source, sizeof(source), &features));
+        strlen(material_source), false, false, source, sizeof(source), &features));
     const char *material_lit_source =
         "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
         "float3 viewNormal, bool normalValid, float3 sunDirectionView, float sunIntensity, "
@@ -169,17 +178,29 @@ int main(void) {
         "if (normalValid) baseColor.rgb *= 0.3 + max(dot(normalize(viewNormal),normalize(sunDirectionView)),0.0)*sunIntensity; return baseColor; }";
     uint32_t lit_id = id | SHADER_OPT_MATERIAL_NORMAL | SHADER_OPT_MATERIAL_LIGHT;
     assert(gfx_metal_build_shader_with_material(lit_id, material_lit_source,
-        strlen(material_lit_source), false, source, sizeof(source), &features));
+        strlen(material_lit_source), false, false, source, sizeof(source), &features));
     assert(features.material_normals && features.material_directional_light);
     assert(strstr(source, "float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity") != NULL);
     assert_dense_vertex_attributes(source, &features);
     assert(!gfx_metal_build_shader_with_material(lit_id, material_normal_source,
-        strlen(material_normal_source), false, source, sizeof(source), &features));
+        strlen(material_normal_source), false, false, source, sizeof(source), &features));
     assert(!gfx_metal_build_shader_with_material(id | SHADER_OPT_MATERIAL_LIGHT,
-        material_lit_source, strlen(material_lit_source), false, source, sizeof(source), &features));
+        material_lit_source, strlen(material_lit_source), false, false, source, sizeof(source), &features));
+    const char *material_position_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
+        "float3 viewPosition, bool positionValid, constant float4 &params) { "
+        "if (positionValid) baseColor.rgb *= fract(abs(viewPosition) * max(params.x,0.001)); return baseColor; }";
+    assert(gfx_metal_build_shader_with_material(id, material_position_source,
+        strlen(material_position_source), false, true, source, sizeof(source), &features));
+    assert(features.material_positions);
+    assert(strstr(source, "float4 viewPosition [[attribute(") != NULL);
+    assert(strstr(source, "in.viewPosition.xyz,in.viewPosition.w>0.5") != NULL);
+    assert_dense_vertex_attributes(source, &features);
+    assert(!gfx_metal_build_shader_with_material(id, material_source,
+        strlen(material_source), false, true, source, sizeof(source), &features));
     const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
     assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material), false,
-                                                  source, sizeof(source), &features));
+                                                  false, source, sizeof(source), &features));
 
     /* The MSL input slots must be a dense match for pipeline_for()'s packed
      * descriptor: position, optional UV, optional fog, and then shade inputs. */

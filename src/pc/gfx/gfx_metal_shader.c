@@ -224,7 +224,7 @@ static void write_formula(struct ShaderWriter *w, const struct CCFeatures *f,
 
 bool gfx_metal_build_shader_with_material(uint32_t shader_id,
                                          const char *material_source, size_t material_size,
-                                         bool material_textures,
+                                         bool material_textures, bool material_positions,
                                          char *out, size_t out_size,
                                          struct CCFeatures *features) {
     struct CCFeatures local;
@@ -251,6 +251,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             if (!shader_source_contains(material_source, material_size, required[i])) return false;
     }
     gfx_cc_get_features(shader_id, features);
+    features->material_positions = material_positions;
     if (features->material_directional_light && !features->material_normals) return false;
     if (material_source && features->material_normals) {
         if (!shader_source_contains(material_source, material_size, "float3 viewNormal") ||
@@ -259,6 +260,9 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             (!shader_source_contains(material_source, material_size, "float3 sunDirectionView") ||
              !shader_source_contains(material_source, material_size, "float sunIntensity"))) return false;
     }
+    if (material_source && features->material_positions &&
+        (!shader_source_contains(material_source, material_size, "float3 viewPosition") ||
+         !shader_source_contains(material_source, material_size, "bool positionValid"))) return false;
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
          (features->scene_blend && features->opt_texture_edge) ||
@@ -312,6 +316,9 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         if (features->material_normals) {
             write_format(&w, "float4 viewNormal [[attribute(%d)]];\n", vertex_layout.normal_attribute, 0);
         }
+        if (features->material_positions) {
+            write_format(&w, "float4 viewPosition [[attribute(%d)]];\n", vertex_layout.position_attribute, 0);
+        }
         for (i = 0; i < features->num_inputs; ++i) {
             write_format(&w, features->opt_alpha ? "float4 input%d [[attribute(%d)]];\n" :
                          "float3 input%d [[attribute(%d)]];\n", i + 1, vertex_layout.input_attribute[i]);
@@ -322,6 +329,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "float2 uv1;\n");
     if (features->opt_fog) write_text(&w, "float4 fog;\n");
     if (features->material_normals) write_text(&w, "float4 viewNormal;\n");
+    if (features->material_positions) write_text(&w, "float4 viewPosition;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, features->opt_alpha ? "float4 input%d;\n" : "float3 input%d;\n", i + 1, 0);
     write_text(&w,
@@ -332,6 +340,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (vertex_layout.uv1_attribute != UINT8_MAX) write_text(&w, "o.uv1=in.uv1;\n");
     if (features->opt_fog) write_text(&w, "o.fog=in.fog;\n");
     if (features->material_normals) write_text(&w, "o.viewNormal=in.viewNormal;\n");
+    if (features->material_positions) write_text(&w, "o.viewPosition=in.viewPosition;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, "o.input%d=in.input%d;\n", i + 1, i + 1);
     write_text(&w, "return o; }\n");
@@ -397,6 +406,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
             write_text(&w, ",in.pos,params.materialClass");
             if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
+            if (features->material_positions) write_text(&w, ",in.viewPosition.xyz,in.viewPosition.w>0.5");
             if (features->material_directional_light)
                 write_text(&w, ",float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity");
             if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
@@ -435,6 +445,7 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
         write_text(&w, ",in.pos,params.materialClass");
         if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
+        if (features->material_positions) write_text(&w, ",in.viewPosition.xyz,in.viewPosition.w>0.5");
         if (features->material_directional_light)
             write_text(&w, ",float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity");
         if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
@@ -447,5 +458,5 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
 
 bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                             struct CCFeatures *features) {
-    return gfx_metal_build_shader_with_material(shader_id, NULL, 0, false, out, out_size, features);
+    return gfx_metal_build_shader_with_material(shader_id, NULL, 0, false, false, out, out_size, features);
 }

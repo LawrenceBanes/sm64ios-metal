@@ -48,6 +48,7 @@ struct CCFeatures {
     bool scene_blend;
     bool material_normals;
     bool material_directional_light;
+    bool material_positions;
     bool opt_fog;
     bool opt_texture_edge;
     bool opt_noise;

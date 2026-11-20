@@ -115,6 +115,8 @@ struct LoadedVertex {
     float normal[3];
     float view_normal[3];
     float view_normal_valid;
+    float view_position[3];
+    float view_position_valid;
     float modelview[4][4];
     bool modelview_camera_applied;
     uint64_t geometry_id;
@@ -283,7 +285,7 @@ struct GfxDimensions gfx_current_dimensions;
 static bool dropped_frame;
 
 /* Opt-in SHADER64 material normals add one float4 per submitted vertex. */
-static float buf_vbo[MAX_BUFFERED * (30 * 3)]; // 3 vertices in a triangle and at most 30 floats per vertex
+static float buf_vbo[MAX_BUFFERED * (36 * 3)]; // 3 vertices in a triangle; positions/normals add two optional float4s
 static size_t buf_vbo_len;
 static size_t buf_vbo_num_tris;
 
@@ -1208,6 +1210,7 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
     uint64_t geometry_id = 0;
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     bool capture_material_normals = gfx_metal_shader64_material_vertex_normals_enabled();
+    bool capture_material_positions = gfx_metal_shader64_material_vertex_positions_enabled();
 #endif
     if (gfx_scene_capture_is_geometry_enabled()) {
         uint32_t vertex_count = (uint32_t)n_vertices;
@@ -1228,12 +1231,20 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
 
         d->view_normal[0] = d->view_normal[1] = d->view_normal[2] = 0.0f;
         d->view_normal_valid = 0.0f;
+        d->view_position[0] = d->view_position[1] = d->view_position[2] = 0.0f;
+        d->view_position_valid = 0.0f;
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
         if (capture_material_normals && (rsp.geometry_mode & G_LIGHTING)) {
             float source_normal[3] = { vn->n[0] / 127.0f, vn->n[1] / 127.0f, vn->n[2] / 127.0f };
             if (gfx_metal_transform_view_normal(source_normal,
                     rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], d->view_normal))
                 d->view_normal_valid = 1.0f;
+        }
+        if (capture_material_positions && rsp.modelview_matrix_stack_size > 0) {
+            float object_position[3] = {(float)v->ob[0], (float)v->ob[1], (float)v->ob[2]};
+            if (gfx_metal_transform_view_position(object_position,
+                    rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], d->view_position))
+                d->view_position_valid = 1.0f;
         }
 #endif
 
@@ -1516,6 +1527,12 @@ static void gfx_draw_scene_triangle(struct LoadedVertex *const vertices[3]) {
             buf_vbo[buf_vbo_len++] = vertex->view_normal[1];
             buf_vbo[buf_vbo_len++] = vertex->view_normal[2];
             buf_vbo[buf_vbo_len++] = vertex->view_normal_valid;
+        }
+        if (gfx_metal_shader64_material_vertex_positions_enabled()) {
+            buf_vbo[buf_vbo_len++] = vertex->view_position[0];
+            buf_vbo[buf_vbo_len++] = vertex->view_position[1];
+            buf_vbo[buf_vbo_len++] = vertex->view_position[2];
+            buf_vbo[buf_vbo_len++] = vertex->view_position_valid;
         }
 #endif
         buf_vbo[buf_vbo_len++] = vertex->color.r / 255.0f;
@@ -1860,6 +1877,12 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
             buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal[1];
             buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal[2];
             buf_vbo[buf_vbo_len++] = v_arr[i]->view_normal_valid;
+        }
+        if (gfx_metal_shader64_material_vertex_positions_enabled()) {
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_position[0];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_position[1];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_position[2];
+            buf_vbo[buf_vbo_len++] = v_arr[i]->view_position_valid;
         }
 #endif
         
