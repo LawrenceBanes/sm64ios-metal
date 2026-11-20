@@ -4,7 +4,9 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Status: first API 2 fullscreen DAG vertical slice committed and Apple-compiled; larger Iris-class stages remain incomplete.
+- Code checkpoint: `d00525c2dfd8c418f78a1ee77c20e22ea1f76e16` (API 2 render graph)
+- Current documentation checkpoint: `4442d743551c6f37169a04ddea01ff0a82121402`
+- Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
 ## Implemented in working tree
@@ -23,12 +25,15 @@
 - `tests/run_linux_checks.sh`: passed (complete suite, exit 0), including API 2 source wrapper and archive tests. Existing platform/action compiler warnings and fixture-invalid-scene diagnostics remain in suite output.
 - `git diff --check`: passed at the previous checkpoint; rerun after remaining edits.
 - Apple validation workflow `44787616391` passed both Linux and Xcode 27 iOS device/simulator compile/link jobs, including UIKit integration and wrapped API 2 GraphDemo/Bliss Metal sources. No GPU or iPhone runtime was executed.
-- No Metal SDK on this host assumed; Apple compilation is not claimed.
+- Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
+- Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
+- IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
+- Verified embedded app identity: bundle ID `com.larry.shitboxdev`, display name `SHITBOX LABZ INC.`, version `0.69.420` (build `1`). The private-build repository is confirmed private.
+- Apple compilation and packaging are verified by CI; Metal GPU execution and physical iPhone output are not verified.
 
 ## Remaining work / next
 
-1. Build a private device-test IPA from the validated branch commit.
-2. Confirm the imported GraphDemo and Bliss adaptation alter actual output on iPhone (no device result yet).
-3. Extend resource/node contracts only after providing corresponding engine data. Bliss temporal, depth, G-buffer, geometry, shadow, compute, texture and Minecraft-uniform requirements remain unsupported.
+1. Install the private IPA on a test iPhone, prepare each reference pack directory as a ZIP, and import it through the in-game Graphics → Shader Pack → Import ZIP Pack flow; activate GraphDemo or BlissGridlines and record visual/runtime diagnostics.
+2. Extend resource/node contracts only after providing corresponding engine data. Bliss temporal, depth, G-buffer, geometry, shadow, compute, texture and Minecraft-uniform requirements remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
