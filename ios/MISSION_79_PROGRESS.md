@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; Apple backend/MSL and Linux regression passed in [run 44704797589](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704797589). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) is building this source. Responsive Graphics panel layout is in the current uncommitted iteration.
+- Current pushed source commit: `aa7c92c1` (responsive Graphics panel layout); Apple backend/MSL validation passed in [run 44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490). Full IPA workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225) passed for source `169a3f134aa3246f14b7171bdfaf65cc098e3b9d`; it predates the responsive layout and latest direct-fallback repair.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -123,9 +123,12 @@
 - Apple MSL/backend validation passed for the light-shaft kernel in [run 44703856058](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44703856058), source `039bb3f991d63ac2cb4976c023af1b4e1c6c81ee`. This run fixed a real compile failure: Metal depth texture `read()` returns a scalar, not an RGBA value. Full app packaging for this source revision is still required. Physical output, sunlight visibility, and performance are unverified.
 - Added a camera-projected sun disk on Day/Sunset sky presets. The sun direction is now shared by the light-shaft source and shadow caster and has persisted Afternoon/Morning/Noon/Sunset presets accessible from the sun/shadow control. This current preset-control change is not yet Apple-validated.
 - `07728beb` Apple backend/MSL validation and Linux jobs passed in [run 44704150806](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704150806).
-- Latest local iteration adds an optional sunlight intensity control (Off/Low/Medium/High) using depth-neighbor reconstructed view normals transformed to world space, Lambert diffuse, and shadow-map PCF visibility. It also fixes a demonstrated integration defect: inverse projection was only computed when fog was active, leaving the shadow receiver's depth reconstruction matrix zero whenever shadows were used alone. The inverse camera matrices are now prepared for shadow and sun passes independently of fog. These changes have only focused host/source checks so far and require Apple validation.
-- The Graphics panel controls now reflow against the current iPhone/iPad panel width rather than keeping the 520-point desktop layout. The source regression checks the dynamic row layout; it is not yet included in an Apple build.
+- Optional sunlight intensity control (Off/Low/Medium/High) uses depth-neighbor reconstructed view normals transformed to world space, Lambert diffuse, and shadow-map PCF visibility. A demonstrated integration defect was fixed: inverse projection had only been computed when fog was active, leaving the shadow receiver's depth reconstruction matrix zero with shadows alone. Apple backend/MSL and Linux checks passed in run [44704797589](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704797589).
+- Graphics panel controls reflow against the current iPhone/iPad panel width rather than keeping the 520-point desktop layout. This change is included in `aa7c92c1`; focused and full Linux tests plus Apple backend/MSL validation passed, but it is not in the current IPA.
+- The offscreen renderer now latches to direct drawable rendering after allocation/compositor failure and does not retry every frame. A deliberate graphics setting change clears the latch. Focused source checks pass; full regression and Apple validation are in progress.
 
 ## Next task
 
-Run Apple shader/backend validation for the new light-shaft kernel and current graphics sources, repair any actual failures, and package a full IPA for the next integrated test candidate. Then continue with AO/HUD isolation, sky refinement, and remaining effect controls. Physical-device image and timing review is still needed.
+The latest full IPA is a private draft from source `169a3f13`, SHA-256 `f6106478d18070a02e01119a5d6263f9eeb03c0c392b53dd635f702b67c872b4`, uploaded by workflow [44704944225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44704944225). It predates the responsive layout and failure-latch follow-up. The completed Apple check for `aa7c92c1` is run [44705463490](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705463490).
+
+Complete Linux and Apple validation for the offscreen failure latch, then package a current-source IPA. Afterward address world/HUD isolation and material/shadow quality. Physical-device image and timing review remains required.

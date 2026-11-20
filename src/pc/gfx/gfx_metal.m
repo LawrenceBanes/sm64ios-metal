@@ -1254,9 +1254,13 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
     fallback.sample_count = 1u;
     gfx_ios_diag_log("Metal offscreen rendering fallback reason=%s; active render target is drawable at 100%%/1x", reason ?: "unknown");
     gfx_metal_apply_settings(fallback);
+    @synchronized ([NSObject class]) { metal_offscreen_runtime_failed = true; }
 }
 
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
+    /* Keep rendering directly to the drawable after an enhanced-path failure.
+     * Setting changes clear this latch so the user can retry deliberately. */
+    if (metal_offscreen_runtime_failed) return false;
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
         !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u &&
@@ -1871,10 +1875,6 @@ static void gfx_metal_start_frame(void) {
     CAMetalLayer *metal_layer = (CAMetalLayer *)metal_view.layer;
     metal_drawable = [metal_layer nextDrawable];
     MTLRenderPassDescriptor *pass = nil;
-    if (metal_offscreen_runtime_failed && gfx_metal_settings_use_offscreen(metal_settings)) {
-        metal_offscreen_runtime_failed = false;
-        gfx_metal_fallback_to_direct("enhanced pipeline or final-pass encoder failed");
-    }
     metal_frame_uses_offscreen = metal_drawable && gfx_metal_ensure_offscreen_targets(metal_drawable);
     if (metal_drawable) {
         NSUInteger width = metal_frame_uses_offscreen ? metal_target_width : metal_drawable.texture.width;
