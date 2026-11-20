@@ -213,7 +213,7 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     write_text(&w, "#include <metal_stdlib>\nusing namespace metal;\n");
     write_text(&w,
         "struct FragmentParams { uint filter0; uint filter1; uint diagnosticMode; "
-        "uint textureId0; uint textureId1; float frameCount; };\n"
+        "uint textureId0; uint textureId1; uint materialClass; float frameCount; };\n"
         "float3 diagnosticTextureColor(uint textureId) {\n"
         "float hue=fract(float(textureId)*0.61803398875);\n"
         "float3 color=clamp(abs(fract(hue+float3(0.0,0.6666667,0.3333333))*6.0-3.0)-1.0,0.0,1.0);\n"
@@ -303,6 +303,7 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                    "float3 line=smoothstep(float3(0.0),fw*1.25,in.barycentric); "
                    "float edge=1.0-min(min(line.x,line.y),line.z); "
                    "return float4(mix(float3(0.78),float3(0.04),edge),1.0); }\n");
+    write_text(&w, "if(params.diagnosticMode==5u) { float3 c=params.materialClass==3u?float3(1.0,0.2,0.85):(params.materialClass==2u?float3(1.0,0.55,0.1):(params.materialClass==1u?float3(0.2,0.75,1.0):float3(0.3))); return float4(c,1.0); }\n");
     if (features->scene_material) {
         const char *sample = features->used_textures[1] ? "mix(texel0,texel1,in.input3.a)"
                            : features->used_textures[0] ? "texel0" : "float4(1.0)";

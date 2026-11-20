@@ -18,6 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include "gfx_metal.h"
+#include "gfx_pc.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
 #include "gfx_shader64_pack.h"
@@ -58,6 +59,7 @@ struct MetalFragmentParams {
     uint32_t diagnostic_mode;
     uint32_t texture_id0;
     uint32_t texture_id1;
+    uint32_t material_class;
     float frame_count;
 };
 
@@ -1237,6 +1239,7 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         (uint32_t)gfx_ios_render_diagnostic_mode(),
         bound_textures[0] ? (uint32_t)(bound_textures[0] - textures + 1) : 0u,
         bound_textures[1] ? (uint32_t)(bound_textures[1] - textures + 1) : 0u,
+        gfx_current_render_material_class(),
         (float)frame_count
     };
     [metal_encoder setFragmentBytes:&fragment_params length:sizeof(fragment_params) atIndex:1];

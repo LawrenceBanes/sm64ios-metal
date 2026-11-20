@@ -31,6 +31,8 @@ WSC materials are translated through the existing scene-material and Fast3D/comb
 
 API 2 (`formatVersion: 2`, `shaderApiVersion: 2`) is a Metal-native fullscreen raster DAG. It is intentionally a small first slice, not a claim of Iris/OptiFine compatibility. Each pass compiles its own Metal source with the common `shader64_pass` entry. The engine supplies a fullscreen triangle, one sampled input image, one clamp/linear sampler, and four pack parameters. Passes write either a named RGBA16Float sampled target or the drawable resource `present`.
 
+The Fast3D/GeoLayout integration now has a bounded material-class signal for a future geometry/material hook: iOS Metal GeoLayout display-list items retain whether they came from static world rendering, a dynamic object, or Mario. The class is carried through tagged no-op commands in the existing Fast3D stream and exposed to the Metal fragment parameter block. This does not yet provide user shaders with per-vertex world-space positions, normals, transforms, custom textures, or a material replacement entry point; the existing N64 combiner remains authoritative. A selectable Material Class diagnostic visualizes the classification when the engine path is compiled for iOS Metal.
+
 ```json
 {
   "formatVersion": 2,

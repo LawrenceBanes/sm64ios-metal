@@ -9,6 +9,7 @@ enum GfxIOSRenderDiagnosticMode {
     GFX_IOS_RENDER_UV = 2,
     GFX_IOS_RENDER_TEXTURE_ID = 3,
     GFX_IOS_RENDER_TRIANGLES = 4,
+    GFX_IOS_RENDER_MATERIAL_CLASS = 5,
 };
 
 #if defined(TARGET_OS_IOS)

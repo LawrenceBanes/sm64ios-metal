@@ -25,6 +25,7 @@
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
 #include "gfx_render_section.h"
+#include "engine/render_material.h"
 #include "gfx_scene_capture.h"
 #include "gfx_screen_config.h"
 #include "gfx_texture_cache_util.h"
@@ -284,6 +285,11 @@ static size_t buf_vbo_num_tris;
 
 static struct GfxWindowManagerAPI *gfx_wapi;
 static struct GfxRenderingAPI *gfx_rapi;
+static uint32_t current_render_material_class = GFX_RENDER_MATERIAL_UNCLASSIFIED;
+
+uint32_t gfx_current_render_material_class(void) {
+    return current_render_material_class;
+}
 
 // 4x4 pink-black checkerboard texture to indicate missing textures
 #define MISSING_W 4
@@ -2352,6 +2358,16 @@ static void gfx_run_dl(Gfx* cmd) {
         switch (opcode) {
 #if defined(TARGET_OS_IOS) || defined(IOS_O2R_SCENE_RUNTIME)
             case G_NOOP:
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+                {
+                    int material_class = gfx_render_material_class_from_tag(cmd->words.w1);
+                    if (material_class >= 0) {
+                        gfx_flush();
+                        current_render_material_class = (uint32_t)material_class;
+                        break;
+                    }
+                }
+#endif
                 if (cmd->words.w1 == GFX_RENDER_UI_OVERLAY_BEGIN_TAG &&
                     gfx_rapi->begin_ui_overlay != NULL) {
                     gfx_flush();
@@ -2664,6 +2680,7 @@ void gfx_start_frame(void) {
 
 void gfx_run(Gfx *commands) {
     gfx_sp_reset();
+    current_render_material_class = GFX_RENDER_MATERIAL_UNCLASSIFIED;
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     bool capture_for_post = gfx_metal_ssao_enabled() || gfx_metal_fog_enabled() ||
                             gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled() ||

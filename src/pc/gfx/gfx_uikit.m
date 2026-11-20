@@ -1723,8 +1723,8 @@ static int sm64RenderDiagnosticMode;
 }
 
 - (void)cycleRenderDiagnosticMode {
-    static NSString *const modeNames[] = {@"Normal", @"Flat", @"UV", @"Tex ID", @"Triangles"};
-    sm64RenderDiagnosticMode = (sm64RenderDiagnosticMode + 1) % 5;
+    static NSString *const modeNames[] = {@"Normal", @"Flat", @"UV", @"Tex ID", @"Triangles", @"Material Class"};
+    sm64RenderDiagnosticMode = (sm64RenderDiagnosticMode + 1) % 6;
     NSString *title = [NSString stringWithFormat:@"Mode: %@", modeNames[sm64RenderDiagnosticMode]];
     [self.renderModeButton setTitle:title forState:UIControlStateNormal];
     gfx_ios_diag_log("Render diagnostic mode changed mode=%d name=%s; Normal mode preserves the regular shader output", sm64RenderDiagnosticMode, modeNames[sm64RenderDiagnosticMode].UTF8String);

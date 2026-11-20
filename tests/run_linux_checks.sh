@@ -5,6 +5,13 @@ cc=${CC:-clang}
 SDL2_CFLAGS=$(pkg-config --cflags sdl2)
 
 CC="$cc" "$repo_dir/tests/run_metal_shader_codegen_test.sh"
+material_class_test_bin=$(mktemp "${TMPDIR:-/tmp}/sm64-material-class.XXXXXX")
+trap 'rm -f "$material_class_test_bin"' EXIT HUP INT TERM
+$cc -std=c99 -Wall -Wextra -Werror -I"$repo_dir/src" \
+    "$repo_dir/tests/render_material_test.c" -o "$material_class_test_bin"
+"$material_class_test_bin"
+rm -f "$material_class_test_bin"
+trap - EXIT HUP INT TERM
 CC="$cc" "$repo_dir/tests/run_metal_state_test.sh"
 CC="$cc" "$repo_dir/tests/run_scene_capture_test.sh"
 CC="$cc" "$repo_dir/tests/run_gfx_postprocess_test.sh"

@@ -1,6 +1,8 @@
 #ifndef GFX_PC_H
 #define GFX_PC_H
 
+#include <stdint.h>
+
 struct GfxRenderingAPI;
 struct GfxWindowManagerAPI;
 
@@ -22,6 +24,7 @@ void gfx_run(Gfx *commands);
 void gfx_end_frame(void);
 void gfx_precache_textures(void);
 void gfx_shutdown(void);
+uint32_t gfx_current_render_material_class(void);
 
 #ifdef __cplusplus
 }

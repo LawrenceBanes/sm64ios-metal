@@ -13,6 +13,9 @@
 #include "memory.h"
 #include "print.h"
 #include "rendering_graph_node.h"
+#if defined(IOS_BUILD) && defined(RAPI_METAL)
+#include "engine/render_material.h"
+#endif
 #include "shadow.h"
 #include "sm64.h"
 #ifdef IOS_BUILD
@@ -169,7 +172,14 @@ static void geo_process_master_list_sub(struct GraphNodeMasterList *node) {
             while (currList != NULL) {
                 gSPMatrix(gDisplayListHead++, VIRTUAL_TO_PHYSICAL(currList->transform),
                           G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_NOPUSH);
+#if defined(IOS_BUILD) && defined(RAPI_METAL)
+                gDPNoOpTag(gDisplayListHead++, gfx_render_material_tag(
+                    (enum GfxRenderMaterialClass)currList->materialClass));
+#endif
                 gSPDisplayList(gDisplayListHead++, currList->displayList);
+#if defined(IOS_BUILD) && defined(RAPI_METAL)
+                gDPNoOpTag(gDisplayListHead++, gfx_render_material_tag(GFX_RENDER_MATERIAL_UNCLASSIFIED));
+#endif
                 currList = currList->next;
             }
         }
@@ -197,6 +207,14 @@ static void geo_append_display_list(void *displayList, s16 layer) {
         listNode->transform = gMatStackFixed[gMatStackIndex];
         listNode->displayList = displayList;
         listNode->next = 0;
+#if defined(IOS_BUILD) && defined(RAPI_METAL)
+        listNode->materialClass = GFX_RENDER_MATERIAL_WORLD;
+        if (gCurGraphNodeObject != NULL)
+            listNode->materialClass = gCurGraphNodeObject == (struct GraphNodeObject *)gMarioObject
+                ? GFX_RENDER_MATERIAL_CHARACTER : GFX_RENDER_MATERIAL_OBJECT;
+#else
+        listNode->materialClass = 0;
+#endif
         if (gCurGraphNodeMasterList->listHeads[layer] == 0) {
             gCurGraphNodeMasterList->listHeads[layer] = listNode;
         } else {

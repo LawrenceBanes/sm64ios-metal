@@ -27,13 +27,14 @@ def main() -> None:
         "GFX_IOS_RENDER_UV": 2,
         "GFX_IOS_RENDER_TEXTURE_ID": 3,
         "GFX_IOS_RENDER_TRIANGLES": 4,
+        "GFX_IOS_RENDER_MATERIAL_CLASS": 5,
     }.items():
         require(f"{name} = {value}" in header, f"missing or changed mode {name}")
     require("static int sm64RenderDiagnosticMode;" in uikit,
             "render diagnostics must default to Normal")
     require("@selector(cycleRenderDiagnosticMode)" in uikit,
             "render mode is not reachable from native diagnostic UI")
-    require("sm64RenderDiagnosticMode = (sm64RenderDiagnosticMode + 1) % 5" in uikit,
+    require("sm64RenderDiagnosticMode = (sm64RenderDiagnosticMode + 1) % 6" in uikit,
             "render mode cycle must include every selectable mode")
     require("Render diagnostic mode changed" in uikit,
             "mode changes must be written to the persistent device log")
@@ -45,6 +46,7 @@ def main() -> None:
         "diagnosticMode==2u",
         "diagnosticMode==3u",
         "diagnosticMode==4u",
+        "diagnosticMode==5u",
         "vertex_id [[vertex_id]]",
         "o.barycentric=",
     ):
@@ -53,7 +55,7 @@ def main() -> None:
             "texture identity mode must use logical texture IDs")
 
     for field in ("filter0", "filter1", "diagnostic_mode", "texture_id0",
-                  "texture_id1", "frame_count"):
+                  "texture_id1", "material_class", "frame_count"):
         require(field in metal.split("struct MetalFragmentParams {", 1)[1].split("};", 1)[0],
                 f"Metal fragment parameter is missing {field}")
     require("setFragmentBytes:&fragment_params length:sizeof(fragment_params) atIndex:1" in metal,

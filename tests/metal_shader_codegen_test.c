@@ -92,6 +92,8 @@ int main(void) {
     assert(strstr(source, "float3 input1 [[attribute(1)]]") != NULL);
     assert(strstr(source, "float3(in.input1.rgb)") == NULL);
     assert(strstr(source, "float4 color=float4(in.input1.rgb,1.0)") != NULL);
+    assert(strstr(source, "uint materialClass") != NULL);
+    assert(strstr(source, "params.materialClass==3u") != NULL);
     assert_dense_vertex_attributes(source, &features);
 
     /* The MSL input slots must be a dense match for pipeline_for()'s packed
