@@ -10,6 +10,8 @@ extern struct GfxRenderingAPI gfx_metal_api;
 bool gfx_metal_hd_textures_enabled(void);
 bool gfx_metal_ssao_enabled(void);
 void gfx_metal_set_ssao_enabled(bool enabled);
+uint32_t gfx_metal_ssao_debug_mode(void);
+void gfx_metal_cycle_ssao_mode(void);
 #endif
 
 #ifdef __OBJC__

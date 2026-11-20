@@ -647,17 +647,21 @@ static int sm64RenderDiagnosticMode;
     if (gfx_metal_ssao_enabled()) self.msaaControl.enabled = NO;
     for (NSUInteger i = 1; i < sizeof(levels) / sizeof(levels[0]); ++i)
         [self.anisotropyControl setEnabled:levels[i] <= capabilities.max_anisotropy forSegmentAtIndex:i];
-    [self.ssaoButton setTitle:gfx_metal_ssao_enabled() ? @"SSAO: On" : @"SSAO: Off"
+    static const char *const ssao_modes[] = { "SSAO: Off", "SSAO: On", "SSAO: AO View", "SSAO: Depth View" };
+    uint32_t ssao_mode = gfx_metal_ssao_debug_mode();
+    [self.ssaoButton setTitle:[NSString stringWithUTF8String:ssao_modes[MIN(ssao_mode, 3u)]]
                      forState:UIControlStateNormal];
 #endif
 }
 
 - (void)toggleSSAO {
 #if defined(RAPI_METAL)
-    gfx_metal_set_ssao_enabled(!gfx_metal_ssao_enabled());
+    gfx_metal_cycle_ssao_mode();
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
-    [self appendStatus:gfx_metal_ssao_enabled() ? @"SSAO enabled (single-sample offscreen path)" : @"SSAO disabled"];
+    static const char *const status[] = { "SSAO disabled", "SSAO enabled (single-sample offscreen path)",
+                                          "SSAO output view", "Scene depth view" };
+    [self appendStatus:[NSString stringWithUTF8String:status[MIN(gfx_metal_ssao_debug_mode(), 3u)]]];
 #endif
 }
 

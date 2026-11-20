@@ -15,8 +15,8 @@ const char *gfx_metal_present_shader_source(void) {
         "  o.uv = id == 0 ? float2(0.0, 1.0) : (id == 1 ? float2(2.0, 1.0) : float2(0.0, -1.0));\n"
         "  return o;\n"
         "}\n"
-        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], constant uint &aoEnabled [[buffer(0)]]) {\n"
-        "  float4 color=image.sample(imageSampler,in.uv); if(aoEnabled!=0u) color.rgb*=ao.sample(aoSampler,in.uv).r; return color;\n"
+        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], depth2d<float> depth [[texture(2)]], constant uint2 &presentParams [[buffer(0)]]) {\n"
+        "  float4 color=image.sample(imageSampler,in.uv); if(presentParams.y==1u) { float a=ao.sample(aoSampler,in.uv).r; return float4(a,a,a,1.0); } if(presentParams.y==2u) { float d=depth.sample(aoSampler,in.uv); return float4(d,d,d,1.0); } if(presentParams.x!=0u) color.rgb*=ao.sample(aoSampler,in.uv).r; return color;\n"
         "}\n";
 }
 

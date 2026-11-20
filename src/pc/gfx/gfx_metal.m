@@ -78,6 +78,7 @@ static id<MTLTexture> metal_ssao_texture;
 static id<MTLTexture> metal_ssao_filtered_texture;
 static NSUInteger metal_ssao_width, metal_ssao_height;
 static bool metal_ssao_is_enabled;
+static uint32_t metal_ssao_debug;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -215,7 +216,11 @@ static void gfx_metal_refresh_capabilities(void) {
 
 static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    metal_ssao_is_enabled = [defaults boolForKey:@"SM64MetalSSAOEnabled"];
+    if ([defaults objectForKey:@"SM64MetalSSAOMode"])
+        metal_ssao_debug = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSSAOMode"]));
+    else
+        metal_ssao_debug = [defaults boolForKey:@"SM64MetalSSAOEnabled"] ? 1u : 0u;
+    metal_ssao_is_enabled = metal_ssao_debug != 0u;
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -254,12 +259,30 @@ bool gfx_metal_ssao_enabled(void) {
 
 void gfx_metal_set_ssao_enabled(bool enabled) {
     @synchronized ([NSObject class]) {
+        metal_ssao_debug = enabled ? 1u : 0u;
         metal_ssao_is_enabled = enabled;
         metal_offscreen_runtime_failed = false;
         if (!enabled) metal_performance_stats.ssao_pixels = 0;
     }
+    [[NSUserDefaults standardUserDefaults] setInteger:enabled ? 1 : 0 forKey:@"SM64MetalSSAOMode"];
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalSSAOEnabled"];
     gfx_ios_diag_log("Metal SSAO %s", enabled ? "enabled" : "disabled");
+}
+
+uint32_t gfx_metal_ssao_debug_mode(void) {
+    @synchronized ([NSObject class]) { return metal_ssao_debug; }
+}
+
+void gfx_metal_cycle_ssao_mode(void) {
+    @synchronized ([NSObject class]) {
+        metal_ssao_debug = (metal_ssao_debug + 1u) % 4u;
+        metal_ssao_is_enabled = metal_ssao_debug != 0u;
+        metal_offscreen_runtime_failed = false;
+        if (!metal_ssao_is_enabled) metal_performance_stats.ssao_pixels = 0;
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_ssao_debug forKey:@"SM64MetalSSAOMode"];
+    [[NSUserDefaults standardUserDefaults] setBool:metal_ssao_debug != 0u forKey:@"SM64MetalSSAOEnabled"];
+    gfx_ios_diag_log("Metal SSAO display mode=%u", metal_ssao_debug);
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -1060,8 +1083,11 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
     [encoder setFragmentTexture:(gfx_metal_ssao_enabled() ? metal_ssao_filtered_texture : source) atIndex:1];
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
-    uint32_t ao_enabled = gfx_metal_ssao_enabled() ? 1u : 0u;
-    [encoder setFragmentBytes:&ao_enabled length:sizeof(ao_enabled) atIndex:0];
+    [encoder setFragmentTexture:metal_depth_texture atIndex:2];
+    uint32_t debug_mode = gfx_metal_ssao_debug_mode();
+    uint32_t present_params[2] = { gfx_metal_ssao_enabled() ? 1u : 0u,
+                                   debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u) };
+    [encoder setFragmentBytes:present_params length:sizeof(present_params) atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;

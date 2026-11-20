@@ -66,7 +66,7 @@ def main() -> None:
         "SM64MetalPreset", "SM64MetalRenderScale", "SM64MetalSampleCount",
         "SM64MetalAnisotropy", "completed.GPUStartTime", "completed.GPUEndTime",
         "metal_performance_stats.draw_calls", "metal_performance_stats.triangles",
-        "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled",
+        "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled", "gfx_metal_cycle_ssao_mode",
         "newComputePipelineStateWithFunction", "dispatchThreads:MTLSizeMake(width, height, 1)",
         "MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite",
         "sm64_ssao_denoise", "metal_ssao_filtered_texture",

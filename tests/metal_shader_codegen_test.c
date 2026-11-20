@@ -58,7 +58,10 @@ int main(void) {
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
     assert(strstr(present_source, "sm64_present_fragment") != NULL);
-    assert(strstr(present_source, "aoEnabled") != NULL);
+    assert(strstr(present_source, "presentParams") != NULL);
+    assert(strstr(present_source, "AO-only debug output") != NULL ||
+           strstr(present_source, "presentParams.y==1u") != NULL);
+    assert(strstr(present_source, "depth2d<float> depth") != NULL);
     const char *ssao_source = gfx_metal_ssao_shader_source();
     assert(strstr(ssao_source, "sm64_ssao") != NULL);
     assert(strstr(ssao_source, "inverseProjection") != NULL);
