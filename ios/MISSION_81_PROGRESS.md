@@ -87,7 +87,7 @@
 - Added ComputeBlur64, a two-node reference graph with a half-resolution 3×3 compute blur and fullscreen presentation pass. This exercises a pack-defined compute effect without a blur-specific engine path.
 - Added restored-pack type validation and source/graph tests for valid contracts, bad resource slots, extra unbound textures, output-to-present rejection, and bounded graph behavior.
 - Host validation before Apple CI: 25 focused Shader64 tests pass (including production importer and ASan/UBSan ZIP smoke); Metal codegen, Xcode project wiring, shell syntax, and `git diff --check` pass. `CC=clang tests/run_linux_checks.sh` completed with all suites passing; existing platform/action warnings and malformed-fixture diagnostics remain.
-- Host checks do not execute the compute kernel. Apple MSL compilation and runtime GPU/device output are pending.
-- Next: validate this increment with Apple Metal SDK CI, fix any demonstrated compiler issue, then continue to a separate scene/material capability. No `main` merge yet.
+- Commit `0331d965263b75ec637965c09dacaa3cfa8b5705` was pushed to `mission-81-shader64-rendergraph`. Apple workflow [44815752341](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44815752341) passed the full Linux regression job and Xcode 27 iOS Metal backend/MSL compile/link, including ComputeBlur64. This is compile-time validation only: no GPU execution or device pixels were observed.
+- Host checks do not execute the compute kernel. Next: extend user-owned texture access to compute kernels while preserving the graph budget and binding validation. No `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
