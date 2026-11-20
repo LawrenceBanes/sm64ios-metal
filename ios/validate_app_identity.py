@@ -11,8 +11,10 @@ from pathlib import Path
 EXPECTED = {
     "CFBundleIdentifier": "com.larry.shitboxdev",
     "CFBundleDisplayName": "SHITBOX LABZ INC.",
-    "CFBundleShortVersionString": "beta.069420INITIAL",
-    "CFBundleVersion": "beta.069420INITIAL",
+    "CFBundleName": "ShitboxDev",
+    "CFBundleShortVersionString": "0.69.420",
+    "CFBundleVersion": "1",
+    "ShitboxReleaseVersion": "beta.069420INITIAL",
 }
 
 

@@ -18,8 +18,10 @@ class AppIdentityTests(unittest.TestCase):
         return {
             "CFBundleIdentifier": "com.larry.shitboxdev",
             "CFBundleDisplayName": "SHITBOX LABZ INC.",
-            "CFBundleShortVersionString": "beta.069420INITIAL",
-            "CFBundleVersion": "beta.069420INITIAL",
+            "CFBundleName": "ShitboxDev",
+            "CFBundleShortVersionString": "0.69.420",
+            "CFBundleVersion": "1",
+            "ShitboxReleaseVersion": "beta.069420INITIAL",
         }
 
     def test_accepts_required_branded_identity(self):
@@ -34,8 +36,14 @@ class AppIdentityTests(unittest.TestCase):
     def test_rejects_wrong_display_name_or_version(self):
         info = self.valid_info()
         info["CFBundleDisplayName"] = "Super Mario 64"
-        info["CFBundleVersion"] = "1"
+        info["CFBundleVersion"] = "2"
         with self.assertRaisesRegex(ValueError, "CFBundleDisplayName.*CFBundleVersion"):
+            validate(self.write_info(info))
+
+    def test_rejects_wrong_release_label(self):
+        info = self.valid_info()
+        info["ShitboxReleaseVersion"] = "beta.old"
+        with self.assertRaisesRegex(ValueError, "ShitboxReleaseVersion"):
             validate(self.write_info(info))
 
 
