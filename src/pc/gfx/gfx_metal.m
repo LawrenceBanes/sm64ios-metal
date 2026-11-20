@@ -88,6 +88,7 @@ static uint32_t metal_ssao_debug;
 static uint32_t metal_ssao_quality;
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
+static bool metal_effects_enabled;
 static float metal_exposure_stops;
 static uint32_t metal_color_grade;
 static bool metal_fog_is_enabled;
@@ -248,6 +249,8 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_ssao_quality = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSSAOQuality"]));
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
+    metal_effects_enabled = ![defaults objectForKey:@"SM64MetalEffectsEnabled"] ||
+                            [defaults boolForKey:@"SM64MetalEffectsEnabled"];
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
@@ -291,7 +294,7 @@ bool gfx_metal_hd_textures_enabled(void) {
 }
 
 bool gfx_metal_ssao_enabled(void) {
-    @synchronized ([NSObject class]) { return metal_ssao_is_enabled; }
+    @synchronized ([NSObject class]) { return metal_effects_enabled && metal_ssao_is_enabled; }
 }
 
 void gfx_metal_set_ssao_enabled(bool enabled) {
@@ -307,7 +310,7 @@ void gfx_metal_set_ssao_enabled(bool enabled) {
 }
 
 uint32_t gfx_metal_ssao_debug_mode(void) {
-    @synchronized ([NSObject class]) { return metal_ssao_debug; }
+    @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_ssao_debug : 0u; }
 }
 
 void gfx_metal_cycle_ssao_mode(void) {
@@ -331,17 +334,29 @@ void gfx_metal_cycle_ssao_quality(void) {
     gfx_metal_set_ssao_quality((gfx_metal_ssao_quality() + 1u) % 3u);
 }
 
-bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_post_enabled; } }
+bool gfx_metal_effects_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled; } }
+void gfx_metal_set_effects_enabled(bool enabled) {
+    @synchronized ([NSObject class]) {
+        metal_effects_enabled = enabled;
+        metal_offscreen_runtime_failed = false;
+        if (!enabled) {
+            metal_performance_stats.ssao_pixels = 0;
+            metal_performance_stats.bloom_pixels = 0;
+        }
+    }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalEffectsEnabled"];
+}
+bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_post_enabled; } }
 void gfx_metal_set_post_enabled(bool enabled) {
     @synchronized ([NSObject class]) { metal_post_enabled = enabled; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalPostEnabled"];
 }
-bool gfx_metal_fxaa_enabled(void) { @synchronized ([NSObject class]) { return metal_fxaa_enabled; } }
+bool gfx_metal_fxaa_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_fxaa_enabled; } }
 void gfx_metal_set_fxaa_enabled(bool enabled) {
     @synchronized ([NSObject class]) { metal_fxaa_enabled = enabled; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalFXAAEnabled"];
 }
-float gfx_metal_exposure_stops(void) { @synchronized ([NSObject class]) { return metal_exposure_stops; } }
+float gfx_metal_exposure_stops(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_exposure_stops : 0.0f; } }
 void gfx_metal_step_exposure(void) {
     @synchronized ([NSObject class]) {
         metal_exposure_stops += 1.0f;
@@ -349,7 +364,7 @@ void gfx_metal_step_exposure(void) {
     }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_exposure_stops forKey:@"SM64MetalExposureStops"];
 }
-uint32_t gfx_metal_color_grade(void) { @synchronized ([NSObject class]) { return metal_color_grade; } }
+uint32_t gfx_metal_color_grade(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_color_grade : 0u; } }
 void gfx_metal_cycle_color_grade(void) {
     gfx_metal_set_color_grade((gfx_metal_color_grade() + 1u) % 4u);
 }
@@ -357,7 +372,7 @@ void gfx_metal_set_color_grade(uint32_t grade) {
     @synchronized ([NSObject class]) { metal_color_grade = MIN(grade, 3u); metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_color_grade forKey:@"SM64MetalColorGrade"];
 }
-bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return metal_fog_is_enabled; } }
+bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_fog_is_enabled; } }
 void gfx_metal_set_fog_enabled(bool enabled) {
     @synchronized ([NSObject class]) { metal_fog_is_enabled = enabled; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalFogEnabled"];
@@ -371,7 +386,7 @@ void gfx_metal_set_fog_profile(uint32_t profile) {
     @synchronized ([NSObject class]) { metal_fog_profile = sanitized; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalFogProfile"];
 }
-uint32_t gfx_metal_sky_preset(void) { @synchronized ([NSObject class]) { return metal_sky_preset; } }
+uint32_t gfx_metal_sky_preset(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_sky_preset : 0u; } }
 void gfx_metal_cycle_sky_preset(void) {
     gfx_metal_set_sky_preset((gfx_metal_sky_preset() + 1u) % 3u);
 }
@@ -380,7 +395,7 @@ void gfx_metal_set_sky_preset(uint32_t preset) {
     @synchronized ([NSObject class]) { metal_sky_preset = sanitized; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalSkyPreset"];
 }
-bool gfx_metal_bloom_enabled(void) { @synchronized ([NSObject class]) { return metal_bloom_is_enabled; } }
+bool gfx_metal_bloom_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_bloom_is_enabled; } }
 void gfx_metal_set_bloom_enabled(bool enabled) {
     @synchronized ([NSObject class]) {
         metal_bloom_is_enabled = enabled;

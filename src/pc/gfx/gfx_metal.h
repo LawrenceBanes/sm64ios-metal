@@ -12,6 +12,8 @@ bool gfx_metal_ssao_enabled(void);
 void gfx_metal_set_ssao_enabled(bool enabled);
 uint32_t gfx_metal_ssao_debug_mode(void);
 void gfx_metal_cycle_ssao_mode(void);
+bool gfx_metal_effects_enabled(void);
+void gfx_metal_set_effects_enabled(bool enabled);
 uint32_t gfx_metal_ssao_quality(void);
 void gfx_metal_set_ssao_quality(uint32_t quality);
 void gfx_metal_cycle_ssao_quality(void);

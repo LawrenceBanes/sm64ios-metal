@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `9eb49d007a4a2bc8313a88eac42c69094399f8ad`, with four-preset settings integration in progress.
+- Current source commit: `dc1e33eeb76af5ea330e73d6029e4a1ca1d67e4b`, with the master effects switch in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -67,12 +67,18 @@
 ### M79-F — Unified visual presets (implementation increment)
 
 - Expanded settings state to Classic / Enhanced / Cinematic / Performance and added base render configurations. The UIKit control applies these profiles to the implemented AO, tone mapping, FXAA, bloom, fog, color-grade, and sky features; reset restores Classic.
-- Focused host checks, full Linux regression, and ASan/UBSan state/postprocess tests pass. Apple compilation is pending for this increment; profiles still require device usability/performance feedback.
+- Focused host checks, full Linux regression, and ASan/UBSan state/postprocess tests pass. Apple SDK/MSL validation passed for the preset change in [run 44699738540](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44699738540); profiles still require device usability/performance feedback.
+
+### M79-F — Master effects switch (implementation increment)
+
+- Added a persisted master switch that gates AO, tone mapping, FXAA, exposure, bloom, fog, color grading, and sky presentation without deleting the individual saved choices. Turning effects off clears the AO/bloom work counters; Classic preset/reset disable it.
+- Focused source checks pass; Apple build validation and a current full Linux rerun are pending for this addition.
 
 ### Build candidate status
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
 - A newer full game build from source `3303360fa275b3b9d3726be51fa9a9c81a96e8e4` passed compile, IPA structure checks, and private upload in [workflow 44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366). Private draft: [unsigned build 44698163366.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-f4ffbc277ed244358b57); IPA SHA-256 `df42a01c548d61b7f8369dc6c36079e0f54ccd35684edc5980bc499d2b8966a`. It contains color grading and fog profiles but predates the AO quality control and sky gradient.
+- Full game build from source `300cc597685623222c2e96301ea801eeb8152cef` passed arm64 compilation, IPA structural validation, and private upload in [workflow 44699134859](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44699134859). Private draft: [unsigned build 44699134859.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-dff6475bfe493acf287f); IPA SHA-256 `7d5d98a0fa527fc508b53d8cc228b36904e89029cff53b4122ddded384fae472`. It includes AO quality and day/sunset horizon gradient, and predates four unified presets.
 
 ### M79-C — Directional lighting and shadows (not implemented)
 
@@ -93,4 +99,4 @@
 
 ## Next task
 
-Run Apple validation for the unified presets, build a current private IPA, then continue with a master effects toggle, AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.
+Validate and package the master effects switch, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.

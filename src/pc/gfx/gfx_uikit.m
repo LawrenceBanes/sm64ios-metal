@@ -70,6 +70,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *fogProfileButton;
 @property(nonatomic, strong) UIButton *aoQualityButton;
 @property(nonatomic, strong) UIButton *skyPresetButton;
+@property(nonatomic, strong) UIButton *masterEffectsButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -575,6 +576,9 @@ static int sm64RenderDiagnosticMode;
     self.skyPresetButton = [self buttonWithTitle:@"Sky: Original" action:@selector(cycleSkyPreset)];
     self.skyPresetButton.frame = CGRectMake(194, 312, 168, 30);
     [self.graphicsPanel addSubview:self.skyPresetButton];
+    self.masterEffectsButton = [self buttonWithTitle:@"Effects: On" action:@selector(toggleMasterEffects)];
+    self.masterEffectsButton.frame = CGRectMake(370, 312, 136, 30);
+    [self.graphicsPanel addSubview:self.masterEffectsButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
@@ -714,6 +718,8 @@ static int sm64RenderDiagnosticMode;
     static NSString *const sky_names[] = { @"Original", @"Day", @"Sunset" };
     [self.skyPresetButton setTitle:[NSString stringWithFormat:@"Sky: %@", sky_names[MIN(gfx_metal_sky_preset(), 2u)]]
                            forState:UIControlStateNormal];
+    [self.masterEffectsButton setTitle:gfx_metal_effects_enabled() ? @"Effects: On" : @"Effects: Off"
+                               forState:UIControlStateNormal];
 #endif
 }
 
@@ -781,6 +787,14 @@ static int sm64RenderDiagnosticMode;
 #endif
 }
 
+- (void)toggleMasterEffects {
+#if defined(RAPI_METAL)
+    gfx_metal_set_effects_enabled(!gfx_metal_effects_enabled());
+    [self refreshGraphicsSettings];
+    [self refreshGraphicsPerformance];
+#endif
+}
+
 - (void)toggleSSAO {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_ssao_mode();
@@ -808,6 +822,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_fog_profile(0u);
             gfx_metal_set_color_grade(0u);
             gfx_metal_set_sky_preset(0u);
+            gfx_metal_set_effects_enabled(false);
         } else {
             if (preset == GFX_METAL_PRESET_CINEMATIC) settings = gfx_metal_cinematic_settings();
             else if (preset == GFX_METAL_PRESET_PERFORMANCE) settings = gfx_metal_performance_settings();
@@ -835,6 +850,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_fog_profile(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
             gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
             gfx_metal_set_sky_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
+            gfx_metal_set_effects_enabled(true);
         }
     } else {
         struct GfxMetalSettings current = gfx_metal_get_settings();
@@ -887,6 +903,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);
     gfx_metal_set_sky_preset(0u);
+    gfx_metal_set_effects_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
