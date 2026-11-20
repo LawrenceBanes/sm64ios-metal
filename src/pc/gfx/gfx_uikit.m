@@ -65,6 +65,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *fxaaButton;
 @property(nonatomic, strong) UIButton *exposureButton;
 @property(nonatomic, strong) UIButton *fogButton;
+@property(nonatomic, strong) UIButton *bloomButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -95,6 +96,7 @@ static int sm64RenderDiagnosticMode;
 - (void)toggleFXAA;
 - (void)stepExposure;
 - (void)toggleFog;
+- (void)toggleBloom;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -487,7 +489,7 @@ static int sm64RenderDiagnosticMode;
         top + panelHeight + 8.0, toastWidth, 50.0);
     ((SM64DiagnosticsPassthroughView *)self.view).hitRect = (self.probeView || self.graphicsSettingsVisible) ? self.view.bounds : CGRectInset(frame, -2, -2);
     CGFloat settingsWidth = MIN(520.0, MAX(320.0, self.view.bounds.size.width - 24.0));
-    CGFloat settingsHeight = MIN(374.0, MAX(330.0, self.view.bounds.size.height - 20.0));
+    CGFloat settingsHeight = MIN(400.0, MAX(390.0, self.view.bounds.size.height - 20.0));
     self.graphicsPanel.frame = CGRectMake((self.view.bounds.size.width - settingsWidth) * 0.5,
         (self.view.bounds.size.height - settingsHeight) * 0.5, settingsWidth, settingsHeight);
     if (self.collapsed) {
@@ -509,7 +511,7 @@ static int sm64RenderDiagnosticMode;
 }
 
 - (void)buildGraphicsSettingsPanel {
-    self.graphicsPanel = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, 520, 374)] autorelease];
+    self.graphicsPanel = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, 520, 400)] autorelease];
     self.graphicsPanel.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.97];
     self.graphicsPanel.layer.cornerRadius = 12.0;
     self.graphicsPanel.layer.borderWidth = 1.0;
@@ -554,18 +556,21 @@ static int sm64RenderDiagnosticMode;
     self.fogButton = [self buttonWithTitle:@"Fog: Off" action:@selector(toggleFog)];
     self.fogButton.frame = CGRectMake(422, 244, 84, 30);
     [self.graphicsPanel addSubview:self.fogButton];
+    self.bloomButton = [self buttonWithTitle:@"Bloom: Off" action:@selector(toggleBloom)];
+    self.bloomButton.frame = CGRectMake(14, 278, 108, 30);
+    [self.graphicsPanel addSubview:self.bloomButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:8.0 weight:UIFontWeightRegular];
     self.performanceLabel.numberOfLines = 5;
-    self.performanceLabel.frame = CGRectMake(14, 276, 492, 50);
+    self.performanceLabel.frame = CGRectMake(14, 310, 492, 48);
     self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.graphicsPanel addSubview:self.performanceLabel];
 
     UIButton *reset = [self buttonWithTitle:@"Reset defaults" action:@selector(resetGraphicsSettings)];
-    reset.frame = CGRectMake(14, 327, 145, 34);
+    reset.frame = CGRectMake(14, 362, 145, 30);
     reset.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;
     [self.graphicsPanel addSubview:reset];
     UIButton *done = [self buttonWithTitle:@"Done" action:@selector(toggleGraphicsSettings)];
@@ -679,6 +684,8 @@ static int sm64RenderDiagnosticMode;
                           forState:UIControlStateNormal];
     [self.fogButton setTitle:gfx_metal_fog_enabled() ? @"Fog: On" : @"Fog: Off"
                     forState:UIControlStateNormal];
+    [self.bloomButton setTitle:gfx_metal_bloom_enabled() ? @"Bloom: On" : @"Bloom: Off"
+                       forState:UIControlStateNormal];
 #endif
 }
 
@@ -707,6 +714,14 @@ static int sm64RenderDiagnosticMode;
 #if defined(RAPI_METAL)
     gfx_metal_set_fog_enabled(!gfx_metal_fog_enabled());
     [self refreshGraphicsSettings];
+#endif
+}
+
+- (void)toggleBloom {
+#if defined(RAPI_METAL)
+    gfx_metal_set_bloom_enabled(!gfx_metal_bloom_enabled());
+    [self refreshGraphicsSettings];
+    [self appendStatus:gfx_metal_bloom_enabled() ? @"Bloom enabled (quarter-resolution bright pass)" : @"Bloom disabled"];
 #endif
 }
 
@@ -776,6 +791,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_post_enabled(false);
     gfx_metal_set_fxaa_enabled(false);
     gfx_metal_set_fog_enabled(false);
+    gfx_metal_set_bloom_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];

@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `f57da1380988c8ed92405ad30c613099a14278d4`; uncommitted work adds depth-aware fog and safer Xcode diagnostic categories.
+- Current source commit: `dada985106a1b34d28b5bc65ae08f339a0885419`; uncommitted work adds quarter-resolution bloom and the explicit `<stdbool.h>` fix for the iPhoneOS branding declaration.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -39,9 +39,13 @@
 - Added an opt-in exponential distance-fog composite using the retained Depth32 texture and inverse captured projection; clear-depth sky is masked. Added a persisted Fog toggle in the developer graphics panel.
 - Fog currently uses a fixed cool gray-blue color, density, and start distance. Sky gradients/presets, sun disk, screen-space light shafts, adjustable fog parameters, world-scale tuning, and device visual checks remain open.
 
+### M79-D — Bloom (implementation increment, pending Apple validation)
+
+- Added a quarter-resolution bright pass and two separable blur passes; presentation can composite bloom before tone mapping. A persisted developer toggle keeps it off by default. Apple shader compilation and visual output remain to be verified.
+
 ### Build candidate status
 
-- The private full-game IPA workflow [44694849327](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694849327) passed Linux and asset-free Apple validation, but the full iPhoneOS app build failed. The sanitized summary identified `area.c:41: compiler error`; no IPA was produced. Safe declaration/type/syntax diagnostic categories and synthetic secrecy tests have been added; rerun the full build to expose the category.
+- The private full-game IPA workflow [44694849327](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694849327) first failed at `area.c:41`. Safe diagnostics were improved; rerun [44695695998](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695695998) identified an undeclared symbol or type. The line declares `bool` inside the iOS branding guard, so `<stdbool.h>` is now included explicitly. This fix awaits another complete app build; neither failed run produced an IPA.
 
 ### M79-C — Directional lighting and shadows (not implemented)
 
@@ -53,7 +57,7 @@
 
 ## Current validation
 
-- Full local Linux suite passed for the fog work; Apple validation and complete iPhoneOS compilation are pending for it.
+- Full local Linux suite and Apple validation passed for fog at commit `dada9851` (run [44695676469](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695676469)); the new bloom/fix revision is still pending validation.
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
@@ -62,4 +66,4 @@
 
 ## Next task
 
-Run Linux and Apple validation on the fog and safe-diagnostic revision, then retry the full app build with the improved sanitized categories. Continue with bloom, grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.
+Validate bloom shaders and the `<stdbool.h>` correction with Linux and Apple jobs, then retry the full iPhoneOS app build. Continue with grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.

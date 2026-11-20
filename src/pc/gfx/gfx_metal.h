@@ -20,6 +20,8 @@ float gfx_metal_exposure_stops(void);
 void gfx_metal_step_exposure(void);
 bool gfx_metal_fog_enabled(void);
 void gfx_metal_set_fog_enabled(bool enabled);
+bool gfx_metal_bloom_enabled(void);
+void gfx_metal_set_bloom_enabled(bool enabled);
 #endif
 
 #ifdef __OBJC__

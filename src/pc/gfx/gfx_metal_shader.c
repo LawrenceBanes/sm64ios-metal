@@ -15,11 +15,11 @@ const char *gfx_metal_present_shader_source(void) {
         "  o.uv = id == 0 ? float2(0.0, 1.0) : (id == 1 ? float2(2.0, 1.0) : float2(0.0, -1.0));\n"
         "  return o;\n"
         "}\n"
-        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], depth2d<float> depth [[texture(2)]], constant uint4 &presentFlags [[buffer(0)]], constant float4 &gradeParams [[buffer(1)]], constant float4x4 &inverseProjection [[buffer(2)]], constant float4 &fogColor [[buffer(3)]]) {\n"
+        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], depth2d<float> depth [[texture(2)]], texture2d<float> bloom [[texture(3)]], constant uint4 &presentFlags [[buffer(0)]], constant float4 &gradeParams [[buffer(1)]], constant float4x4 &inverseProjection [[buffer(2)]], constant float4 &fogColor [[buffer(3)]], constant float4 &bloomParams [[buffer(4)]]) {\n"
         "  float4 color=image.sample(imageSampler,in.uv); if(presentFlags.y==1u) { float a=ao.sample(aoSampler,in.uv).r; return float4(a,a,a,1.0); } if(presentFlags.y==2u) { float d=depth.sample(aoSampler,in.uv); return float4(d,d,d,1.0); } if(presentFlags.x!=0u) color.rgb*=ao.sample(aoSampler,in.uv).r;\n"
         "  if(presentFlags.w!=0u) { float2 t=1.0/float2(image.get_width(),image.get_height()); float l=dot(color.rgb,float3(0.299,0.587,0.114)); float ln=dot(image.sample(imageSampler,in.uv+float2(0.0,-t.y)).rgb,float3(0.299,0.587,0.114)); float ls=dot(image.sample(imageSampler,in.uv+float2(0.0,t.y)).rgb,float3(0.299,0.587,0.114)); float le=dot(image.sample(imageSampler,in.uv+float2(t.x,0.0)).rgb,float3(0.299,0.587,0.114)); float lw=dot(image.sample(imageSampler,in.uv+float2(-t.x,0.0)).rgb,float3(0.299,0.587,0.114)); float edge=max(max(ln,ls),max(le,lw))-min(min(ln,ls),min(le,lw)); if(edge>max(0.0312,l*0.125)) color.rgb=mix(color.rgb,(image.sample(imageSampler,in.uv+float2(t.x,t.y)).rgb+image.sample(imageSampler,in.uv-float2(t.x,t.y)).rgb+image.sample(imageSampler,in.uv+float2(-t.x,t.y)).rgb+image.sample(imageSampler,in.uv+float2(t.x,-t.y)).rgb)*0.25,0.5); }\n"
         "  if(gradeParams.y>0.5) { float d=depth.sample(aoSampler,in.uv); if(d<0.999999) { float4 clip=float4(in.uv.x*2.0-1.0,1.0-in.uv.y*2.0,d*2.0-1.0,1.0); float4 view=inverseProjection*clip; float distance=length(view.xyz/max(abs(view.w),1.0e-6)); float fog=1.0-exp(-gradeParams.z*max(distance-gradeParams.w,0.0)); color.rgb=mix(color.rgb,fogColor.rgb,clamp(fog,0.0,1.0)); } }\n"
-        "  if(presentFlags.z!=0u) { float3 x=max(color.rgb*exp2(gradeParams.x),0.0); color.rgb=clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0); } return color;\n"
+        "  if(bloomParams.x>0.5) color.rgb+=bloom.sample(aoSampler,in.uv).rgb*bloomParams.y; if(presentFlags.z!=0u) { float3 x=max(color.rgb*exp2(gradeParams.x),0.0); color.rgb=clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0); } return color;\n"
         "}\n";
 }
 
@@ -78,6 +78,18 @@ const char *gfx_metal_ssao_shader_source(void) {
         " sum+=sourceAO.read(q).r*w; weightSum+=w; }\n"
         " float filtered=weightSum>1.0e-5?sum/weightSum:sourceAO.read(tid).r;\n"
         " filteredAO.write(float4(filtered),tid); }\n";
+}
+
+const char *gfx_metal_bloom_shader_source(void) {
+    return
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "kernel void sm64_bloom_extract(texture2d<float,access::read> scene [[texture(0)]], texture2d<float,access::write> bright [[texture(1)]], constant float &threshold [[buffer(0)]], uint2 tid [[thread_position_in_grid]]) {\n"
+        " if(tid.x>=bright.get_width()||tid.y>=bright.get_height()) return; uint2 size=uint2(scene.get_width(),scene.get_height()); float3 c=float3(0.0);\n"
+        " for(uint y=0;y<4;y++) for(uint x=0;x<4;x++) c+=scene.read(min(tid*4u+uint2(x,y),size-1u)).rgb*(1.0/16.0);\n"
+        " float peak=max(c.r,max(c.g,c.b)); float contribution=max(peak-threshold,0.0)/max(peak,1.0e-5); bright.write(float4(c*contribution,1.0),tid); }\n"
+        "kernel void sm64_bloom_blur(texture2d<float,access::read> source [[texture(0)]], texture2d<float,access::write> output [[texture(1)]], constant uint &axis [[buffer(0)]], uint2 tid [[thread_position_in_grid]]) {\n"
+        " if(tid.x>=output.get_width()||tid.y>=output.get_height()) return; const float w[5]={0.0625,0.25,0.375,0.25,0.0625}; float4 c=float4(0.0);\n"
+        " for(int i=-2;i<=2;i++){ int2 delta=axis==0u?int2(i,0):int2(0,i); uint2 q=uint2(clamp(int2(tid)+delta,int2(0),int2(output.get_width(),output.get_height())-1)); c+=source.read(q)*w[i+2]; } output.write(c,tid); }\n";
 }
 
 struct ShaderWriter {

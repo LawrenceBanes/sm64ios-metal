@@ -41,7 +41,7 @@ xcrun --sdk iphonesimulator clang "${common[@]}" -isysroot "$simulator_sdk" -arc
 echo "Checking scene-package provider, Gfx bridge, and area hooks against the iOS SDK."
 xcrun --sdk iphoneos clang "${common[@]}" -isysroot "$device_sdk" -arch arm64 \
     -mios-version-min=15.0 -fsyntax-only -DNON_MATCHING=1 -DAVOID_UB=1 \
-    -DIOS_BUILD=1 -DTARGET_OS_IOS=1 -DEXTERNAL_DATA=1 -DIOS_O2R_SCENE_RUNTIME=1 \
+    -DIOS_BUILD=1 -DTARGET_OS_IOS=1 -DVERSION_US=1 -DEXTERNAL_DATA=1 -DIOS_O2R_SCENE_RUNTIME=1 \
     -DIOS_SCENE_DIAGNOSTIC=1 \
     "$repo_dir/src/engine/world_scene.c" "$repo_dir/src/engine/world_scene_file.c" \
     "$repo_dir/src/engine/world_scene_view.c" \
@@ -66,7 +66,7 @@ xcrun --sdk macosx clang -isysroot "$host_sdk" -std=gnu11 \
     -o "$output_dir/metal_shader_emit"
 "$output_dir/metal_shader_emit" "$shader_dir"
 
-echo "Compiling generated Metal shaders, including the SSAO compute kernel, with the iOS Metal compiler and linking metallibs."
+echo "Compiling generated Metal shaders, including the SSAO and bloom compute kernels, with the iOS Metal compiler and linking metallibs."
 for source in "$shader_dir"/*.metal; do
     name=$(basename "$source" .metal)
     xcrun --sdk iphoneos metal -c "$source" -o "$shader_dir/$name.air"

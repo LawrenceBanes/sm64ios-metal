@@ -74,15 +74,22 @@ static id<MTLRenderPipelineState> metal_present_pipeline;
 static id<MTLSamplerState> metal_present_sampler;
 static id<MTLComputePipelineState> metal_ssao_pipeline;
 static id<MTLComputePipelineState> metal_ssao_denoise_pipeline;
+static id<MTLComputePipelineState> metal_bloom_extract_pipeline;
+static id<MTLComputePipelineState> metal_bloom_blur_pipeline;
 static id<MTLTexture> metal_ssao_texture;
 static id<MTLTexture> metal_ssao_filtered_texture;
+static id<MTLTexture> metal_bloom_extract_texture;
+static id<MTLTexture> metal_bloom_temp_texture;
+static id<MTLTexture> metal_bloom_output_texture;
 static NSUInteger metal_ssao_width, metal_ssao_height;
+static NSUInteger metal_bloom_width, metal_bloom_height;
 static bool metal_ssao_is_enabled;
 static uint32_t metal_ssao_debug;
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
 static float metal_exposure_stops;
 static bool metal_fog_is_enabled;
+static bool metal_bloom_is_enabled;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -189,7 +196,11 @@ static void gfx_metal_release_render_targets(void) {
     [metal_depth_texture release]; metal_depth_texture = nil;
     [metal_ssao_texture release]; metal_ssao_texture = nil;
     [metal_ssao_filtered_texture release]; metal_ssao_filtered_texture = nil;
+    [metal_bloom_extract_texture release]; metal_bloom_extract_texture = nil;
+    [metal_bloom_temp_texture release]; metal_bloom_temp_texture = nil;
+    [metal_bloom_output_texture release]; metal_bloom_output_texture = nil;
     metal_ssao_width = metal_ssao_height = 0;
+    metal_bloom_width = metal_bloom_height = 0;
     metal_depth_width = metal_depth_height = 0;
     metal_depth_samples = 1;
     metal_target_width = metal_target_height = metal_target_samples = 0;
@@ -229,6 +240,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
+    metal_bloom_is_enabled = [defaults boolForKey:@"SM64MetalBloomEnabled"];
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -315,6 +327,11 @@ bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return met
 void gfx_metal_set_fog_enabled(bool enabled) {
     @synchronized ([NSObject class]) { metal_fog_is_enabled = enabled; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalFogEnabled"];
+}
+bool gfx_metal_bloom_enabled(void) { @synchronized ([NSObject class]) { return metal_bloom_is_enabled; } }
+void gfx_metal_set_bloom_enabled(bool enabled) {
+    @synchronized ([NSObject class]) { metal_bloom_is_enabled = enabled; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalBloomEnabled"];
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -1024,7 +1041,8 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
-        !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled()) return false;
+        !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
+        !gfx_metal_bloom_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1042,6 +1060,9 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
          metal_ssao_width == (size.width + 1u) / 2u &&
          metal_ssao_height == (size.height + 1u) / 2u)) &&
+        (!gfx_metal_bloom_enabled() || (metal_bloom_extract_texture && metal_bloom_temp_texture &&
+         metal_bloom_output_texture && metal_bloom_width == (size.width + 3u) / 4u &&
+         metal_bloom_height == (size.height + 3u) / 4u)) &&
         (samples > 1 ? (metal_multisample_color && metal_resolve_texture) : metal_color_target != nil);
     if (target_ready) return true;
 
@@ -1079,11 +1100,31 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
             metal_ssao_height = ao_height;
         }
     }
+    if (gfx_metal_bloom_enabled()) {
+        NSUInteger bloom_width = (size.width + 3u) / 4u;
+        NSUInteger bloom_height = (size.height + 3u) / 4u;
+        MTLTextureDescriptor *bloom = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
+                                                                                           width:bloom_width height:bloom_height mipmapped:NO];
+        bloom.storageMode = MTLStorageModePrivate;
+        bloom.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        metal_bloom_extract_texture = [metal_device newTextureWithDescriptor:bloom];
+        metal_bloom_temp_texture = [metal_device newTextureWithDescriptor:bloom];
+        metal_bloom_output_texture = [metal_device newTextureWithDescriptor:bloom];
+        if (metal_bloom_extract_texture && metal_bloom_temp_texture && metal_bloom_output_texture) {
+            metal_bloom_width = bloom_width;
+            metal_bloom_height = bloom_height;
+            metal_bloom_extract_texture.label = @"SM64 bloom bright pass";
+            metal_bloom_temp_texture.label = @"SM64 bloom horizontal blur";
+            metal_bloom_output_texture.label = @"SM64 bloom vertical blur";
+        }
+    }
     if ((samples > 1 && (!metal_multisample_color || !metal_resolve_texture)) ||
         (samples == 1 && !metal_color_target) || !depth ||
-        (gfx_metal_ssao_enabled() && (!metal_ssao_texture || !metal_ssao_filtered_texture))) {
+        (gfx_metal_ssao_enabled() && (!metal_ssao_texture || !metal_ssao_filtered_texture)) ||
+        (gfx_metal_bloom_enabled() && (!metal_bloom_extract_texture || !metal_bloom_temp_texture || !metal_bloom_output_texture))) {
         gfx_metal_release_render_targets();
         if (gfx_metal_ssao_enabled()) gfx_metal_set_ssao_enabled(false);
+        if (gfx_metal_bloom_enabled()) gfx_metal_set_bloom_enabled(false);
         gfx_metal_fallback_to_direct("offscreen color/depth/AO allocation failed");
         return false;
     }
@@ -1117,6 +1158,7 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentTexture:(gfx_metal_ssao_enabled() ? metal_ssao_filtered_texture : source) atIndex:1];
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
     [encoder setFragmentTexture:metal_depth_texture atIndex:2];
+    [encoder setFragmentTexture:(gfx_metal_bloom_enabled() ? metal_bloom_output_texture : source) atIndex:3];
     uint32_t debug_mode = gfx_metal_ssao_debug_mode();
     vector_uint4 present_flags = { gfx_metal_ssao_enabled() ? 1u : 0u,
                                    debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u),
@@ -1134,10 +1176,12 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         }
     }
     vector_float4 fog_color = { 0.52f, 0.67f, 0.82f, 1.0f };
+    vector_float4 bloom_params = { gfx_metal_bloom_enabled() ? 1.0f : 0.0f, 0.65f, 0.8f, 0.0f };
     [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
     [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
     [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:2];
     [encoder setFragmentBytes:&fog_color length:sizeof(fog_color) atIndex:3];
+    [encoder setFragmentBytes:&bloom_params length:sizeof(bloom_params) atIndex:4];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;
@@ -1204,6 +1248,63 @@ static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
     @synchronized ([NSObject class]) {
         metal_performance_stats.ssao_pixels = width * height;
     }
+    return true;
+}
+
+static bool gfx_metal_ensure_bloom_pipeline(void) {
+    if (metal_bloom_extract_pipeline && metal_bloom_blur_pipeline) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_bloom_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    id<MTLFunction> extract = library ? [library newFunctionWithName:@"sm64_bloom_extract"] : nil;
+    id<MTLFunction> blur = library ? [library newFunctionWithName:@"sm64_bloom_blur"] : nil;
+    if (!extract || !blur) {
+        gfx_ios_diag_log("Metal bloom MSL compilation failed: %s", error.localizedDescription.UTF8String ?: "function missing");
+        [extract release]; [blur release]; [library release];
+        return false;
+    }
+    metal_bloom_extract_pipeline = [metal_device newComputePipelineStateWithFunction:extract error:&error];
+    metal_bloom_blur_pipeline = [metal_device newComputePipelineStateWithFunction:blur error:&error];
+    [extract release]; [blur release]; [library release];
+    if (!metal_bloom_extract_pipeline || !metal_bloom_blur_pipeline) {
+        gfx_ios_diag_log("Metal bloom pipeline creation failed: %s", error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    gfx_ios_diag_log("Metal bloom pipelines ready at quarter render resolution");
+    return true;
+}
+
+static void gfx_metal_dispatch_bloom(id<MTLComputeCommandEncoder> encoder,
+                                     id<MTLComputePipelineState> pipeline,
+                                     id<MTLTexture> input, id<MTLTexture> output,
+                                     const void *parameters, size_t parameter_size) {
+    [encoder setComputePipelineState:pipeline];
+    [encoder setTexture:input atIndex:0];
+    [encoder setTexture:output atIndex:1];
+    if (parameters && parameter_size) [encoder setBytes:parameters length:parameter_size atIndex:0];
+    NSUInteger tw = pipeline.threadExecutionWidth;
+    NSUInteger th = MAX(1u, pipeline.maxTotalThreadsPerThreadgroup / tw);
+    [encoder dispatchThreads:MTLSizeMake(metal_bloom_width, metal_bloom_height, 1)
+        threadsPerThreadgroup:MTLSizeMake(tw, th, 1)];
+}
+
+static bool gfx_metal_encode_bloom(id<MTLCommandBuffer> command) {
+    if (!gfx_metal_bloom_enabled()) return true;
+    id<MTLTexture> source = metal_active_sample_count > 1 ? metal_resolve_texture : metal_color_target;
+    if (!source || !metal_bloom_extract_texture || !metal_bloom_temp_texture || !metal_bloom_output_texture ||
+        !gfx_metal_ensure_bloom_pipeline()) return false;
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    if (!encoder) return false;
+    float threshold = 0.8f;
+    gfx_metal_dispatch_bloom(encoder, metal_bloom_extract_pipeline, source, metal_bloom_extract_texture,
+                             &threshold, sizeof(threshold));
+    uint32_t axis = 0;
+    gfx_metal_dispatch_bloom(encoder, metal_bloom_blur_pipeline, metal_bloom_extract_texture, metal_bloom_temp_texture,
+                             &axis, sizeof(axis));
+    axis = 1;
+    gfx_metal_dispatch_bloom(encoder, metal_bloom_blur_pipeline, metal_bloom_temp_texture, metal_bloom_output_texture,
+                             &axis, sizeof(axis));
+    [encoder endEncoding];
     return true;
 }
 
@@ -1393,6 +1494,10 @@ static void gfx_metal_start_frame(void) {
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
+    if (!gfx_metal_encode_bloom(metal_command)) {
+        gfx_metal_set_bloom_enabled(false);
+        gfx_ios_diag_log("Metal bloom disabled after texture or compute-pipeline failure");
+    }
     if (!gfx_metal_encode_ssao(metal_command)) {
         gfx_metal_set_ssao_enabled(false);
         gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
@@ -1501,6 +1606,8 @@ static void gfx_metal_shutdown(void) {
     gfx_metal_release_render_targets();
     [metal_ssao_pipeline release]; metal_ssao_pipeline = nil;
     [metal_ssao_denoise_pipeline release]; metal_ssao_denoise_pipeline = nil;
+    [metal_bloom_extract_pipeline release]; metal_bloom_extract_pipeline = nil;
+    [metal_bloom_blur_pipeline release]; metal_bloom_blur_pipeline = nil;
     [metal_present_pipeline release]; metal_present_pipeline = nil;
     [metal_present_sampler release]; metal_present_sampler = nil;
     for (size_t i = 0; i < program_count; ++i) {

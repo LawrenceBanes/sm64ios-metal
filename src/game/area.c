@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <PR/ultratypes.h>
 
 #include "prevent_bss_reordering.h"
