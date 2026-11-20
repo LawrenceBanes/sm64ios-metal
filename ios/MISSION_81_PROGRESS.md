@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `d032d2debc7eb51b45334d8dc5600629e5ce74d8` (combined compute-resource validation; Apple workflow `44822697079` passed). Current working slice adds configured directional-light input to compute nodes; host importer checks pass, Apple CI pending.
+- Latest pushed checkpoint: `359a2fc5e09f55e1a527872f45042ed6f3e77c80` (compute packs can consume configured directional lighting; Apple workflow `44823825399` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -137,5 +137,6 @@
 - Added optional API 2 `sceneLighting:true` compute input. It binds the configured world-space sun direction/intensity at buffer 5 and inverse-view transform at buffer 4. Validation requires `sceneDepth:true` and `sceneNormals:true` with lighting, and the runtime uses the existing captured camera and sun settings rather than fabricating scene data.
 - Extended `SceneDataCompute64` to use the reconstructed surface normal transformed into world space against the real configured sun, while retaining depth fog and the pack-owned texture. The pass remains an illustrative screen-space shader; it is not physical-device verified.
 - Focused pack tests pass (29), including the reference pack with `sceneLighting`, graph-resource rejection for lighting without both depth and normals, and ASan/UBSan ZIP smoke. Full `CC=clang tests/run_linux_checks.sh`, Metal codegen, Xcode wiring, shell syntax, and diff checks pass; familiar fixture warnings/invalid-input messages remain. No GPU execution or device output is claimed.
+- Apple workflow `44823825399` passed Linux regressions and Xcode 27 iOS Metal backend/MSL compile-link for the directional-light compute binding and `SceneDataCompute64`. This remains compile evidence only, not runtime shading or device output.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
