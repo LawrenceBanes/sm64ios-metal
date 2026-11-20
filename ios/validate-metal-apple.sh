@@ -148,6 +148,18 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-textured-demo.air" \
     -o "$shader_dir/shader64-textured-demo.metallib"
 echo "compiled and linked SHADER64 TextureDemo64 user texture pass"
 
+normal_texture_wrapper_tool="$output_dir/shader64-wrap-normal-textures"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_normals_textured_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$normal_texture_wrapper_tool"
+normal_texture_source="$repo_dir/ios/shaderpacks/NormalTexture64/shaders/normal_texture.metal"
+"$normal_texture_wrapper_tool" "$normal_texture_source" > "$shader_dir/shader64-normal-texture.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-normal-texture.metal" \
+    -o "$shader_dir/shader64-normal-texture.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-normal-texture.air" \
+    -o "$shader_dir/shader64-normal-texture.metallib"
+echo "compiled and linked SHADER64 combined scene-normal and user-texture pass"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

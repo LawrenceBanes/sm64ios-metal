@@ -60,7 +60,7 @@
 
 ## Remaining work / next
 
-1. Run Apple Metal/iPhoneOS compilation and wrapped MSL validation for the new `sceneNormals` resource; repair confirmed issues and push a verified checkpoint.
+1. Validate the combined `sceneNormals` + `packTextures` pass through focused tests, full Linux regressions, and Apple Metal compilation; fix any confirmed failures.
 2. Device-test material classification, custom material textures, scene depth/normals, lighting/shadows, and reference packs against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
 3. Continue with geometry/material inputs from actual Fast3D data, then choose the next achievable scene-data or render-graph capability. Native vertex normals, complete G-buffers, arbitrary shadow cameras/passes, user compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
@@ -71,6 +71,13 @@
 - Fixed a shared-validator regression found during this work: resource bit 16 was missing from the accepted graph mask, causing the normal pack to be rejected even though UIKit parsing accepted it. Added explicit valid/conflict graph tests.
 - `python3 ios/test_shader64_pack.py`: passed, 22 tests including ZIP importer and ASan/UBSan smoke. `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, `bash -n ios/validate-metal-apple.sh`, and `git diff --check`: passed.
 - `CC=clang tests/run_linux_checks.sh`: passed the full suite. Existing fixture diagnostics and pre-existing compiler warnings remain.
-- Apple MSL/device validation has not yet run for this uncommitted increment. Linux tests cannot execute the iOS Metal compute pass or verify normal visualization.
+- Commit `8a11e7315fe4a3f6b0d507cb3f0cbe10cfe99247` was pushed to `mission-81-shader64-rendergraph`. Apple workflow `44808512807` passed both full Linux regression and Xcode 27 iOS Metal backend/generated MSL validation, including the normal compute shader and wrapped NormalDebug64 pass. This does not execute a GPU or confirm device pixels.
+- Linux tests cannot execute the iOS Metal compute pass or verify normal visualization.
+
+## Current working increment — composable normal and texture inputs
+
+- Extending API 2 so one fullscreen pass can sample both the reusable depth-derived `sceneNormals` texture and bounded pack-owned PNG textures. Normal stays at texture 1; four pack images stay at slots 4–7; texture count remains buffer 1; params remain buffer 0.
+- Added a separate validated MSL contract and wrapper, enabled the compatible flag combination in shared/UIKit graph validation, and added `NormalTexture64` with a locally authored checker resource. Explicit scene-depth, lighting, and shadow combinations stay rejected due to current overlapping bindings.
+- Host tests and Apple MSL compilation for this increment are pending.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

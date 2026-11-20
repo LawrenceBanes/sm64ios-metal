@@ -1879,7 +1879,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     }
     for (size_t i = 0; i < pass_count; ++i) {
         char validation[192] = {0};
-        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
+        bool source_valid = ((passes[i].resource_flags & (GFX_SHADER64_RESOURCE_PACK_TEXTURES |
+                            GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ==
+                            (GFX_SHADER64_RESOURCE_PACK_TEXTURES | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ?
+            gfx_shader64_validate_normals_textured_pass_source(passes[i].source, passes[i].source_size,
+                                                              validation, sizeof(validation)) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
             gfx_shader64_validate_textured_pass_source(passes[i].source, passes[i].source_size,
                                                        validation, sizeof(validation)) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?
@@ -1902,7 +1907,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         }
         size_t capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 2048u;
         char *wrapper = malloc(capacity);
-        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
+        bool wrapper_ok = wrapper && ((passes[i].resource_flags & (GFX_SHADER64_RESOURCE_PACK_TEXTURES |
+                                GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ==
+                                (GFX_SHADER64_RESOURCE_PACK_TEXTURES | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ?
+            gfx_shader64_build_normals_textured_pass_wrapper(passes[i].source, passes[i].source_size,
+                                                            wrapper, capacity) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
             gfx_shader64_build_textured_pass_wrapper(passes[i].source, passes[i].source_size,
                                                      wrapper, capacity) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?

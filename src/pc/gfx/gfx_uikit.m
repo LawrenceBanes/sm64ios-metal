@@ -1506,9 +1506,9 @@ static int sm64RenderDiagnosticMode;
             id packTextures = pass[@"packTextures"];
             if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
             if ([packTextures boolValue] && (!textureList.count || [sceneDepth boolValue] ||
-                [sceneLighting boolValue] || [sceneShadows boolValue] || [sceneNormals boolValue])) passOK = NO;
+                [sceneLighting boolValue] || [sceneShadows boolValue])) passOK = NO;
             if ([sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
-                [sceneShadows boolValue] || [packTextures boolValue])) passOK = NO;
+                [sceneShadows boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }
