@@ -107,6 +107,9 @@ def main() -> None:
     require("Bloom Settings" in uikit and "gfx_metal_set_bloom_profile(selected)" in uikit and
             "bloom_settings.threshold" in metal and "bloom_settings.intensity" in metal,
             "bloom UI must expose real threshold/intensity profiles used by compute and composite passes")
+    require("BOOL singleSampleEffect = gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled()" in uikit and
+            "gfx_metal_god_rays_enabled() || gfx_metal_sun_intensity() != 0u" in uikit,
+            "MSAA UI must reflect every effect that forces the renderer to single-sample")
     require("enhanced effects suspended (direct path)" in uikit and
             "gfx_metal_offscreen_fallback_active()" in uikit,
             "developer performance panel must disclose enhanced-path fallback")

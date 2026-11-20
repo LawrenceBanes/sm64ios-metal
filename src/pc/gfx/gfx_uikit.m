@@ -730,7 +730,9 @@ static int sm64RenderDiagnosticMode;
     self.msaaControl.enabled = YES;
     [self.msaaControl setEnabled:capabilities.sample_count_2 forSegmentAtIndex:1];
     [self.msaaControl setEnabled:capabilities.sample_count_4 forSegmentAtIndex:2];
-    if (gfx_metal_ssao_enabled()) self.msaaControl.enabled = NO;
+    BOOL singleSampleEffect = gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled() ||
+        gfx_metal_god_rays_enabled() || gfx_metal_sun_intensity() != 0u;
+    self.msaaControl.enabled = !singleSampleEffect;
     for (NSUInteger i = 1; i < sizeof(levels) / sizeof(levels[0]); ++i)
         [self.anisotropyControl setEnabled:levels[i] <= capabilities.max_anisotropy forSegmentAtIndex:i];
     static const char *const ssao_modes[] = { "SSAO: Off", "SSAO: On", "SSAO: AO View", "SSAO: Depth View" };

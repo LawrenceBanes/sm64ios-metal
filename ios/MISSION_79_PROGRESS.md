@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `6866de41` (reuses unchanged directional shadow maps); Apple Metal/MSL and Linux regression passed in [run 44707673489](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707673489). Full IPA workflow [44707824529](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707824529) is building this source, including HUD isolation and shadow-map reuse.
+- Current pushed source commit: `e5e7e60e` (adjustable Bloom profiles); Apple validation is running in [run 44708420275](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44708420275). Full IPA workflow [44707824529](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707824529) is building the prior source `6866de41`, including HUD isolation and shadow-map reuse.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Latest M79-A checkpoint (`eda005d8`)
@@ -18,10 +18,14 @@
 - Added a portable deterministic cache key over transformed world-space caster vertices, directional light, and shadow resolution. The production shadow pass can reuse the prior depth map and fitted transform if that key and vertex count are unchanged; moving/dynamic captured objects, light changes, and map-size changes invalidate it.
 - `tests/run_shadow_map_test.sh` passes; direct Clang ASan/UBSan execution of `tests/shadow_map_test.c` passes with leak detection disabled; renderer source checks and full local Clang Linux regressions pass. Apple validation passed in [run 44707673489](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707673489).
 
-## Current M79-D settings increment
+## M79-D adjustable Bloom checkpoint (`e5e7e60e`)
 
 - Bloom now has Low / Standard / High settings which map to real bright-pass thresholds and composite intensities, are persisted, and are adjustable from the existing Bloom control. Presets choose the profile, and Reset restores Standard. The Standard profile preserves the previous values.
-- Portable profile behavior, focused UI/source checks, and ASan/UBSan state tests pass. The full Clang Linux suite and Apple validation are running/pending for this uncommitted source.
+- Portable profile behavior, focused UI/source checks, ASan/UBSan state tests, and full Clang Linux regressions pass. Apple validation is running.
+
+## Current M79-F control fix
+
+- The MSAA control now disables for every active mode that forces single-sample rendering (SSAO, shadows, screen-space light shafts, or reconstructed sunlight), matching the backend's actual target selection. Focused source checks and the full local Clang Linux regression suite pass; Apple validation is pending.
 
 ## Milestones
 
