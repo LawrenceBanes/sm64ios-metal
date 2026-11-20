@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit: `9794d8bfd89be99ca57683069dc061a2c0211f6c` (full iPhoneOS/IPA workflow passed); screen-space light-shaft work is in the current uncommitted iteration.
+- Current pushed source commit: `039bb3f991d63ac2cb4976c023af1b4e1c6c81ee`; Apple backend/MSL validation passed; persisted sun-direction controls are in the current uncommitted iteration.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -120,7 +120,8 @@
 
 - Added camera projection math for the fixed world-space light direction, a quarter-resolution depth-sampled radial kernel, final-pass additive compositing, persistent Off/On and Low/Standard/High controls, and an explicit UI label stating that this is a screen-space approximation rather than volumetric scattering.
 - Focused source checks, shader generation, postprocess projection tests, and full Clang Linux regressions pass. The sun direction is projected from the same world-space direction as shadow casting; the shader samples clear-depth visibility along a radial screen-space ray and adds a warm shaft contribution at quarter resolution. This remains an approximation, not physically volumetric light.
-- Apple MSL/backend validation and a full app candidate for this new path are still required. Physical output, sunlight visibility, and performance are unverified.
+- Apple MSL/backend validation passed for the light-shaft kernel in [run 44703856058](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44703856058), source `039bb3f991d63ac2cb4976c023af1b4e1c6c81ee`. This run fixed a real compile failure: Metal depth texture `read()` returns a scalar, not an RGBA value. Full app packaging for this source revision is still required. Physical output, sunlight visibility, and performance are unverified.
+- Added a camera-projected sun disk on Day/Sunset sky presets. The sun direction is now shared by the light-shaft source and shadow caster and has persisted Afternoon/Morning/Noon/Sunset presets accessible from the sun/shadow control. This current preset-control change is not yet Apple-validated.
 
 ## Next task
 

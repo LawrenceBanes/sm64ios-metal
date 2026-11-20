@@ -728,8 +728,7 @@ static int sm64RenderDiagnosticMode;
                            forState:UIControlStateNormal];
     [self.masterEffectsButton setTitle:gfx_metal_effects_enabled() ? @"Effects: On" : @"Effects: Off"
                                forState:UIControlStateNormal];
-    [self.shadowButton setTitle:[NSString stringWithFormat:@"Shadows: %@ %u", gfx_metal_shadows_enabled() ? @"On" : @"Off",
-                                gfx_metal_shadow_resolution()]
+    [self.shadowButton setTitle:[NSString stringWithFormat:@"Sun: %@", [NSString stringWithUTF8String:gfx_metal_sun_preset_name()]]
                        forState:UIControlStateNormal];
     static NSString *const ray_quality_names[] = { @"Low", @"Standard", @"High" };
     [self.godRaysButton setTitle:[NSString stringWithFormat:@"Rays: %@ %@", gfx_metal_god_rays_enabled() ? @"On" : @"Off",
@@ -740,8 +739,8 @@ static int sm64RenderDiagnosticMode;
 
 - (void)openShadowSettings {
 #if defined(RAPI_METAL)
-    NSString *message = @"Directional shadow maps render captured world geometry into a depth texture. Coverage is bounded to the first 8,192 captured triangles per frame.";
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Directional Shadows"
+    NSString *message = [NSString stringWithFormat:@"Sun direction: %@. Directional shadows render captured geometry into a depth texture, bounded to 8,192 triangles per frame. Map resolution: %u.", [NSString stringWithUTF8String:gfx_metal_sun_preset_name()], gfx_metal_shadow_resolution()];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Sun and Directional Shadows"
         message:message preferredStyle:UIAlertControllerStyleAlert];
     BOOL enabled = gfx_metal_shadows_enabled();
     [alert addAction:[UIAlertAction actionWithTitle:enabled ? @"Turn Off" : @"Turn On"
@@ -756,6 +755,8 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_cycle_shadow_resolution();
             [self refreshGraphicsSettings];
         }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Change sun direction" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_cycle_sun_preset(); [self refreshGraphicsSettings]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 #endif
@@ -882,6 +883,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_sky_preset(0u);
             gfx_metal_set_shadows_enabled(false);
             gfx_metal_set_god_rays_enabled(false);
+            gfx_metal_set_sun_preset(0u);
             gfx_metal_set_effects_enabled(false);
         } else {
             if (preset == GFX_METAL_PRESET_CINEMATIC) settings = gfx_metal_cinematic_settings();
@@ -911,6 +913,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
             gfx_metal_set_sky_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
             gfx_metal_set_shadow_resolution(preset == GFX_METAL_PRESET_CINEMATIC ? 1024u : 512u);
+            gfx_metal_set_sun_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
             gfx_metal_set_shadows_enabled(preset == GFX_METAL_PRESET_ENHANCED ||
                                           preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_god_rays_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
@@ -975,6 +978,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_shadows_enabled(false);
     gfx_metal_set_god_rays_enabled(false);
     gfx_metal_set_shadow_resolution(512u);
+    gfx_metal_set_sun_preset(0u);
     gfx_metal_set_effects_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];

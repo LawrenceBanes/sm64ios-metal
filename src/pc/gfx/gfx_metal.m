@@ -110,6 +110,7 @@ static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
 static bool metal_shadows_is_enabled;
 static uint32_t metal_shadow_resolution = 512u;
+static uint32_t metal_sun_preset;
 static bool metal_god_rays_is_enabled;
 static uint32_t metal_god_ray_quality = 1u;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
@@ -283,6 +284,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     NSInteger saved_shadow_resolution = [defaults integerForKey:@"SM64MetalShadowResolution"];
     metal_shadow_resolution = saved_shadow_resolution == 1024 || saved_shadow_resolution == 2048 ?
                               (uint32_t)saved_shadow_resolution : 512u;
+    metal_sun_preset = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalSunPreset"]));
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     metal_color_grade = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalColorGrade"]));
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
@@ -412,6 +414,29 @@ void gfx_metal_cycle_shadow_resolution(void) {
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)next forKey:@"SM64MetalShadowResolution"];
     [metal_shadow_texture release]; metal_shadow_texture = nil;
     metal_shadow_texture_size = 0;
+}
+uint32_t gfx_metal_sun_preset(void) { @synchronized ([NSObject class]) { return metal_sun_preset; } }
+void gfx_metal_set_sun_preset(uint32_t preset) {
+    uint32_t sanitized = MIN(preset, 3u);
+    @synchronized ([NSObject class]) { metal_sun_preset = sanitized; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalSunPreset"];
+}
+void gfx_metal_cycle_sun_preset(void) {
+    gfx_metal_set_sun_preset((gfx_metal_sun_preset() + 1u) % 4u);
+}
+void gfx_metal_get_sun_direction(float direction[3]) {
+    if (!direction) return;
+    static const float directions[4][3] = {
+        { 0.35f, 0.93f, 0.25f }, { -0.45f, 0.87f, 0.20f },
+        { 0.15f, 0.97f, -0.18f }, { 0.50f, 0.71f, -0.49f }
+    };
+    @synchronized ([NSObject class]) {
+        memcpy(direction, directions[MIN(metal_sun_preset, 3u)], 3u * sizeof(float));
+    }
+}
+const char *gfx_metal_sun_preset_name(void) {
+    static const char *const names[] = { "Afternoon", "Morning", "Noon", "Sunset" };
+    return names[gfx_metal_sun_preset() % 4u];
 }
 bool gfx_metal_god_rays_enabled(void) {
     @synchronized ([NSObject class]) { return metal_effects_enabled && metal_god_rays_is_enabled; }
@@ -1436,7 +1461,8 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     vector_float4 sky_params = { (float)gfx_metal_sky_preset(), 0.0f, -2.0f, -2.0f };
     if (gfx_metal_sky_preset() != 0u) {
         struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
-        const float sun_direction[3] = { 0.35f, 1.0f, 0.25f };
+        float sun_direction[3];
+        gfx_metal_get_sun_direction(sun_direction);
         float sun_uv[2];
         if (capture.has_view_matrix && capture.has_projection_matrix &&
             gfx_postprocess_project_direction(capture.view_matrix, capture.projection_matrix,
@@ -1563,7 +1589,8 @@ static bool gfx_metal_encode_god_rays(id<MTLCommandBuffer> command) {
     if (!metal_depth_texture || !metal_god_ray_texture || !gfx_metal_ensure_god_ray_pipeline()) return false;
     struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
     float sun_uv[2] = { -2.0f, -2.0f };
-    const float sun_direction[3] = { 0.35f, 1.0f, 0.25f };
+    float sun_direction[3];
+    gfx_metal_get_sun_direction(sun_direction);
     if (capture.has_view_matrix && capture.has_projection_matrix)
         (void)gfx_postprocess_project_direction(capture.view_matrix, capture.projection_matrix,
                                                 sun_direction, sun_uv);
@@ -1646,7 +1673,9 @@ static bool gfx_metal_encode_shadows(id<MTLCommandBuffer> command) {
         }
     }
     if (vertex_count < 3u) return false;
-    const float sun_ray[3] = { -0.35f, -1.0f, -0.25f };
+    float sun_ray[3];
+    gfx_metal_get_sun_direction(sun_ray);
+    for (int axis = 0; axis < 3; ++axis) sun_ray[axis] = -sun_ray[axis];
     if (!gfx_shadow_map_fit((const float (*)[3])metal_shadow_world_positions, vertex_count,
                             sun_ray, (uint32_t)metal_shadow_texture_size, &metal_shadow_transform))
         return false;

@@ -80,6 +80,9 @@ def main() -> None:
             "light shafts must use depth occlusion and project the directional source through the camera")
     require("smoothstep(0.014,0.021,sd)" in shader_c and "sky_params.y = 1.0f" in metal,
             "day/sunset sky modes must draw a depth-masked, camera-projected sun disk")
+    require("gfx_metal_get_sun_direction" in metal and "gfx_metal_cycle_sun_preset" in uikit and
+            "Change sun direction" in uikit and "sun_ray[axis] = -sun_ray[axis]" in metal,
+            "sun direction presets must drive both projected sky/light shafts and the directional shadow pass")
     require("openShadowSettings" in uikit and "gfx_metal_cycle_shadow_resolution" in uikit,
             "developer UI must expose a shadow toggle and resolution control")
     require("openGodRaySettings" in uikit and "gfx_metal_cycle_god_ray_quality" in uikit and
