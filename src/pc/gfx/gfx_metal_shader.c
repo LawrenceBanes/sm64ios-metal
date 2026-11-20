@@ -251,21 +251,27 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             if (!shader_source_contains(material_source, material_size, required[i])) return false;
     }
     gfx_cc_get_features(shader_id, features);
+    if (features->material_directional_light && !features->material_normals) return false;
     if (material_source && features->material_normals) {
         if (!shader_source_contains(material_source, material_size, "float3 viewNormal") ||
             !shader_source_contains(material_source, material_size, "bool normalValid")) return false;
+        if (features->material_directional_light &&
+            (!shader_source_contains(material_source, material_size, "float3 sunDirectionView") ||
+             !shader_source_contains(material_source, material_size, "float sunIntensity"))) return false;
     }
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
          (features->scene_blend && features->opt_texture_edge) ||
-         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | SHADER_OPT_MATERIAL_NORMAL | SHADER_SCENE_FOG | 15u)))) return false;
+         (shader_id & ~(SHADER_OPT_SCENE_MATERIAL | SHADER_OPT_MATERIAL_NORMAL |
+                        SHADER_OPT_MATERIAL_LIGHT | SHADER_SCENE_FOG | 15u)))) return false;
     if (!gfx_metal_get_vertex_layout(features, &vertex_layout)) return false;
     out[0] = '\0';
 
     write_text(&w, "#include <metal_stdlib>\nusing namespace metal;\n");
     write_text(&w,
         "struct FragmentParams { uint filter0; uint filter1; uint diagnosticMode; "
-        "uint textureId0; uint textureId1; uint materialClass; float frameCount; };\n"
+        "uint textureId0; uint textureId1; uint materialClass; float frameCount; "
+        "float sunDirectionViewX; float sunDirectionViewY; float sunDirectionViewZ; float sunIntensity; };\n"
         "float3 diagnosticTextureColor(uint textureId) {\n"
         "float hue=fract(float(textureId)*0.61803398875);\n"
         "float3 color=clamp(abs(fract(hue+float3(0.0,0.6666667,0.3333333))*6.0-3.0)-1.0,0.0,1.0);\n"
@@ -391,6 +397,8 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
             write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
             write_text(&w, ",in.pos,params.materialClass");
             if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
+            if (features->material_directional_light)
+                write_text(&w, ",float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity");
             if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
             write_text(&w, ",shader64Parameters); }\n");
         } else {
@@ -427,6 +435,8 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
         write_text(&w, ",in.pos,params.materialClass");
         if (features->material_normals) write_text(&w, ",in.viewNormal.xyz,in.viewNormal.w>0.5");
+        if (features->material_directional_light)
+            write_text(&w, ",float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity");
         if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
         write_text(&w, ",shader64Parameters); }\n");
     } else {

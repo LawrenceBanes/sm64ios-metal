@@ -1527,11 +1527,14 @@ static int sm64RenderDiagnosticMode;
         if (material) {
             NSString *materialPath = [material isKindOfClass:[NSDictionary class]] ? material[@"source"] : nil;
             id vertexNormals = [material isKindOfClass:[NSDictionary class]] ? material[@"vertexNormals"] : nil;
+            id directionalLight = [material isKindOfClass:[NSDictionary class]] ? material[@"directionalLight"] : nil;
             if (![materialPath isKindOfClass:[NSString class]] || ![materialPath hasPrefix:@"shaders/"] ||
                 [materialPath containsString:@".."] || [materialPath.pathComponents count] != 2 ||
                 ![materialPath hasSuffix:@".metal"] ||
                 (material[@"packTextures"] && ![material[@"packTextures"] isKindOfClass:[NSNumber class]]) ||
-                (vertexNormals && ![vertexNormals isKindOfClass:[NSNumber class]])) api2 = NO;
+                (vertexNormals && ![vertexNormals isKindOfClass:[NSNumber class]]) ||
+                (directionalLight && ![directionalLight isKindOfClass:[NSNumber class]]) ||
+                ([directionalLight boolValue] && ![vertexNormals boolValue])) api2 = NO;
             if ([material[@"packTextures"] boolValue] && textureList.count == 0) api2 = NO;
         }
     }
@@ -1636,9 +1639,11 @@ static int sm64RenderDiagnosticMode;
     NSDictionary *materialDefinition = manifest[@"materialShader"];
     BOOL materialPackTextures = [materialDefinition[@"packTextures"] boolValue];
     BOOL materialVertexNormals = [materialDefinition[@"vertexNormals"] boolValue];
+    BOOL materialDirectionalLight = [materialDefinition[@"directionalLight"] boolValue];
     BOOL loaded = !validation && (graphPack ? (graphSources.count == [manifest[@"passes"] count] &&
         gfx_metal_load_shader64_graph_with_material(packID.UTF8String, graphPasses, graphSources.count,
         materialSource.bytes, materialSource.length, materialPackTextures, materialVertexNormals,
+        materialDirectionalLight,
         parameters, error, sizeof(error))) :
         (source && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,

@@ -5,6 +5,7 @@ void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
         *cc_features = (struct CCFeatures){
             .scene_material = true, .opt_alpha = true,
             .material_normals = (shader_id & SHADER_OPT_MATERIAL_NORMAL) != 0,
+            .material_directional_light = (shader_id & SHADER_OPT_MATERIAL_LIGHT) != 0,
             .scene_blend = (shader_id & SHADER_SCENE_BLEND) != 0,
             .opt_fog = (shader_id & SHADER_SCENE_FOG) != 0,
             .opt_texture_edge = (shader_id & SHADER_SCENE_CUTOUT) != 0,
@@ -15,6 +16,7 @@ void gfx_cc_get_features(uint32_t shader_id, struct CCFeatures *cc_features) {
     }
     cc_features->scene_material = cc_features->scene_blend = false;
     cc_features->material_normals = (shader_id & SHADER_OPT_MATERIAL_NORMAL) != 0;
+    cc_features->material_directional_light = (shader_id & SHADER_OPT_MATERIAL_LIGHT) != 0;
     for (int i = 0; i < 4; i++) {
         cc_features->c[0][i] = (shader_id >> (i * 3)) & 7;
         cc_features->c[1][i] = (shader_id >> (12 + i * 3)) & 7;

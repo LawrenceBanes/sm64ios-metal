@@ -38,6 +38,9 @@ struct GfxSceneCaptureFrame {
 
 void gfx_scene_capture_set_enabled(bool enabled);
 bool gfx_scene_capture_is_enabled(void);
+/* Camera-matrix capture can remain enabled without copying per-triangle data. */
+void gfx_scene_capture_set_geometry_enabled(bool enabled);
+bool gfx_scene_capture_is_geometry_enabled(void);
 void gfx_scene_capture_begin_frame(void);
 /* Root-camera updates before the first triangle are accepted. A later camera
  * change invalidates world transforms for the whole single-camera frame. */

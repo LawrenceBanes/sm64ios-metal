@@ -71,7 +71,7 @@ int gfx_shader64_validate_material_source(const char *source, size_t size,
 int gfx_shader64_validate_material_texture_source(const char *source, size_t size,
                                                  char *error, size_t error_size);
 int gfx_shader64_validate_material_normal_source(const char *source, size_t size,
-                                                int pack_textures,
+                                                int pack_textures, int directional_light,
                                                 char *error, size_t error_size);
 int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size);

@@ -1209,7 +1209,7 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     bool capture_material_normals = gfx_metal_shader64_material_vertex_normals_enabled();
 #endif
-    if (gfx_scene_capture_is_enabled()) {
+    if (gfx_scene_capture_is_geometry_enabled()) {
         uint32_t vertex_count = (uint32_t)n_vertices;
         geometry_id = gfx_scene_capture_hash_bytes(0, &vertex_count, sizeof(vertex_count));
         for (size_t vertex_index = 0; vertex_index < n_vertices; ++vertex_index) {
@@ -1237,7 +1237,7 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         }
 #endif
 
-        if (gfx_scene_capture_is_enabled()) {
+        if (gfx_scene_capture_is_geometry_enabled()) {
             d->local_position[0] = v->ob[0];
             d->local_position[1] = v->ob[1];
             d->local_position[2] = v->ob[2];
@@ -1391,6 +1391,7 @@ static bool gfx_bind_scene_material(const struct WorldSceneMaterial *material) {
     uint32_t shader = SHADER_OPT_SCENE_MATERIAL;
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     if (gfx_metal_shader64_material_vertex_normals_enabled()) shader |= SHADER_OPT_MATERIAL_NORMAL;
+    if (gfx_metal_shader64_material_directional_light_enabled()) shader |= SHADER_OPT_MATERIAL_LIGHT;
 #endif
     if (material->texture[0].name[0]) shader |= SHADER_SCENE_TEX0;
     if (material->texture[1].name[0]) shader |= SHADER_SCENE_TEX1;
@@ -1653,6 +1654,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     if (use_noise) cc_id |= SHADER_OPT_NOISE;
 #if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
     if (gfx_metal_shader64_material_vertex_normals_enabled()) cc_id |= SHADER_OPT_MATERIAL_NORMAL;
+    if (gfx_metal_shader64_material_directional_light_enabled()) cc_id |= SHADER_OPT_MATERIAL_LIGHT;
 #endif
     
     if (!use_alpha) {
@@ -1782,7 +1784,7 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
         }
     }
 
-    if (gfx_scene_capture_is_enabled()) {
+    if (gfx_scene_capture_is_geometry_enabled()) {
         struct GfxSceneCaptureTriangle capture;
         memset(&capture, 0, sizeof(capture));
         struct LoadedVertex *capture_vertices[3] = {v1, v2, v3};
@@ -2726,8 +2728,10 @@ void gfx_run(Gfx *commands) {
     bool capture_for_post = gfx_metal_ssao_enabled() || gfx_metal_fog_enabled() ||
                             gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled() ||
                             gfx_metal_sun_intensity() != 0u ||
+                            gfx_metal_shader64_material_directional_light_enabled() ||
                             gfx_metal_shader64_needs_scene_depth();
     gfx_scene_capture_set_enabled(capture_for_post);
+    gfx_scene_capture_set_geometry_enabled(gfx_metal_shadows_enabled());
     gfx_scene_capture_set_triangle_limit(capture_for_post ? 8192u : 0u);
 #endif
     gfx_scene_capture_begin_frame();

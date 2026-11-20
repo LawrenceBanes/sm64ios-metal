@@ -13,6 +13,7 @@ static size_t captured_capacity;
 static size_t dropped_count;
 static uint64_t frame_index;
 static bool capture_enabled;
+static bool geometry_capture_enabled;
 static float frame_view_matrix[4][4];
 static float frame_projection_matrix[4][4];
 static bool frame_has_view_matrix;
@@ -26,10 +27,19 @@ void gfx_scene_capture_set_triangle_limit(size_t maximum) {
 
 void gfx_scene_capture_set_enabled(bool enabled) {
     capture_enabled = enabled;
+    geometry_capture_enabled = enabled;
 }
 
 bool gfx_scene_capture_is_enabled(void) {
     return capture_enabled;
+}
+
+void gfx_scene_capture_set_geometry_enabled(bool enabled) {
+    geometry_capture_enabled = capture_enabled && enabled;
+}
+
+bool gfx_scene_capture_is_geometry_enabled(void) {
+    return capture_enabled && geometry_capture_enabled;
 }
 
 void gfx_scene_capture_begin_frame(void) {
@@ -111,7 +121,7 @@ bool gfx_scene_capture_split_modelview(const float modelview[4][4], const float 
 }
 
 bool gfx_scene_capture_submit(const struct GfxSceneCaptureTriangle *triangle) {
-    if (!capture_enabled || !triangle) return false;
+    if (!capture_enabled || !geometry_capture_enabled || !triangle) return false;
     if (captured_count >= triangle_limit) {
         ++dropped_count;
         return false;

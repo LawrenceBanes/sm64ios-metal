@@ -30,10 +30,16 @@ int main(void) {
     assert(gfx_scene_capture_get_frame().triangle_count == 0);
 
     gfx_scene_capture_set_enabled(true);
+    gfx_scene_capture_set_geometry_enabled(false);
     gfx_scene_capture_begin_frame();
     gfx_scene_capture_set_view_matrix(view);
-    gfx_scene_capture_set_view_matrix(updated_view);
     gfx_scene_capture_set_projection_matrix(projection);
+    assert(!gfx_scene_capture_submit(&triangle));
+    struct GfxSceneCaptureFrame matrix_only_frame = gfx_scene_capture_get_frame();
+    assert(matrix_only_frame.has_view_matrix && matrix_only_frame.has_projection_matrix);
+    assert(matrix_only_frame.triangle_count == 0);
+    gfx_scene_capture_set_geometry_enabled(true);
+    gfx_scene_capture_set_view_matrix(updated_view);
     assert(gfx_scene_capture_submit(&triangle));
     struct GfxSceneCaptureFrame frame = gfx_scene_capture_get_frame();
     assert(frame.triangle_count == 1);

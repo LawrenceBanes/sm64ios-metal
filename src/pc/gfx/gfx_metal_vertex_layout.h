@@ -63,6 +63,28 @@ static inline bool gfx_metal_transform_view_normal(const float normal[3],
     return true;
 }
 
+/* Direction vectors use the view rotation only (translation is ignored). */
+static inline bool gfx_metal_transform_view_direction(const float direction[3],
+                                                      const float view[4][4],
+                                                      float view_direction[3]) {
+    if (!direction || !view || !view_direction) return false;
+    float transformed[3];
+    for (int column = 0; column < 3; ++column)
+        transformed[column] = direction[0] * view[0][column] +
+                              direction[1] * view[1][column] +
+                              direction[2] * view[2][column];
+    float length_squared = transformed[0] * transformed[0] +
+                           transformed[1] * transformed[1] +
+                           transformed[2] * transformed[2];
+    if (!isfinite(length_squared) || length_squared < 1.0e-12f) return false;
+    float inverse_length = 1.0f / sqrtf(length_squared);
+    for (int axis = 0; axis < 3; ++axis) {
+        view_direction[axis] = transformed[axis] * inverse_length;
+        if (!isfinite(view_direction[axis])) return false;
+    }
+    return true;
+}
+
 /* Shared by MSL source generation and MTLVertexDescriptor construction so the
  * explicit shader slots and the packed CPU vertex stream cannot drift apart. */
 static inline bool gfx_metal_get_vertex_layout(const struct CCFeatures *features,

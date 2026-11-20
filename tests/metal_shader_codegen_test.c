@@ -77,6 +77,12 @@ int main(void) {
         assert(!gfx_metal_transform_view_normal(test_normal, singular, normal_out));
         const float zero_normal[3] = { 0, 0, 0 };
         assert(!gfx_metal_transform_view_normal(zero_normal, identity, normal_out));
+        const float view_rotated[4][4] = {
+            {0,1,0,0}, {-1,0,0,0}, {0,0,1,0}, {0,0,0,1}
+        };
+        const float world_direction[3] = {1,0,0};
+        assert(gfx_metal_transform_view_direction(world_direction, view_rotated, normal_out));
+        assert(normal_out[0] == 0.0f && normal_out[1] == 1.0f && normal_out[2] == 0.0f);
     }
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
@@ -156,6 +162,21 @@ int main(void) {
     assert_dense_vertex_attributes(source, &features);
     assert(!gfx_metal_build_shader_with_material(normal_id, material_source,
         strlen(material_source), false, source, sizeof(source), &features));
+    const char *material_lit_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
+        "float3 viewNormal, bool normalValid, float3 sunDirectionView, float sunIntensity, "
+        "constant float4 &params) { "
+        "if (normalValid) baseColor.rgb *= 0.3 + max(dot(normalize(viewNormal),normalize(sunDirectionView)),0.0)*sunIntensity; return baseColor; }";
+    uint32_t lit_id = id | SHADER_OPT_MATERIAL_NORMAL | SHADER_OPT_MATERIAL_LIGHT;
+    assert(gfx_metal_build_shader_with_material(lit_id, material_lit_source,
+        strlen(material_lit_source), false, source, sizeof(source), &features));
+    assert(features.material_normals && features.material_directional_light);
+    assert(strstr(source, "float3(params.sunDirectionViewX,params.sunDirectionViewY,params.sunDirectionViewZ),params.sunIntensity") != NULL);
+    assert_dense_vertex_attributes(source, &features);
+    assert(!gfx_metal_build_shader_with_material(lit_id, material_normal_source,
+        strlen(material_normal_source), false, source, sizeof(source), &features));
+    assert(!gfx_metal_build_shader_with_material(id | SHADER_OPT_MATERIAL_LIGHT,
+        material_lit_source, strlen(material_lit_source), false, source, sizeof(source), &features));
     const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
     assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material), false,
                                                   source, sizeof(source), &features));
