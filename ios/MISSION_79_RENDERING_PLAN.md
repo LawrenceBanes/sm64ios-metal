@@ -14,7 +14,9 @@ Work is isolated on `mission-79-modern-metal-renderer` at `/home/larry/Projects/
 
 ## Initial implementation checkpoint
 
-Added tested CPU helpers for matrix inversion and RSP-convention depth unprojection. They reject singular/non-finite matrices and clear-depth samples. These helpers are an AO prerequisite only; they do not implement or claim SSAO.
+Added tested CPU helpers for matrix inversion and RSP-convention depth unprojection. They reject singular/non-finite matrices and clear-depth samples. Offscreen Enhanced rendering now uses an RGBA16Float scene color target and format-distinct pipeline-cache slots, preserving the direct BGRA8 Classic path. The internal Depth32Float texture is shader-readable and stored at the end of offscreen passes; direct Classic rendering retains the previous discard action. The existing final presentation pass composites the float target into the drawable.
+
+This is the 79A render-target foundation, not a complete postprocess pipeline. HUD/UI is still rasterized into the same scene color target and is therefore not yet isolated from postprocessing. No tone mapping, AO, bloom, fog, sky, shadows, or god rays are implemented in this checkpoint.
 
 ## Required next gate: actual SSAO
 

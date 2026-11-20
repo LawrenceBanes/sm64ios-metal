@@ -25,7 +25,7 @@
 
 #define METAL_SHADER_CAP 128
 #define METAL_TEXTURE_CAP 8192
-#define METAL_PIPELINE_STATE_CAP 48
+#define METAL_PIPELINE_STATE_CAP 96
 
 struct MetalProgram {
     uint32_t shader_id;
@@ -151,7 +151,7 @@ static id<MTLTexture> gfx_metal_depth_for_size(NSUInteger width, NSUInteger heig
     descriptor.textureType = sample_count > 1 ? MTLTextureType2DMultisample : MTLTextureType2D;
     descriptor.sampleCount = sample_count;
     descriptor.storageMode = MTLStorageModePrivate;
-    descriptor.usage = MTLTextureUsageRenderTarget;
+    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     metal_depth_texture = [metal_device newTextureWithDescriptor:descriptor];
     if (!metal_depth_texture) {
         gfx_ios_diag_log("Metal depth texture creation failed drawable=%lux%lu format=Depth32Float", (unsigned long)width, (unsigned long)height);
@@ -618,6 +618,7 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     uint32_t state_key = gfx_metal_pipeline_state_key(state_depth_test, state_depth_write,
                                                        state_blend, state_decal);
     uint32_t key = gfx_metal_pipeline_cache_index((uint32_t)metal_active_sample_count, state_key);
+    if (key != UINT32_MAX && metal_frame_uses_offscreen) key += 48u;
     if (key == UINT32_MAX || key >= METAL_PIPELINE_STATE_CAP) return nil;
     if (p->pipelines[key]) return p->pipelines[key];
     struct GfxMetalVertexLayout vertex_layout = {0};
@@ -643,7 +644,8 @@ static id<MTLRenderPipelineState> pipeline_for(struct MetalProgram *p) {
     MTLRenderPipelineDescriptor *desc = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
     desc.vertexFunction = p->vertex; desc.fragmentFunction = p->fragment;
     desc.vertexDescriptor = vd;
-    desc.colorAttachments[0].pixelFormat = metal_view.colorPixelFormat;
+    desc.colorAttachments[0].pixelFormat = metal_frame_uses_offscreen ?
+        MTLPixelFormatRGBA16Float : metal_view.colorPixelFormat;
     desc.depthAttachmentPixelFormat = metal_view.depthStencilPixelFormat;
     desc.sampleCount = metal_active_sample_count;
     if (state_blend) {
@@ -960,14 +962,14 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     gfx_metal_release_render_targets();
     if (samples > 1) {
         metal_multisample_color = gfx_metal_new_target_texture(size.width, size.height, samples,
-            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget);
+        MTLPixelFormatRGBA16Float, MTLTextureUsageRenderTarget);
         metal_resolve_texture = gfx_metal_new_target_texture(size.width, size.height, 1,
-            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+            MTLPixelFormatRGBA16Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
         if (metal_multisample_color) metal_multisample_color.label = @"SM64 MSAA color";
         if (metal_resolve_texture) metal_resolve_texture.label = @"SM64 resolved color";
     } else {
         metal_color_target = gfx_metal_new_target_texture(size.width, size.height, 1,
-            metal_view.colorPixelFormat, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+            MTLPixelFormatRGBA16Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
         if (metal_color_target) metal_color_target.label = @"SM64 scaled color";
     }
     id<MTLTexture> depth = gfx_metal_depth_for_size(size.width, size.height, samples);
@@ -1116,7 +1118,8 @@ static void gfx_metal_start_frame(void) {
             if (samples > 1) pass.colorAttachments[0].resolveTexture = metal_resolve_texture;
             pass.depthAttachment.texture = depth_texture;
             pass.depthAttachment.loadAction = MTLLoadActionClear;
-            pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+            pass.depthAttachment.storeAction = metal_frame_uses_offscreen ?
+                MTLStoreActionStore : MTLStoreActionDontCare;
             pass.depthAttachment.clearDepth = 1.0;
             metal_active_sample_count = samples;
             metal_active_render_width = width;

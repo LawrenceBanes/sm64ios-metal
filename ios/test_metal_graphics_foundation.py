@@ -57,6 +57,9 @@ def main() -> None:
         "metal_offscreen_runtime_failed", "fallback_to_direct(\"enhanced pipeline or final-pass encoder failed\")",
         "[metal_layer nextDrawable]", "[metal_command presentDrawable:submitted_drawable]",
         "gfx_metal_pipeline_cache_index", "desc.sampleCount = metal_active_sample_count",
+        "metal_frame_uses_offscreen ?\n        MTLPixelFormatRGBA16Float : metal_view.colorPixelFormat",
+        "MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead",
+        "metal_frame_uses_offscreen ?\n                MTLStoreActionStore : MTLStoreActionDontCare",
         "descriptor.maxAnisotropy = level", "MTLSamplerAddressModeMirrorRepeat",
         "SM64MetalPreset", "SM64MetalRenderScale", "SM64MetalSampleCount",
         "SM64MetalAnisotropy", "completed.GPUStartTime", "completed.GPUEndTime",
@@ -65,6 +68,9 @@ def main() -> None:
         require(token in metal, f"missing Metal backend capability or fallback invariant: {token}")
     require("gfx_metal_settings_use_offscreen(metal_settings)" in metal,
             "Classic 100%/1x render must stay on the direct drawable path")
+    require("if (key != UINT32_MAX && metal_frame_uses_offscreen) key += 48u;" in metal and
+            "#define METAL_PIPELINE_STATE_CAP 96" in metal,
+            "BGRA8 and float-target pipelines need disjoint cache entries")
     require("void gfx_metal_apply_settings" in metal_h and
             "void gfx_metal_get_performance_stats" in metal_h,
             "settings and performance API must be visible to native UIKit")
