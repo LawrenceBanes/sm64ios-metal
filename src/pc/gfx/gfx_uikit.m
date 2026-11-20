@@ -1514,7 +1514,9 @@ static int sm64RenderDiagnosticMode;
             NSString *materialPath = [material isKindOfClass:[NSDictionary class]] ? material[@"source"] : nil;
             if (![materialPath isKindOfClass:[NSString class]] || ![materialPath hasPrefix:@"shaders/"] ||
                 [materialPath containsString:@".."] || [materialPath.pathComponents count] != 2 ||
-                ![materialPath hasSuffix:@".metal"]) api2 = NO;
+                ![materialPath hasSuffix:@".metal"] ||
+                (material[@"packTextures"] && ![material[@"packTextures"] isKindOfClass:[NSNumber class]])) api2 = NO;
+            if ([material[@"packTextures"] boolValue] && textureList.count == 0) api2 = NO;
         }
     }
     if (!identifierOK || !metadataOK || (!api1 && !api2)) {
@@ -1611,9 +1613,11 @@ static int sm64RenderDiagnosticMode;
         parameters[i] = (float)v;
     }
     char error[512] = {0};
+    NSDictionary *materialDefinition = manifest[@"materialShader"];
+    BOOL materialPackTextures = [materialDefinition[@"packTextures"] boolValue];
     BOOL loaded = !validation && (graphPack ? (graphSources.count == [manifest[@"passes"] count] &&
         gfx_metal_load_shader64_graph_with_material(packID.UTF8String, graphPasses, graphSources.count,
-        materialSource.bytes, materialSource.length, parameters, error, sizeof(error))) :
+        materialSource.bytes, materialSource.length, materialPackTextures, parameters, error, sizeof(error))) :
         (source && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)))));

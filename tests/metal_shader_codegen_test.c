@@ -99,13 +99,28 @@ int main(void) {
     const char *material_source =
         "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, constant float4 &params) { "
         "if(materialClass==3u) baseColor.rgb=mix(baseColor.rgb,float3(1.0,0.1,0.8),params.x); return baseColor; }";
-    assert(gfx_metal_build_shader_with_material(id, material_source, strlen(material_source),
+    assert(gfx_metal_build_shader_with_material(id, material_source, strlen(material_source), false,
                                                  source, sizeof(source), &features));
     assert(strstr(source, "shader64_material(float4 baseColor") != NULL);
     assert(strstr(source, "shader64_material(color,float2(0.0),in.pos,params.materialClass,shader64Parameters)") != NULL);
     assert(strstr(source, "constant float4 &shader64Parameters [[buffer(2)]]") != NULL);
+    const char *material_texture_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, "
+        "texture2d<float> materialTexture0, sampler materialSampler0, "
+        "texture2d<float> materialTexture1, sampler materialSampler1, "
+        "texture2d<float> materialTexture2, sampler materialSampler2, "
+        "texture2d<float> materialTexture3, sampler materialSampler3, uint materialTextureCount, "
+        "constant float4 &params) { if(materialTextureCount>0u) baseColor*=materialTexture0.sample(materialSampler0,uv); return baseColor; }";
+    assert(gfx_metal_build_shader_with_material(id, material_texture_source,
+        strlen(material_texture_source), true, source, sizeof(source), &features));
+    assert(strstr(source, "materialTexture0 [[texture(4)]]") != NULL);
+    assert(strstr(source, "materialTexture3 [[texture(7)]]") != NULL);
+    assert(strstr(source, "materialTextureCount [[buffer(3)]]") != NULL);
+    assert(strstr(source, "materialTextureCount,shader64Parameters") != NULL);
+    assert(!gfx_metal_build_shader_with_material(id, material_source, strlen(material_source), true,
+        source, sizeof(source), &features));
     const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
-    assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material),
+    assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material), false,
                                                   source, sizeof(source), &features));
 
     /* The MSL input slots must be a dense match for pipeline_for()'s packed

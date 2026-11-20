@@ -525,6 +525,24 @@ int gfx_shader64_validate_material_source(const char *source, size_t size,
     return 1;
 }
 
+int gfx_shader64_validate_material_texture_source(const char *source, size_t size,
+                                                 char *error, size_t error_size) {
+    static const char *const required[] = {
+        "texture2d<float> materialTexture0", "sampler materialSampler0",
+        "texture2d<float> materialTexture1", "sampler materialSampler1",
+        "texture2d<float> materialTexture2", "sampler materialSampler2",
+        "texture2d<float> materialTexture3", "sampler materialSampler3",
+        "uint materialTextureCount"
+    };
+    if (!gfx_shader64_validate_material_source(source, size, error, error_size)) return 0;
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "material source does not implement the material-texture contract"); return 0;
+        }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size) {
     static const char prefix[] =

@@ -7,6 +7,7 @@
 extern struct GfxRenderingAPI gfx_metal_api;
 
 #if defined(TARGET_OS_IOS)
+#include <stdbool.h>
 #include <stddef.h>
 struct GfxShader64GraphSource;
 bool gfx_metal_load_shader64_source(const char *pack_id, const char *source,
@@ -22,7 +23,8 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
 bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                    const struct GfxShader64GraphSource *passes,
                                    size_t pass_count, const char *material_source,
-                                   size_t material_source_size, const float parameters[4],
+                                   size_t material_source_size, bool material_pack_textures,
+                                   const float parameters[4],
                                    char *error, size_t error_size);
 bool gfx_metal_shader64_needs_scene_depth(void);
 void gfx_metal_use_classic_shader(void);

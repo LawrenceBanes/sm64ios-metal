@@ -49,6 +49,9 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_material_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_material_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_material_texture_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_material_texture_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_depth_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
@@ -181,6 +184,20 @@ class ShaderPackTests(unittest.TestCase):
         self.assertTrue(self.api.gfx_shader64_validate_material_source(source, len(source), error, len(error)), error.value)
         self.assertFalse(self.api.gfx_shader64_validate_material_source(
             source.replace(b"shader64_material", b"wrong_material"), len(source), error, len(error)))
+
+    def test_material_texture_contract_requires_all_bounded_slots(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, '
+                  b'texture2d<float> materialTexture0, sampler materialSampler0, '
+                  b'texture2d<float> materialTexture1, sampler materialSampler1, '
+                  b'texture2d<float> materialTexture2, sampler materialSampler2, '
+                  b'texture2d<float> materialTexture3, sampler materialSampler3, uint materialTextureCount, '
+                  b'constant float4 &params) { return materialTexture0.sample(materialSampler0,uv)*baseColor; }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_material_texture_source(
+            source, len(source), error, len(error)), error.value)
+        self.assertFalse(self.api.gfx_shader64_validate_material_texture_source(
+            source.replace(b"materialTexture3", b"invalidTexture"), len(source), error, len(error)))
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
@@ -403,7 +420,10 @@ class ShaderPackTests(unittest.TestCase):
                     material_path = material_definition["source"]
                     self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
                     material_source = (directory / material_path).read_bytes()
-                    self.assertTrue(self.api.gfx_shader64_validate_material_source(
+                    material_validator = (self.api.gfx_shader64_validate_material_texture_source
+                                          if material_definition.get("packTextures") else
+                                          self.api.gfx_shader64_validate_material_source)
+                    self.assertTrue(material_validator(
                         material_source, len(material_source), error, len(error)),
                         f"{pack_id} material hook: {error.value!r}")
                     entries.append((material_path, material_source))
@@ -441,7 +461,8 @@ class ShaderPackTests(unittest.TestCase):
                       "gfx_metal_shader64_needs_scene_depth", "gfx_metal_shader64_requires_shadows",
                       "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows",
                       "gfx_metal_shader64_load_pack_textures", "graph->pack_texture_count",
-                      "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures"):
+                      "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures",
+                      "material_pack_textures", "material_pack_texture_count"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
@@ -450,6 +471,8 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("GFX_SHADER64_RESOURCE_PACK_TEXTURES", pack_header)
         self.assertIn("depth2d<float>", (ROOT / "src/pc/gfx/gfx_shader64_pack.c").read_text())
         self.assertIn("shader64_material(color", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
+        self.assertIn("materialTextureCount", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
+        self.assertIn("gfx_shader64_validate_material_texture_source", (ROOT / "src/pc/gfx/gfx_metal.m").read_text())
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",
                       "gfx_shader64_install_zip", "shader64_post", "Delete an installed pack",
                       "Configure %@", "gfx_metal_use_classic_shader", "UISlider", "UISwitch",

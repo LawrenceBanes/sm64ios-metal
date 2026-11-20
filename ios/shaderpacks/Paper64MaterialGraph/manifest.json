@@ -11,7 +11,10 @@
     { "name": "toonStrength", "label": "Toon strength", "type": "float", "default": 0.8, "min": 0, "max": 1 },
     { "name": "characterWarmth", "label": "Character warmth", "type": "float", "default": 0.12, "min": -0.5, "max": 0.5 }
   ],
-  "materialShader": { "source": "shaders/material.metal" },
+  "textures": [
+    { "id": "paper", "source": "textures/paper.png" }
+  ],
+  "materialShader": { "source": "shaders/material.metal", "packTextures": true },
   "passes": [
     { "id": "native_scene", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/passthrough.metal", "scale": 1.0 }
   ]

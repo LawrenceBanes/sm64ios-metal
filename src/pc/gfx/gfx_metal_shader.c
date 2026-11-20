@@ -214,6 +214,7 @@ static void write_formula(struct ShaderWriter *w, const struct CCFeatures *f,
 
 bool gfx_metal_build_shader_with_material(uint32_t shader_id,
                                          const char *material_source, size_t material_size,
+                                         bool material_textures,
                                          char *out, size_t out_size,
                                          struct CCFeatures *features) {
     struct CCFeatures local;
@@ -222,12 +223,23 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     int i;
     if (!features) features = &local;
     if (!w.ok) return false;
-    if ((material_source == NULL) != (material_size == 0) ||
+    if ((material_source == NULL) != (material_size == 0) || (material_textures && !material_source) ||
         material_size > 256u * 1024u ||
         (material_source && (memchr(material_source, '\0', material_size) ||
          !shader_source_contains(material_source, material_size, "float4 shader64_material(") ||
          !shader_source_contains(material_source, material_size, "constant float4 &params"))))
         return false;
+    if (material_textures) {
+        static const char *const required[] = {
+            "texture2d<float> materialTexture0", "sampler materialSampler0",
+            "texture2d<float> materialTexture1", "sampler materialSampler1",
+            "texture2d<float> materialTexture2", "sampler materialSampler2",
+            "texture2d<float> materialTexture3", "sampler materialSampler3",
+            "uint materialTextureCount"
+        };
+        for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+            if (!shader_source_contains(material_source, material_size, required[i])) return false;
+    }
     gfx_cc_get_features(shader_id, features);
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
@@ -306,6 +318,13 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (features->used_textures[0]) write_text(&w, ", texture2d<float> tex0 [[texture(0)]], sampler samp0 [[sampler(0)]]");
     if (features->used_textures[1]) write_text(&w, ", texture2d<float> tex1 [[texture(1)]], sampler samp1 [[sampler(1)]]");
     write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
+    if (material_source && material_textures)
+        write_text(&w,
+            ", texture2d<float> materialTexture0 [[texture(4)]], sampler materialSampler0 [[sampler(4)]]"
+            ", texture2d<float> materialTexture1 [[texture(5)]], sampler materialSampler1 [[sampler(5)]]"
+            ", texture2d<float> materialTexture2 [[texture(6)]], sampler materialSampler2 [[sampler(6)]]"
+            ", texture2d<float> materialTexture3 [[texture(7)]], sampler materialSampler3 [[sampler(7)]]"
+            ", constant uint &materialTextureCount [[buffer(3)]]");
     if (material_source) write_text(&w, ", constant float4 &shader64Parameters [[buffer(2)]]");
     write_text(&w, ") {\n");
     /* Diagnostic mode 1 substitutes opaque white at the combiner input. This
@@ -351,7 +370,9 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
         if (material_source) {
             write_text(&w, "return shader64_material(color,");
             write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
-            write_text(&w, ",in.pos,params.materialClass,shader64Parameters); }\n");
+            write_text(&w, ",in.pos,params.materialClass");
+            if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
+            write_text(&w, ",shader64Parameters); }\n");
         } else {
             write_text(&w, "return color; }\n");
         }
@@ -384,7 +405,9 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
     if (material_source) {
         write_text(&w, "return shader64_material(color,");
         write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
-        write_text(&w, ",in.pos,params.materialClass,shader64Parameters); }\n");
+        write_text(&w, ",in.pos,params.materialClass");
+        if (material_textures) write_text(&w, ",materialTexture0,materialSampler0,materialTexture1,materialSampler1,materialTexture2,materialSampler2,materialTexture3,materialSampler3,materialTextureCount");
+        write_text(&w, ",shader64Parameters); }\n");
     } else {
         write_text(&w, "return color; }\n");
     }
@@ -393,5 +416,5 @@ bool gfx_metal_build_shader_with_material(uint32_t shader_id,
 
 bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                             struct CCFeatures *features) {
-    return gfx_metal_build_shader_with_material(shader_id, NULL, 0, out, out_size, features);
+    return gfx_metal_build_shader_with_material(shader_id, NULL, 0, false, out, out_size, features);
 }

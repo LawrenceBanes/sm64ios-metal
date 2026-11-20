@@ -152,12 +152,20 @@ material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$material_wrapper_tool"
+material_texture_wrapper_tool="$output_dir/shader64-wrap-material-textures"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_material_textures.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$material_texture_wrapper_tool"
 for material_source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/material.metal \
                       "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/material.metal \
                       "$repo_dir"/ios/shaderpacks/Paper64MaterialGraph/shaders/material.metal; do
     pack=$(basename "$(dirname "$(dirname "$material_source")")")
     name="shader64-$pack-material"
-    "$material_wrapper_tool" "$material_source" > "$shader_dir/$name.metal"
+    if [[ "$pack" == "Paper64MaterialGraph" ]]; then
+        "$material_texture_wrapper_tool" "$material_source" > "$shader_dir/$name.metal"
+    else
+        "$material_wrapper_tool" "$material_source" > "$shader_dir/$name.metal"
+    fi
     xcrun --sdk iphoneos metal -c "$shader_dir/$name.metal" -o "$shader_dir/$name.air"
     xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
     echo "compiled and linked SHADER64 API 2 $pack material hook"
