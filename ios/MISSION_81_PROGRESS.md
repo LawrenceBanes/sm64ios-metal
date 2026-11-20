@@ -45,6 +45,7 @@
 - Added API 2 `sceneShadows` resource contract and a Lumen64ShadowGraph reference pack. It requests the existing bounded native directional shadow-map generator, binds its depth texture and fitted world-to-shadow basis to a graph pass, and applies 3x3 PCF to depth-reconstructed world positions. The engine falls back to its native composite when the map or camera capture is unavailable. This is one map, with the native capture limited to 8192 source triangles; coverage, stability, and appearance remain unverified on a device.
 - Added C wrapper and reference-pack importer tests for the shadow resource. `python3 ios/test_shader64_pack.py` passes 18 tests (including ASan/UBSan ZIP smoke); `CC=clang tests/run_linux_checks.sh` passed. `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, and `git diff --check` passed. Local `xcrun` is unavailable, so actual MSL compilation is pending Apple CI.
 - Previous Apple workflow `44800637968` completed successfully for `fa481b40c5c0107161cca4ed469d575e495fee46`; it predates this shadow-map binding and does not validate the current working tree.
+- Commit `885909b489cc747fb42623d8d147bc3c98608d36` was pushed. Apple validation workflow `44802320437` passed its full Linux regression job and Xcode 27 iOS device/simulator compile/link plus all wrapped MSL validation, including Lumen64ShadowGraph. This confirms compile/link only, not runtime GPU execution or visual correctness.
 - Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
 - Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
 - IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
@@ -53,8 +54,8 @@
 
 ## Remaining work / next
 
-1. Commit and push the `sceneShadows` contract and Lumen64ShadowGraph after review, then run Apple MSL compilation and iPhoneOS compile/link CI.
-2. Device-test material class separation, depth, reconstructed normals, Lumen64 lighting, and Lumen64ShadowGraph against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
+1. Device-test material class separation, depth, reconstructed normals, Lumen64 lighting, and Lumen64ShadowGraph against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
+2. Extend API 2 with pack-owned textures and better material geometry inputs only after defining bounded resource/attribute contracts; then add temporal history/compute if the renderer supports a safe resource lifecycle.
 3. Continue with pack-owned textures and additional material data/history only after clear bounded binding contracts. Native vertex normals, general G-buffers, arbitrary shadow cameras/passes, compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
