@@ -1571,9 +1571,19 @@ static int sm64RenderDiagnosticMode;
 
 - (void)installShaderArchiveAtURL:(NSURL *)url {
     BOOL scoped = [url startAccessingSecurityScopedResource];
+    NSNumber *fileSize = nil;
+    NSError *sizeError = nil;
+    BOOL hasFileSize = [url getResourceValue:&fileSize forKey:NSURLFileSizeKey error:&sizeError];
+    long long archiveBytes = hasFileSize ? fileSize.longLongValue : -1;
+    if (archiveBytes < 22 || (unsigned long long)archiveBytes > GFX_SHADER64_MAX_ARCHIVE_BYTES) {
+        if (scoped) [url stopAccessingSecurityScopedResource];
+        [self appendStatus:[NSString stringWithFormat:@"Shader ZIP is unreadable or exceeds 8 MiB: %@",
+            sizeError.localizedDescription ?: @"invalid file size"]];
+        return;
+    }
     NSData *archive = [NSData dataWithContentsOfURL:url];
     if (scoped) [url stopAccessingSecurityScopedResource];
-    if (!archive || archive.length > GFX_SHADER64_MAX_ARCHIVE_BYTES) {
+    if (!archive || archive.length < 22 || archive.length > GFX_SHADER64_MAX_ARCHIVE_BYTES) {
         [self appendStatus:@"Shader ZIP is unreadable or exceeds 8 MiB"];
         return;
     }

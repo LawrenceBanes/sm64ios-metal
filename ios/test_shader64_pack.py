@@ -134,6 +134,9 @@ class ShaderPackTests(unittest.TestCase):
                       "Configure %@", "gfx_metal_use_classic_shader", "UISlider", "UISwitch",
                       "UISegmentedControl", "type must be float, boolean, or select"):
             self.assertIn(token, ui)
+        importer_start = ui.index("- (void)installShaderArchiveAtURL:(NSURL *)url {")
+        importer = ui[importer_start:ui.index("\n}", importer_start) + 2]
+        self.assertLess(importer.index("getResourceValue:&fileSize"), importer.index("dataWithContentsOfURL:url"))
         for pack in ("Classic64", "Paper64", "Lumen64"):
             directory = ROOT / "ios/shaderpacks" / pack
             manifest = json.loads((directory / "manifest.json").read_text())
