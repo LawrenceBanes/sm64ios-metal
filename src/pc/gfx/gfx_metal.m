@@ -171,6 +171,7 @@ static bool metal_scene_postprocessed_before_ui;
 static bool metal_offscreen_runtime_failed;
 static void gfx_metal_restore_shader64_pack(void);
 static bool gfx_metal_shader64_is_active(void);
+static bool gfx_metal_shader64_requires_shadows(void);
 static id<MTLCommandBuffer> metal_command;
 static id<MTLRenderCommandEncoder> metal_encoder;
 static id<CAMetalDrawable> metal_drawable;
@@ -482,7 +483,9 @@ void gfx_metal_set_effects_enabled(bool enabled) {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalEffectsEnabled"];
 }
 bool gfx_metal_shadows_enabled(void) {
-    @synchronized ([NSObject class]) { return metal_effects_enabled && metal_shadows_is_enabled; }
+    bool configured;
+    @synchronized ([NSObject class]) { configured = metal_effects_enabled && metal_shadows_is_enabled; }
+    return configured || gfx_metal_shader64_requires_shadows();
 }
 void gfx_metal_set_shadows_enabled(bool enabled) {
     @synchronized ([NSObject class]) {
@@ -1535,15 +1538,25 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     if (!graph) return false;
     bool ok = scene_source != nil;
     bool requires_scene_depth = false;
+    bool requires_lighting = false;
+    bool requires_shadows = false;
     for (size_t i = 0; i < graph->count; ++i)
         if (graph->passes[i].resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
-                                                GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT))
+                                                GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                                                GFX_SHADER64_RESOURCE_SHADOW_MAP))
             requires_scene_depth = true;
+    for (size_t i = 0; i < graph->count; ++i) {
+        if (graph->passes[i].resource_flags & (GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                                                GFX_SHADER64_RESOURCE_SHADOW_MAP))
+            requires_lighting = true;
+        if (graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP)
+            requires_shadows = true;
+    }
     float inverse_projection[4][4] = {{0}};
     float inverse_view[4][4] = {{0}};
     vector_float4 sun_direction_and_intensity = {0, 1, 0, 0};
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
     if (requires_scene_depth) {
-        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
         if (!metal_depth_texture || metal_depth_samples != 1 || !capture.has_projection_matrix ||
             !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection)) {
             static uint32_t depth_unavailable_logs;
@@ -1553,10 +1566,6 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             gfx_metal_shader64_graph_release(graph);
             return false;
         }
-        bool requires_lighting = false;
-        for (size_t i = 0; i < graph->count; ++i)
-            if (graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)
-                requires_lighting = true;
         if (requires_lighting) {
             if (!capture.has_view_matrix || !gfx_postprocess_invert_matrix(capture.view_matrix, inverse_view)) {
                 static uint32_t light_unavailable_logs;
@@ -1571,6 +1580,28 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             sun_direction_and_intensity = (vector_float4){direction[0], direction[1], direction[2],
                 intensities[gfx_metal_sun_intensity() % 4u]};
         }
+    }
+    vector_float4 shadow_right_min = {0, 0, 0, 0};
+    vector_float4 shadow_up_min = {0, 0, 0, 0};
+    vector_float4 shadow_forward_min = {0, 0, 0, 0};
+    vector_float4 shadow_ranges = {1, 1, 1, 0};
+    if (requires_shadows) {
+        if (!metal_shadow_texture || !metal_shadow_transform_valid || !capture.has_view_matrix) {
+            static uint32_t shadow_unavailable_logs;
+            if (shadow_unavailable_logs++ < 8)
+                gfx_ios_diag_log("SHADER64 scene shadow unavailable this frame texture=%d transform=%d view=%d; using native composite",
+                    metal_shadow_texture != nil, metal_shadow_transform_valid, capture.has_view_matrix);
+            gfx_metal_shader64_graph_release(graph);
+            return false;
+        }
+        shadow_right_min = (vector_float4){ metal_shadow_transform.right[0], metal_shadow_transform.right[1],
+            metal_shadow_transform.right[2], metal_shadow_transform.minimum[0] };
+        shadow_up_min = (vector_float4){ metal_shadow_transform.up[0], metal_shadow_transform.up[1],
+            metal_shadow_transform.up[2], metal_shadow_transform.minimum[1] };
+        shadow_forward_min = (vector_float4){ metal_shadow_transform.forward[0], metal_shadow_transform.forward[1],
+            metal_shadow_transform.forward[2], metal_shadow_transform.minimum[2] };
+        shadow_ranges = (vector_float4){ metal_shadow_transform.range[0], metal_shadow_transform.range[1],
+            metal_shadow_transform.range[2], 0.0025f };
     }
     uint64_t target_bytes = 0;
     for (size_t i = 0; i < graph->count; ++i) if (strcmp(graph->passes[i].output, "present")) {
@@ -1611,14 +1642,24 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         [encoder setFragmentTexture:input atIndex:0];
         [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
         if (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
-                                 GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)) {
+                                 GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                                 GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
             [encoder setFragmentTexture:metal_depth_texture atIndex:1];
             [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
             [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:1];
         }
-        if (p->resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) {
+        if (p->resource_flags & (GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                                 GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
             [encoder setFragmentBytes:inverse_view length:sizeof(inverse_view) atIndex:2];
             [encoder setFragmentBytes:&sun_direction_and_intensity length:sizeof(sun_direction_and_intensity) atIndex:3];
+        }
+        if (p->resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) {
+            [encoder setFragmentTexture:metal_shadow_texture atIndex:2];
+            [encoder setFragmentSamplerState:metal_present_sampler atIndex:2];
+            [encoder setFragmentBytes:&shadow_right_min length:sizeof(shadow_right_min) atIndex:4];
+            [encoder setFragmentBytes:&shadow_up_min length:sizeof(shadow_up_min) atIndex:5];
+            [encoder setFragmentBytes:&shadow_forward_min length:sizeof(shadow_forward_min) atIndex:6];
+            [encoder setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:7];
         }
         [encoder setFragmentBytes:&parameters length:sizeof(parameters) atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1678,7 +1719,10 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     }
     for (size_t i = 0; i < pass_count; ++i) {
         char validation[192] = {0};
-        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
+        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
+            gfx_shader64_validate_shadow_pass_source(passes[i].source, passes[i].source_size,
+                                                     validation, sizeof(validation)) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
             gfx_shader64_validate_lit_pass_source(passes[i].source, passes[i].source_size,
                                                   validation, sizeof(validation)) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
@@ -1692,7 +1736,10 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         }
         size_t capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 2048u;
         char *wrapper = malloc(capacity);
-        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
+        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
+            gfx_shader64_build_shadow_pass_wrapper(passes[i].source, passes[i].source_size,
+                                                   wrapper, capacity) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
             gfx_shader64_build_lit_pass_wrapper(passes[i].source, passes[i].source_size,
                                                 wrapper, capacity) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
@@ -1762,7 +1809,20 @@ bool gfx_metal_shader64_needs_scene_depth(void) {
     @synchronized ([NSObject class]) {
         if (metal_shader64_graph) for (size_t i = 0; i < metal_shader64_graph->count; ++i)
             if (metal_shader64_graph->passes[i].resource_flags &
-                (GFX_SHADER64_RESOURCE_SCENE_DEPTH | GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)) {
+                (GFX_SHADER64_RESOURCE_SCENE_DEPTH | GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                 GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
+                needed = true;
+                break;
+            }
+    }
+    return needed;
+}
+
+static bool gfx_metal_shader64_requires_shadows(void) {
+    bool needed = false;
+    @synchronized ([NSObject class]) {
+        if (metal_shader64_graph) for (size_t i = 0; i < metal_shader64_graph->count; ++i)
+            if (metal_shader64_graph->passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) {
                 needed = true;
                 break;
             }
@@ -1909,7 +1969,9 @@ static void gfx_metal_restore_shader64_pack(void) {
                 (definition[@"sceneDepth"] &&
                  ![definition[@"sceneDepth"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"sceneLighting"] &&
-                 ![definition[@"sceneLighting"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
+                 ![definition[@"sceneLighting"] isKindOfClass:[NSNumber class]]) ||
+                (definition[@"sceneShadows"] &&
+                 ![definition[@"sceneShadows"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
             NSString *relative = definition[@"source"];
             if (![relative isKindOfClass:[NSString class]] || ![relative hasPrefix:@"shaders/"] ||
                 [relative containsString:@".."] || [relative.pathComponents count] != 2 || ![relative hasSuffix:@".metal"]) { valid = NO; break; }
@@ -1923,7 +1985,8 @@ static void gfx_metal_restore_shader64_pack(void) {
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
                 source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u,
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
-                ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) };
+                ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
+                ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) };
         }
         NSDictionary *material_definition = manifest[@"materialShader"];
         if (valid && material_definition &&

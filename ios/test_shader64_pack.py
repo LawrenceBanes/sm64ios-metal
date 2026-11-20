@@ -63,6 +63,12 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_build_lit_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_lit_pass_wrapper.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_shadow_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_shadow_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_shadow_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_shadow_pass_wrapper.restype = ctypes.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -195,6 +201,27 @@ class ShaderPackTests(unittest.TestCase):
             source, len(source), wrapper, len(wrapper)))
         self.assertIn(b"sunDirectionAndIntensity [[buffer(3)]]", wrapper.value)
 
+    def test_directional_shadow_pass_contract_and_wrapper(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_pass_shadowed(float4 color, float2 uv, texture2d<float> image, '
+                  b'sampler imageSampler, depth2d<float> sceneDepth, sampler depthSampler, '
+                  b'depth2d<float> shadowMap, sampler shadowSampler, '
+                  b'constant float4x4 &inverseProjection, constant float4x4 &inverseView, '
+                  b'float4 sunDirectionAndIntensity, float4 shadowRightMin, float4 shadowUpMin, '
+                  b'float4 shadowForwardMin, float4 shadowRanges, constant float4 &params) { '
+                  b'return color * shadowMap.sample(shadowSampler, uv); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_shadow_pass_source(
+            source, len(source), error, len(error)), error.value)
+        wrapper = ctypes.create_string_buffer(len(source) + 2048)
+        self.assertTrue(self.api.gfx_shader64_build_shadow_pass_wrapper(
+            source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"depth2d<float> shadowMap [[texture(2)]]", wrapper.value)
+        self.assertIn(b"shadowRanges [[buffer(7)]]", wrapper.value)
+        invalid = source.replace(b"shadowMap", b"fakeMap")
+        self.assertFalse(self.api.gfx_shader64_validate_shadow_pass_source(
+            invalid, len(invalid), error, len(error)))
+
     def test_api2_graph_topology_and_bounds(self):
         passes = (self.GraphPass * 2)(
             self.GraphPass(b"grade", b"sceneColor", b"graded", 0.5, 1),
@@ -224,8 +251,12 @@ class ShaderPackTests(unittest.TestCase):
             self.GraphPass(b"lit", b"sceneColor", b"present", 1.0, 1, 2))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             lighting_resource, 1, 1920, 1080, order, error, len(error)), error.value)
+        shadow_resource = (self.GraphPass * 1)(
+            self.GraphPass(b"shadowed", b"sceneColor", b"present", 1.0, 1, 4))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            shadow_resource, 1, 1920, 1080, order, error, len(error)), error.value)
         invalid_resource = (self.GraphPass * 1)(
-            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 4))
+            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 8))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resource, 1, 1920, 1080, order, error, len(error)))
         oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
@@ -274,7 +305,8 @@ class ShaderPackTests(unittest.TestCase):
 
     def test_production_importer_accepts_every_reference_pack(self):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
-                         "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph")
+                         "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
+                         "Lumen64ShadowGraph")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -292,13 +324,16 @@ class ShaderPackTests(unittest.TestCase):
                 else:
                     depth_pass = bool(definition.get("sceneDepth"))
                     lighting_pass = bool(definition.get("sceneLighting"))
-                    validator = (self.api.gfx_shader64_validate_lit_pass_source if lighting_pass else
+                    shadow_pass = bool(definition.get("sceneShadows"))
+                    validator = (self.api.gfx_shader64_validate_shadow_pass_source if shadow_pass else
+                                 self.api.gfx_shader64_validate_lit_pass_source if lighting_pass else
                                  self.api.gfx_shader64_validate_depth_pass_source if depth_pass else
                                  self.api.gfx_shader64_validate_pass_source)
                     self.assertTrue(validator(source, len(source), error, len(error)),
                                     f"{pack_id}: {error.value!r}")
-                    wrapper = ctypes.create_string_buffer(len(source) + 1024)
-                    builder = (self.api.gfx_shader64_build_lit_pass_wrapper if lighting_pass else
+                    wrapper = ctypes.create_string_buffer(len(source) + 2048)
+                    builder = (self.api.gfx_shader64_build_shadow_pass_wrapper if shadow_pass else
+                               self.api.gfx_shader64_build_lit_pass_wrapper if lighting_pass else
                                self.api.gfx_shader64_build_depth_pass_wrapper if depth_pass else
                                self.api.gfx_shader64_build_pass_wrapper)
                     self.assertTrue(builder(source, len(source), wrapper, len(wrapper)))
@@ -311,7 +346,8 @@ class ShaderPackTests(unittest.TestCase):
                     self.GraphPass(p["id"].encode(), p["input"].encode(), p["output"].encode(),
                                    ctypes.c_float(p["scale"]).value, 1,
                                    (1 if p.get("sceneDepth") else 0) |
-                                   (2 if p.get("sceneLighting") else 0)) for p in definitions])
+                                   (2 if p.get("sceneLighting") else 0) |
+                                   (4 if p.get("sceneShadows") else 0)) for p in definitions])
                 order = (ctypes.c_ubyte * 4)()
                 self.assertTrue(self.api.gfx_shader64_validate_graph(
                     graph_passes, len(definitions), 1920, 1080, order, error, len(error)),
@@ -349,11 +385,13 @@ class ShaderPackTests(unittest.TestCase):
                       "metal_shader64_pipeline", "shader64_parameters", "gfx_metal_use_classic_shader",
                       "gfx_metal_restore_shader64_pack", "SM64Shader64ActivePack",
                       "gfx_metal_load_shader64_graph_with_material", "gfx_metal_build_shader_with_material",
-                      "gfx_metal_shader64_needs_scene_depth"):
+                      "gfx_metal_shader64_needs_scene_depth", "gfx_metal_shader64_requires_shadows",
+                      "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT", pack_header)
+        self.assertIn("GFX_SHADER64_RESOURCE_SHADOW_MAP", pack_header)
         self.assertIn("depth2d<float>", (ROOT / "src/pc/gfx/gfx_shader64_pack.c").read_text())
         self.assertIn("shader64_material(color", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",

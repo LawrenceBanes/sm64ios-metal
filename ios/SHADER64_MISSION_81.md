@@ -41,6 +41,8 @@ Reference diagnostic packs now use only these public resources: `DepthDebug64` s
 
 Passes may also request `"sceneLighting": true`. This implies scene depth and supplies the current inverse projection, inverse view, and `sunDirectionAndIntensity` (world-space direction in xyz, configured engine intensity in w). The pass must implement `shader64_pass_lit`; `Lumen64Graph` demonstrates per-pixel directional diffuse shading from a view normal reconstructed from depth. Its ambient floor is a pack parameter. This is a depth-derived screen-space lighting technique: it has silhouette/edge artifacts, no material-specific roughness or world position, and no custom shadow-map input. It is separate from the built-in engine shadow-map receiver and does not claim global illumination.
 
+Passes may request `"sceneShadows": true` to consume the native directional shadow map. This implies scene depth and lighting and uses the `shader64_pass_shadowed` contract, with scene depth at texture 1, shadow depth at texture 2, inverse projection/view and sun inputs at buffers 1–3, and the fitted world-to-shadow basis/ranges at buffers 4–7. `Lumen64ShadowGraph` reconstructs position and normal from real scene depth and performs a 3×3 PCF comparison against the renderer's shadow map. That map uses the existing bounded scene-capture geometry path (up to 8192 source triangles). When the map, world-space caster set, or valid camera matrices are unavailable, that graph falls back to the built-in final composite for the frame. This is one existing native shadow map, not a general user-defined shadow-camera/pass system; coverage, filtering quality, and appearance still require physical-device validation.
+
 ```json
 {
   "formatVersion": 2,
@@ -80,8 +82,8 @@ Inspected local archive: `Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip`, SHA-256 `
 | Composite/final image passes | API 2 fullscreen DAG; one image in/out per pass | Basic chained passes executable; no multi-attachment MRT |
 | Final camera-gridline option | API 2 screen-space pass | Included as licensed adaptation pack; GUI hide flag is represented by a pack toggle |
 | Engine scene depth and camera projection | Optional `sceneDepth` input on API 2 fullscreen nodes plus inverse projection | Implemented; DepthDebug64 shades raw values and NormalDebug64 demonstrates depth-derived view-space normals. No native normal attachment or MSAA depth path |
-| Configured directional sun and camera transforms | Optional `sceneLighting` resource on API 2 fullscreen nodes | Implemented for Lumen64Graph; depth-derived screen-space diffuse only, no external shadow map |
-| Shadow map and shadow color textures | Needs declared depth/comparison textures and shadow pass nodes | Not available to user graphs; built-in engine shadow pass remains private |
+| Configured directional sun and camera transforms | Optional `sceneLighting` resource on API 2 fullscreen nodes | Implemented for Lumen64Graph; depth-derived screen-space diffuse with edge artifacts |
+| Native directional shadow depth and fitted world-to-shadow basis | Optional `sceneShadows` resource on API 2 fullscreen nodes | Implemented by reusing the bounded native map; Lumen64ShadowGraph includes 3×3 PCF; one map, up to 8192 captured source triangles, device appearance unverified |
 | Material categories and post-combiner shading | Optional API 2 material hook with world/object/character category | Implemented; MaterialDebug64 exposes categories as actual surface colors. No normals, world position, or full albedo/roughness G-buffer |
 | Setup compute and voxel lighting | Needs compute nodes, storage buffers, atomic/resource contracts | Not available |
 | Minecraft time/weather/biome/entity/player uniforms | Needs generic world state API and per-game adapters | Not available; no Minecraft concepts in core API |

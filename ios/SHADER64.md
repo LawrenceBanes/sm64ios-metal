@@ -83,6 +83,8 @@ Reference packs include **DepthDebug64** (raw depth), **NormalDebug64** (screen-
 
 An API 2 pass can request `"sceneLighting":true` for scene depth, inverse projection/view, and the configured world-space sun direction/intensity. `Lumen64Graph` demonstrates depth-derived directional diffuse lighting. It is a screen-space approximation and does not include custom shadow-map sampling, material-specific BRDFs, or GI.
 
+An API 2 pass may instead request `"sceneShadows":true` to receive the engine's existing bounded directional shadow map plus scene depth, camera transforms, fitted shadow basis, and sun data. See `Lumen64ShadowGraph` and the full binding contract in [`SHADER64_MISSION_81.md`](SHADER64_MISSION_81.md). It uses reconstructed screen-space normals and a single native shadow map; geometry coverage is bounded, and physical-device appearance remains unverified.
+
 ## Reference packs
 
 - **Classic64** is the built-in original renderer and recovery path.

@@ -1,0 +1,16 @@
+{
+  "formatVersion": 2,
+  "id": "Lumen64ShadowGraph",
+  "name": "Lumen64 Directional Shadows",
+  "author": "SHITBOX LABZ INC.",
+  "version": "2.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "ambient", "label": "Ambient floor", "type": "float", "default": 0.3, "min": 0.05, "max": 1 },
+    { "name": "direct", "label": "Sun contribution", "type": "float", "default": 0.7, "min": 0, "max": 1 }
+  ],
+  "passes": [
+    { "id": "sun_shadows", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/shadows.metal", "scale": 1.0, "sceneShadows": true }
+  ]
+}

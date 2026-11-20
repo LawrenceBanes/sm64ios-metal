@@ -4,11 +4,11 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest committed code checkpoint: `647e0842` (depth/material diagnostics); optional directional-light graph resource and Lumen64Graph are in the working tree for the next validation cycle.
+- Latest committed code checkpoint: `fa481b40` (API 2 directional-light input and Lumen64Graph); current working tree adds an opt-in API 2 binding to the existing native shadow map.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
-## Implemented in working tree
+## Implemented in current branch
 
 - Bounded API 2 graph validator and common per-pass Metal wrapper.
 - iOS runtime pipeline preparation for each fullscreen pass, transactional graph activation, intermediate RGBA16Float targets, command-buffer completion lifetime, runtime target memory budget, and API 1 switching/Classic64 cleanup.
@@ -42,6 +42,9 @@
 - Added `NormalDebug64`, which reconstructs a view-space normal approximation from actual depth-neighbor samples, and `MaterialDebug64`, which colors actual world/object/character draws through the user-facing material hook. Apple validation now compiles all reference material and scene-depth sources rather than just GraphDemo's examples.
 - Apple validation workflow `44799573736` passed Linux and Xcode 27 MSL/backend validation for `647e08427c82104d8766b35ae2446372816923b2`, including NormalDebug64 depth reconstruction and MaterialDebug64 classification MSL. No GPU run or device pixels were observed.
 - Added an opt-in `sceneLighting` graph resource exposing the configured directional sun and inverse camera transforms alongside scene depth. Lumen64Graph demonstrates directional diffuse shading using a normal reconstructed from depth; external shadow-map access remains unavailable.
+- Added API 2 `sceneShadows` resource contract and a Lumen64ShadowGraph reference pack. It requests the existing bounded native directional shadow-map generator, binds its depth texture and fitted world-to-shadow basis to a graph pass, and applies 3x3 PCF to depth-reconstructed world positions. The engine falls back to its native composite when the map or camera capture is unavailable. This is one map, with the native capture limited to 8192 source triangles; coverage, stability, and appearance remain unverified on a device.
+- Added C wrapper and reference-pack importer tests for the shadow resource. `python3 ios/test_shader64_pack.py` passes 18 tests (including ASan/UBSan ZIP smoke); `CC=clang tests/run_linux_checks.sh` passed. `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, and `git diff --check` passed. Local `xcrun` is unavailable, so actual MSL compilation is pending Apple CI.
+- Previous Apple workflow `44800637968` completed successfully for `fa481b40c5c0107161cca4ed469d575e495fee46`; it predates this shadow-map binding and does not validate the current working tree.
 - Full IPA workflow `44787935139` passed Linux checks, Xcode 27 Metal validation, full iPhoneOS arm64 app build, IPA validation, and private release upload. Source SHA: `4442d743551c6f37169a04ddea01ff0a82121402`.
 - Private draft release: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-17f166d22fdc8261aac8
 - IPA asset: `sm64ios-connected-world-arm64-unsigned.ipa`, 9,385,655 bytes, SHA-256 `e6c6731ae20708f24423fe8babf360acbefd07dc5ab3ee71f7e9959adf017e25`. Download: https://github.com/LawrenceBanes/sm64ios-private-builds/releases/download/untagged-17f166d22fdc8261aac8/sm64ios-connected-world-arm64-unsigned.ipa
@@ -50,8 +53,8 @@
 
 ## Remaining work / next
 
-1. Run full Linux and Apple validation for the new `sceneLighting` contract and Lumen64Graph; fix shader or iOS compile failures and push a verified checkpoint.
-2. Install a matching IPA on a test iPhone; import GraphDemo, DepthDebug64, NormalDebug64, MaterialDebug64, and Lumen64Graph. Visually verify class separation, depth, reconstructed normals, and lighting. No device output is confirmed yet.
-3. Next reusable engine resources: expose built-in shadow maps and transforms, then textures/history/compute only after bounded contracts and renderer lifetimes are defined. Native vertex normals, G-buffers, external shadow-map sampling, external textures, and Bliss Minecraft uniforms remain unsupported.
+1. Commit and push the `sceneShadows` contract and Lumen64ShadowGraph after review, then run Apple MSL compilation and iPhoneOS compile/link CI.
+2. Device-test material class separation, depth, reconstructed normals, Lumen64 lighting, and Lumen64ShadowGraph against SM64 and WSC geometry. No GPU rendering or physical-device output is confirmed yet.
+3. Continue with pack-owned textures and additional material data/history only after clear bounded binding contracts. Native vertex normals, general G-buffers, arbitrary shadow cameras/passes, compute nodes, full geometry-stage overrides, and Bliss Minecraft uniforms remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
