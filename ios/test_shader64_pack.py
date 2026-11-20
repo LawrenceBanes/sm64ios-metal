@@ -597,7 +597,7 @@ class ShaderPackTests(unittest.TestCase):
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64")
-        reference_ids += ("DepthNormalsCompute64",)
+        reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -722,6 +722,8 @@ class ShaderPackTests(unittest.TestCase):
                       "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows",
                       "gfx_metal_shader64_load_pack_textures", "graph->pack_texture_count",
                       "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures",
+                      "compute_scene_normals", "metal_scene_normals_texture atIndex:7",
+                      "argument.index == 7u) scene_normals_bound = YES",
                       "material_pack_textures", "material_pack_texture_count"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()

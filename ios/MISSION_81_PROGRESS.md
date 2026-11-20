@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `3bb599b1fa79392cca4fc9a68358cb2b0f8ba8d3` (compute scene normals and imported compute-node dispatch fix; Apple workflow `44821966525` passed). Physical GPU output remains unverified.
+- Latest pushed checkpoint: `a68d099dfe608ad0601b37720a96d77db846517d` (compute scene normals and imported compute-node dispatch fix; Apple workflow `44821966525` passed). Current uncommitted slice adds a reference pass combining pack textures, scene depth, and scene normals; focused host importer tests pass, Apple CI pending.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -123,5 +123,11 @@
 - Fixed a production iOS pack activation defect discovered during the trace: `activateShaderPack` had hard-coded every API 2 pass as fullscreen, so imported compute passes could not reach their compute pipeline. The manifest `type` now maps to the corresponding bounded graph node type, with a regression assertion.
 - `python3 ios/test_shader64_pack.py`: passed, 29 tests including the new combined-resource contract, reference-pack import, and ASan/UBSan ZIP smoke. `CC=clang tests/run_linux_checks.sh` passed. Metal codegen, Xcode wiring, shell syntax, and diff checks passed before the final documentation refresh; rerun diff checks before commit.
 - Apple workflow `44821966525` passed Linux regression and Xcode 27 device/simulator Metal backend compile/link plus MSL compile/link for `DepthNormalsCompute64`. This is compile-time validation only: no GPU kernel execution, visual test, or device rendering. No final `main` merge.
+
+## Current working increment — combined compute scene data and pack texture
+
+- Added `SceneDataCompute64`, an API 2 reference graph pass that consumes its input image, one imported PNG (from the bounded four-texture slots), single-sample scene depth/inverse projection, and the engine's depth-derived view-space normals in the same kernel. Resource declarations use independent fixed Metal binding namespaces and are checked by the production source validator and pipeline reflection.
+- Added the reference pack to the production-importer matrix and Apple MSL compile/link script. The checker texture is the existing locally authored fixture. Linux MSL syntax is not available; waiting for Apple validation.
+- Focused Shader64 tests pass (29), including ASan/UBSan ZIP smoke and the full reference-pack import matrix. `CC=clang tests/run_linux_checks.sh`, Metal codegen, project wiring, shell syntax, and `git diff --check` all pass. No GPU execution or device output is claimed.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
