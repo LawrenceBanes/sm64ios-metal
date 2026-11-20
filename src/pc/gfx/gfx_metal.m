@@ -14,6 +14,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <limits.h>
 #include <string.h>
 #include <math.h>
 #include "gfx_metal.h"
@@ -1450,8 +1451,12 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     bool ok = scene_source != nil;
     uint64_t target_bytes = 0;
     for (size_t i = 0; i < graph->count; ++i) if (strcmp(graph->passes[i].output, "present")) {
-        NSUInteger w = MAX(1u, (NSUInteger)floor((double)scene_source.width * graph->passes[i].scale));
-        NSUInteger h = MAX(1u, (NSUInteger)floor((double)scene_source.height * graph->passes[i].scale));
+        unsigned int w = 0, h = 0;
+        if (scene_source.width > UINT_MAX || scene_source.height > UINT_MAX ||
+            !gfx_shader64_graph_target_size((unsigned int)scene_source.width,
+                (unsigned int)scene_source.height, graph->passes[i].scale, &w, &h)) {
+            ok = false; break;
+        }
         uint64_t bytes = (uint64_t)w * h * 8u;
         if (bytes > GFX_SHADER64_MAX_GRAPH_TARGET_BYTES ||
             target_bytes > GFX_SHADER64_MAX_GRAPH_TARGET_BYTES - bytes) { ok = false; break; }
@@ -1463,8 +1468,14 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         if (!input) for (size_t j = 0; j < graph->count; ++j)
             if (!strcmp(graph->passes[j].output, p->input)) { input = graph->passes[j].target; break; }
         BOOL final = !strcmp(p->output, "present");
-        NSUInteger width = final ? drawable.texture.width : MAX(1u, (NSUInteger)floor(scene_source.width * p->scale));
-        NSUInteger height = final ? drawable.texture.height : MAX(1u, (NSUInteger)floor(scene_source.height * p->scale));
+        unsigned int target_width = 0, target_height = 0;
+        if (!final && (scene_source.width > UINT_MAX || scene_source.height > UINT_MAX ||
+            !gfx_shader64_graph_target_size((unsigned int)scene_source.width,
+                (unsigned int)scene_source.height, p->scale, &target_width, &target_height))) {
+            ok = false; break;
+        }
+        NSUInteger width = final ? drawable.texture.width : target_width;
+        NSUInteger height = final ? drawable.texture.height : target_height;
         id<MTLTexture> output = final ? drawable.texture : gfx_metal_shader64_target(p, width, height);
         if (!input || !output || !p->pipeline) { ok = false; break; }
         MTLRenderPassDescriptor *descriptor = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -1557,10 +1568,10 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
         [metal_shader64_library release]; metal_shader64_library = nil;
         snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
         metal_shader64_parameters = (vector_float4){
-            parameters && isfinite(parameters[0]) ? fmaxf(-8, fminf(8, parameters[0])) : 1,
-            parameters && isfinite(parameters[1]) ? fmaxf(-8, fminf(8, parameters[1])) : 0,
-            parameters && isfinite(parameters[2]) ? fmaxf(-8, fminf(8, parameters[2])) : 0,
-            parameters && isfinite(parameters[3]) ? fmaxf(-8, fminf(8, parameters[3])) : 0};
+            parameters && isfinite(parameters[0]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[0])) : 1,
+            parameters && isfinite(parameters[1]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[1])) : 0,
+            parameters && isfinite(parameters[2]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[2])) : 0,
+            parameters && isfinite(parameters[3]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[3])) : 0};
         metal_offscreen_runtime_failed = false;
     }
     gfx_metal_shader64_graph_release(old);
@@ -1601,10 +1612,10 @@ static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibra
         metal_shader64_library = library;
         snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
         metal_shader64_parameters = (vector_float4){
-            parameters && isfinite(parameters[0]) ? fmaxf(-8.0f, fminf(8.0f, parameters[0])) : 1.0f,
-            parameters && isfinite(parameters[1]) ? fmaxf(-8.0f, fminf(8.0f, parameters[1])) : 0.0f,
-            parameters && isfinite(parameters[2]) ? fmaxf(-8.0f, fminf(8.0f, parameters[2])) : 0.0f,
-            parameters && isfinite(parameters[3]) ? fmaxf(-8.0f, fminf(8.0f, parameters[3])) : 0.0f
+            parameters && isfinite(parameters[0]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[0])) : 1.0f,
+            parameters && isfinite(parameters[1]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[1])) : 0.0f,
+            parameters && isfinite(parameters[2]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[2])) : 0.0f,
+            parameters && isfinite(parameters[3]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[3])) : 0.0f
         };
         metal_offscreen_runtime_failed = false;
     }
@@ -1785,7 +1796,7 @@ static bool gfx_metal_shader64_is_active(void) {
 void gfx_metal_set_shader64_parameters(const float parameters[4]) {
     if (!parameters) return;
     vector_float4 value = {0, 0, 0, 0};
-    for (NSUInteger i = 0; i < 4; ++i) value[i] = isfinite(parameters[i]) ? fmaxf(-8.0f, fminf(8.0f, parameters[i])) : 0.0f;
+    for (NSUInteger i = 0; i < 4; ++i) value[i] = isfinite(parameters[i]) ? fmaxf(-GFX_SHADER64_PARAMETER_ABS_MAX, fminf(GFX_SHADER64_PARAMETER_ABS_MAX, parameters[i])) : 0.0f;
     @synchronized ([NSObject class]) { metal_shader64_parameters = value; }
     [[NSUserDefaults standardUserDefaults] setObject:@[@(value.x), @(value.y), @(value.z), @(value.w)]
         forKey:@"SM64Shader64Parameters"];

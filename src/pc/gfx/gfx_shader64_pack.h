@@ -10,6 +10,7 @@
 #define GFX_SHADER64_MAX_GRAPH_PASSES 4u
 #define GFX_SHADER64_MAX_GRAPH_TARGETS 3u
 #define GFX_SHADER64_MAX_GRAPH_TARGET_BYTES (32u * 1024u * 1024u)
+#define GFX_SHADER64_PARAMETER_ABS_MAX 16.0f
 
 /* API v2 currently exposes bounded fullscreen raster nodes only. Geometry,
  * compute and external resources are intentionally rejected until the engine
@@ -35,6 +36,10 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                 size_t pass_count, unsigned int width,
                                 unsigned int height, unsigned char order[ GFX_SHADER64_MAX_GRAPH_PASSES ],
                                 char *error, size_t error_size);
+/* Uses the exact floor-to-pixel rule used by the Metal runtime. */
+int gfx_shader64_graph_target_size(unsigned int width, unsigned int height,
+                                   float resolution_scale, unsigned int *target_width,
+                                   unsigned int *target_height);
 int gfx_shader64_validate_pass_source(const char *source, size_t size,
                                       char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,

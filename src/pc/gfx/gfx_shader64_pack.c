@@ -269,6 +269,23 @@ static int graph_name(const char *s) {
     return 1;
 }
 
+int gfx_shader64_graph_target_size(unsigned int width, unsigned int height,
+                                   float resolution_scale, unsigned int *target_width,
+                                   unsigned int *target_height) {
+    double scaled_width, scaled_height;
+    if (!width || !height || !target_width || !target_height ||
+        !isfinite(resolution_scale) || resolution_scale < 0.25f || resolution_scale > 1.0f)
+        return 0;
+    /* Convert before multiplication. This keeps the host budget calculation and
+     * Metal target allocation deterministic even when dimensions exceed the
+     * exact-integer range of float. */
+    scaled_width = floor((double)width * (double)resolution_scale);
+    scaled_height = floor((double)height * (double)resolution_scale);
+    *target_width = scaled_width < 1.0 ? 1u : (unsigned int)scaled_width;
+    *target_height = scaled_height < 1.0 ? 1u : (unsigned int)scaled_height;
+    return 1;
+}
+
 int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                 size_t count, unsigned int width,
                                 unsigned int height, unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES],
@@ -291,9 +308,6 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
         if (!strcmp(p->output, "present") && p->resolution_scale != 1.0f) {
             err(error, error_size, "present output must use full resolution"); return 0;
         }
-        if (!strcmp(p->output, "present") && p->resolution_scale != 1.0f) {
-            err(error, error_size, "present output must use full resolution"); return 0;
-        }
         for (size_t j = 0; j < i; ++j)
             if (!strcmp(p->id, passes[j].id) || !strcmp(p->output, passes[j].output)) {
                 err(error, error_size, "duplicate pass or output resource"); return 0;
@@ -304,11 +318,17 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
         if (!strcmp(p->output, "present")) ++present_count;
         else {
             ++targets;
-            double scaled = (double)width * height * p->resolution_scale * p->resolution_scale * 8.0;
-            if (scaled > (double)GFX_SHADER64_MAX_GRAPH_TARGET_BYTES || bytes > UINT64_MAX - (uint64_t)scaled) {
+            unsigned int target_width, target_height;
+            if (!gfx_shader64_graph_target_size(width, height, p->resolution_scale,
+                                                &target_width, &target_height)) {
+                err(error, error_size, "render graph target dimensions are invalid"); return 0;
+            }
+            uint64_t target_size = (uint64_t)target_width * target_height * 8u;
+            if (target_size > GFX_SHADER64_MAX_GRAPH_TARGET_BYTES ||
+                bytes > UINT64_MAX - target_size) {
                 err(error, error_size, "render graph target budget exceeded"); return 0;
             }
-            bytes += (uint64_t)scaled;
+            bytes += target_size;
         }
     }
     if (targets > GFX_SHADER64_MAX_GRAPH_TARGETS || present_count != 1u ||

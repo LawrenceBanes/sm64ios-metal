@@ -1529,9 +1529,10 @@ static int sm64RenderDiagnosticMode;
             NSNumber *minimum = definition[@"min"], *maximum = definition[@"max"];
             if (![minimum isKindOfClass:[NSNumber class]] || ![maximum isKindOfClass:[NSNumber class]] ||
                 !isfinite(minimum.doubleValue) || !isfinite(maximum.doubleValue) ||
-                minimum.doubleValue < -8.0 || maximum.doubleValue > 8.0 ||
+                minimum.doubleValue < -GFX_SHADER64_PARAMETER_ABS_MAX ||
+                maximum.doubleValue > GFX_SHADER64_PARAMETER_ABS_MAX ||
                 minimum.doubleValue > maximum.doubleValue || v < minimum.doubleValue || v > maximum.doubleValue) {
-                validation = @"Float parameter bounds must be finite, within -8…8, and contain the default"; break;
+                validation = @"Float parameter bounds must be finite, within -16…16, and contain the default"; break;
             }
             if (savedForPack.count == configured.count && [savedForPack[i] isKindOfClass:[NSNumber class]] && isfinite([savedForPack[i] doubleValue]))
                 v = MIN(maximum.doubleValue, MAX(minimum.doubleValue, [savedForPack[i] doubleValue]));

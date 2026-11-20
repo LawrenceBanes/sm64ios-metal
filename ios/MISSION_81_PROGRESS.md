@@ -18,10 +18,14 @@
 - Apple Metal validation now compiles wrapped API 2 reference pass sources as well as the preserved API 1 packs.
 - Added host checks for graph ordering, cycles, feedback, target limits, wrappers, pack import, and the API 2 examples.
 - Architecture/resource contract and local Bliss archive compatibility map in `SHADER64_MISSION_81.md`.
+- Fixed the GraphDemo `levels` range mismatch: the pack declares 2–16, while the runtime previously rejected/clamped values above 8. Float shader parameters now consistently allow a bounded ±16 across validation, persisted values, and Metal uniforms.
+- Unified API 2 intermediate target sizing between host budget validation and Metal allocation using double-precision multiplication followed by floor-to-pixel sizing. A regression reproduces a 145-pixel dimension / `0x3ef3a431` scale rounding up to 69 under integer-to-float multiplication, where the encoded float's exact product is below 69 and must allocate 68.
+- Production ZIP-importer coverage now packages and imports every checked-in reference pack (Classic64, Paper64, Lumen64, GraphDemo, BlissGridlines), verifies extracted source payloads, validates API signatures/graph structure, and checks declared float parameter bounds.
 
 ## Tests so far
 
 - `python3 ios/test_shader64_pack.py`: passed after correcting the oversized-target fixture to exceed 32 MiB at 2048x1080. Includes ZIP smoke tests under ASan/UBSan.
+- `python3 ios/test_shader64_pack.py`: passed, 14 tests, including the float rounding boundary, the full reference-pack production-importer matrix, and ZIP smoke tests under ASan/UBSan.
 - `tests/run_linux_checks.sh`: passed (complete suite, exit 0), including API 2 source wrapper and archive tests. Existing platform/action compiler warnings and fixture-invalid-scene diagnostics remain in suite output.
 - `git diff --check`: passed at the previous checkpoint; rerun after remaining edits.
 - Apple validation workflow `44787616391` passed both Linux and Xcode 27 iOS device/simulator compile/link jobs, including UIKit integration and wrapped API 2 GraphDemo/Bliss Metal sources. No GPU or iPhone runtime was executed.
