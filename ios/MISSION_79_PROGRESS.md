@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `9ebfd82e23f20590145b8e6b92a65f1acbab099a`.
+- Current source commit: `3303360fa275b3b9d3726be51fa9a9c81a96e8e4`, with SSAO quality controls in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -54,6 +54,11 @@
 - Added four persisted fog profiles that alter exponential density, start distance, and fog tint; profile cycling and reset are wired into the Graphics panel.
 - Focused source/shader checks, postprocess ASan/UBSan, and full Linux regression pass. Apple SDK/MSL validation passed in [run 44697954395](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44697954395). Fog profile appearance and scale tuning remain device-unverified.
 
+### M79-B — SSAO quality controls (implementation increment)
+
+- Added persisted Low / Standard / High AO profiles. They vary sample count (4/8/8), sample spacing, bias, intensity, and view-space radius; a developer control exposes the selection and reset returns to Standard.
+- Source checks and shader-source generation checks pass; the full Linux suite passed locally. The latest full-game IPA workflow [44698163366](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698163366) is building its earlier source checkpoint `3303360f`; Apple validation for AO controls is pending.
+
 ### Build candidate status
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
@@ -77,4 +82,4 @@
 
 ## Next task
 
-Build a current private IPA with grading and atmosphere controls, then continue with AO controls and HUD isolation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Finish Apple validation for the AO profiles, build a current private IPA containing them, then continue with AO/HUD separation, real directional shadow mapping, improved sky/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.

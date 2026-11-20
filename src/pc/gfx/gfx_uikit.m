@@ -68,6 +68,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *bloomButton;
 @property(nonatomic, strong) UIButton *gradeButton;
 @property(nonatomic, strong) UIButton *fogProfileButton;
+@property(nonatomic, strong) UIButton *aoQualityButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -491,7 +492,7 @@ static int sm64RenderDiagnosticMode;
         top + panelHeight + 8.0, toastWidth, 50.0);
     ((SM64DiagnosticsPassthroughView *)self.view).hitRect = (self.probeView || self.graphicsSettingsVisible) ? self.view.bounds : CGRectInset(frame, -2, -2);
     CGFloat settingsWidth = MIN(520.0, MAX(320.0, self.view.bounds.size.width - 24.0));
-    CGFloat settingsHeight = MIN(400.0, MAX(390.0, self.view.bounds.size.height - 20.0));
+    CGFloat settingsHeight = MIN(440.0, MAX(418.0, self.view.bounds.size.height - 12.0));
     self.graphicsPanel.frame = CGRectMake((self.view.bounds.size.width - settingsWidth) * 0.5,
         (self.view.bounds.size.height - settingsHeight) * 0.5, settingsWidth, settingsHeight);
     if (self.collapsed) {
@@ -567,18 +568,21 @@ static int sm64RenderDiagnosticMode;
     self.fogProfileButton = [self buttonWithTitle:@"Fog: Standard" action:@selector(cycleFogProfile)];
     self.fogProfileButton.frame = CGRectMake(294, 278, 180, 30);
     [self.graphicsPanel addSubview:self.fogProfileButton];
+    self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(cycleAOQuality)];
+    self.aoQualityButton.frame = CGRectMake(14, 312, 172, 30);
+    [self.graphicsPanel addSubview:self.aoQualityButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:8.0 weight:UIFontWeightRegular];
     self.performanceLabel.numberOfLines = 5;
-    self.performanceLabel.frame = CGRectMake(14, 310, 492, 48);
+    self.performanceLabel.frame = CGRectMake(14, 346, 492, 36);
     self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.graphicsPanel addSubview:self.performanceLabel];
 
     UIButton *reset = [self buttonWithTitle:@"Reset defaults" action:@selector(resetGraphicsSettings)];
-    reset.frame = CGRectMake(14, 362, 145, 30);
+    reset.frame = CGRectMake(14, 384, 145, 30);
     reset.autoresizingMask = UIViewAutoresizingFlexibleTopMargin;
     [self.graphicsPanel addSubview:reset];
     UIButton *done = [self buttonWithTitle:@"Done" action:@selector(toggleGraphicsSettings)];
@@ -700,6 +704,9 @@ static int sm64RenderDiagnosticMode;
     static NSString *const fog_names[] = { @"Standard", @"Light", @"Dense", @"Extended" };
     [self.fogProfileButton setTitle:[NSString stringWithFormat:@"Fog range: %@", fog_names[MIN(gfx_metal_fog_profile(), 3u)]]
                              forState:UIControlStateNormal];
+    static NSString *const ao_quality_names[] = { @"Low", @"Standard", @"High" };
+    [self.aoQualityButton setTitle:[NSString stringWithFormat:@"AO quality: %@", ao_quality_names[MIN(gfx_metal_ssao_quality(), 2u)]]
+                           forState:UIControlStateNormal];
 #endif
 }
 
@@ -749,6 +756,13 @@ static int sm64RenderDiagnosticMode;
 - (void)cycleFogProfile {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_fog_profile();
+    [self refreshGraphicsSettings];
+#endif
+}
+
+- (void)cycleAOQuality {
+#if defined(RAPI_METAL)
+    gfx_metal_cycle_ssao_quality();
     [self refreshGraphicsSettings];
 #endif
 }
@@ -825,6 +839,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_bloom_enabled(false);
     gfx_metal_set_color_grade(0u);
     gfx_metal_set_fog_profile(0u);
+    gfx_metal_set_ssao_quality(1u);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];

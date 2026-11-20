@@ -85,6 +85,7 @@ static NSUInteger metal_ssao_width, metal_ssao_height;
 static NSUInteger metal_bloom_width, metal_bloom_height;
 static bool metal_ssao_is_enabled;
 static uint32_t metal_ssao_debug;
+static uint32_t metal_ssao_quality;
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
 static float metal_exposure_stops;
@@ -243,6 +244,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     else
         metal_ssao_debug = [defaults boolForKey:@"SM64MetalSSAOEnabled"] ? 1u : 0u;
     metal_ssao_is_enabled = metal_ssao_debug != 0u;
+    metal_ssao_quality = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSSAOQuality"]));
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
@@ -312,6 +314,15 @@ void gfx_metal_cycle_ssao_mode(void) {
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_ssao_debug forKey:@"SM64MetalSSAOMode"];
     [[NSUserDefaults standardUserDefaults] setBool:metal_ssao_debug != 0u forKey:@"SM64MetalSSAOEnabled"];
     gfx_ios_diag_log("Metal SSAO display mode=%u", metal_ssao_debug);
+}
+uint32_t gfx_metal_ssao_quality(void) { @synchronized ([NSObject class]) { return metal_ssao_quality; } }
+void gfx_metal_set_ssao_quality(uint32_t quality) {
+    uint32_t sanitized = MIN(quality, 2u);
+    @synchronized ([NSObject class]) { metal_ssao_quality = sanitized; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalSSAOQuality"];
+}
+void gfx_metal_cycle_ssao_quality(void) {
+    gfx_metal_set_ssao_quality((gfx_metal_ssao_quality() + 1u) % 3u);
 }
 
 bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_post_enabled; } }
@@ -1276,12 +1287,21 @@ static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
     }
     id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
     if (!encoder) return false;
-    vector_float4 parameters = { 2.0f, 0.025f, 1.15f, 120.0f };
+    static const vector_float4 quality_parameters[] = {
+        { 2.0f, 0.035f, 0.85f, 80.0f },
+        { 2.0f, 0.025f, 1.15f, 120.0f },
+        { 3.0f, 0.018f, 1.35f, 170.0f }
+    };
+    static const uint32_t quality_samples[] = { 4u, 8u, 8u };
+    uint32_t quality = gfx_metal_ssao_quality();
+    vector_float4 parameters = quality_parameters[quality];
+    uint32_t sample_count = quality_samples[quality];
     [encoder setComputePipelineState:metal_ssao_pipeline];
     [encoder setTexture:metal_depth_texture atIndex:0];
     [encoder setTexture:metal_ssao_texture atIndex:1];
     [encoder setBytes:inverse_projection length:sizeof(inverse_projection) atIndex:0];
     [encoder setBytes:&parameters length:sizeof(parameters) atIndex:1];
+    [encoder setBytes:&sample_count length:sizeof(sample_count) atIndex:2];
     NSUInteger width = metal_ssao_width, height = metal_ssao_height;
     NSUInteger thread_width = metal_ssao_pipeline.threadExecutionWidth;
     NSUInteger thread_height = MAX(1u, metal_ssao_pipeline.maxTotalThreadsPerThreadgroup / thread_width);

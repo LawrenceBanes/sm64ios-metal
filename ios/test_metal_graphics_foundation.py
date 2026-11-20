@@ -72,6 +72,7 @@ def main() -> None:
         "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled", "gfx_metal_cycle_ssao_mode",
         "gfx_metal_set_post_enabled", "gfx_metal_set_fxaa_enabled", "gfx_metal_step_exposure",
         "gfx_metal_set_fog_enabled", "gfx_metal_set_bloom_enabled",
+        "gfx_metal_set_ssao_quality", "gfx_metal_cycle_ssao_quality",
         "newComputePipelineStateWithFunction", "dispatchThreads:MTLSizeMake(width, height, 1)",
         "MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite",
         "sm64_ssao_denoise", "metal_ssao_filtered_texture",
@@ -113,6 +114,13 @@ def main() -> None:
     ):
         require(token in metal + metal_h + uikit,
                 f"missing bounded fog profile setting: {token}")
+    for token in (
+        "SM64MetalSSAOQuality", "quality_parameters[]", "quality_samples[]",
+        "constant uint &sampleCount [[buffer(2)]]", "min(sampleCount,8u)",
+        "AO quality: %@", "cycleAOQuality",
+    ):
+        require(token in metal + metal_h + shader_c + uikit,
+                f"missing bounded SSAO quality control: {token}")
 
     print("Configurable Metal renderer foundation source checks passed")
 
