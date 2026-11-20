@@ -18,7 +18,6 @@
 #include <string.h>
 #include <math.h>
 #include "gfx_metal.h"
-#include "gfx_pc.h"
 #include "gfx_metal_state.h"
 #include "gfx_metal_shader.h"
 #include "gfx_shader64_pack.h"
@@ -30,6 +29,8 @@
 #include "gfx_uikit.h"
 #include "../configfile.h"
 
+extern uint32_t gfx_current_render_material_class(void);
+
 #define METAL_SHADER_CAP 128
 #define METAL_TEXTURE_CAP 8192
 #define METAL_PIPELINE_STATE_CAP 96
@@ -37,6 +38,7 @@
 
 struct MetalProgram {
     uint32_t shader_id;
+    uint32_t material_generation;
     id<MTLLibrary> library;
     id<MTLFunction> vertex;
     id<MTLFunction> fragment;
@@ -74,6 +76,8 @@ struct MetalShader64GraphPass {
 struct MetalShader64Graph {
     unsigned int references;
     size_t count;
+    char *material_source;
+    size_t material_source_size;
     unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES];
     struct MetalShader64GraphPass passes[GFX_SHADER64_MAX_GRAPH_PASSES];
 };
@@ -97,6 +101,7 @@ static id<MTLLibrary> metal_shader64_library;
 static struct MetalShader64Graph *metal_shader64_graph;
 static char metal_shader64_active_id[65];
 static vector_float4 metal_shader64_parameters = { 1.0f, 0.0f, 0.0f, 0.0f };
+static uint32_t metal_material_generation = 1;
 static id<MTLSamplerState> metal_present_sampler;
 static id<MTLComputePipelineState> metal_ssao_pipeline;
 static id<MTLComputePipelineState> metal_ssao_denoise_pipeline;
@@ -864,8 +869,21 @@ bool gfx_metal_attach_to_view_controller(UIViewController *view_controller) {
 
 static struct MetalProgram *find_program(uint32_t shader_id) {
     for (size_t i = 0; i < program_count; ++i)
-        if (programs[i].shader_id == shader_id) return &programs[i];
+        if (programs[i].shader_id == shader_id &&
+            programs[i].material_generation == metal_material_generation) return &programs[i];
     return NULL;
+}
+
+static void gfx_metal_release_program(struct MetalProgram *program) {
+    if (!program) return;
+    for (size_t i = 0; i < METAL_PIPELINE_STATE_CAP; ++i) {
+        [program->pipelines[i] release];
+        program->pipelines[i] = nil;
+    }
+    [program->fragment release]; program->fragment = nil;
+    [program->vertex release]; program->vertex = nil;
+    [program->library release]; program->library = nil;
+    program->shader_id = UINT32_MAX;
 }
 
 static void gfx_metal_unload_shader(struct ShaderProgram *program) {
@@ -1059,19 +1077,66 @@ static void gfx_metal_set_scissor(int x,int y,int w,int h) { scissor[0]=x;scisso
 static void gfx_metal_set_use_alpha(bool enabled) { state_blend = enabled; }
 
 static struct MetalProgram *metal_program_for(uint32_t shader_id) {
-    struct MetalProgram *p = find_program(shader_id);
+    struct MetalProgram *p = NULL;
+    bool append_slot = false;
+    char *material_source = NULL;
+    size_t material_size = 0;
+    for (size_t i = 0; i < program_count; ++i)
+        if (programs[i].material_generation != metal_material_generation)
+            gfx_metal_release_program(&programs[i]);
+    p = find_program(shader_id);
     if (p) return p;
-    if (program_count >= METAL_SHADER_CAP) return NULL;
-    char source[8192];
+    for (size_t i = 0; i < program_count; ++i) {
+        if (programs[i].shader_id == UINT32_MAX) { p = &programs[i]; break; }
+    }
+    if (!p && program_count < METAL_SHADER_CAP) {
+        p = &programs[program_count];
+        append_slot = true;
+    }
+    if (!p) return NULL;
+    @synchronized ([NSObject class]) {
+        struct MetalShader64Graph *graph = metal_shader64_graph;
+        if (graph && graph->material_source && graph->material_source_size) {
+            material_source = malloc(graph->material_source_size);
+            if (material_source) {
+                memcpy(material_source, graph->material_source, graph->material_source_size);
+                material_size = graph->material_source_size;
+            }
+        }
+    }
+    size_t source_capacity = 8192u + material_size + 1u;
+    char *source = malloc(source_capacity);
+    if (!source) { free(material_source); return NULL; }
     struct CCFeatures features;
     NSError *error = nil;
-    if (!gfx_metal_build_shader(shader_id, source, sizeof(source), &features)) {
+    bool generated = material_source ? gfx_metal_build_shader_with_material(
+        shader_id, material_source, material_size, source, source_capacity, &features) :
+        gfx_metal_build_shader(shader_id, source, source_capacity, &features);
+    if (!generated && material_source) {
+        gfx_ios_diag_log("SHADER64 material hook rejected by generated shader shader=0x%08x; using Fast3D combiner", shader_id);
+        free(material_source); material_source = NULL; material_size = 0;
+        generated = gfx_metal_build_shader(shader_id, source, source_capacity, &features);
+    }
+    if (!generated) {
+        free(source); free(material_source);
         gfx_ios_diag_log("Metal shader generation failed shader=0x%08x", shader_id);
         NSLog(@"Metal shader generation failed for shader=0x%08x", shader_id);
         return NULL;
     }
     NSString *msl = [NSString stringWithUTF8String:source];
     id<MTLLibrary> library = [metal_device newLibraryWithSource:msl options:nil error:&error];
+    free(source);
+    if (!library && material_source) {
+        gfx_ios_diag_log("SHADER64 material hook compile failed shader=0x%08x; using Fast3D combiner error=%s",
+                         shader_id, error.localizedDescription.UTF8String ?: "unknown");
+        char fallback[8192];
+        error = nil;
+        if (gfx_metal_build_shader(shader_id, fallback, sizeof(fallback), &features)) {
+            NSString *fallback_msl = [NSString stringWithUTF8String:fallback];
+            library = [metal_device newLibraryWithSource:fallback_msl options:nil error:&error];
+        }
+    }
+    free(material_source);
     if (!library) {
         gfx_ios_diag_log("Metal MSL compilation failed shader=0x%08x inputs=%d textures=(%d,%d) fog=%d alpha=%d error=%s", shader_id, features.num_inputs, features.used_textures[0], features.used_textures[1], features.opt_fog, features.opt_alpha, error.localizedDescription.UTF8String ?: "unknown");
         NSLog(@"Metal shader compilation failed shader=0x%08x: %@", shader_id, error.localizedDescription);
@@ -1085,9 +1150,10 @@ static struct MetalProgram *metal_program_for(uint32_t shader_id) {
         [vertex release]; [fragment release]; [library release];
         return NULL;
     }
-    p = &programs[program_count++];
     memset(p, 0, sizeof(*p));
     p->shader_id = shader_id;
+    p->material_generation = metal_material_generation;
+    if (append_slot) ++program_count;
     p->library = library;
     p->vertex = vertex;
     p->fragment = fragment;
@@ -1243,6 +1309,20 @@ static void gfx_metal_draw_triangles(float data[], size_t float_count, size_t tr
         (float)frame_count
     };
     [metal_encoder setFragmentBytes:&fragment_params length:sizeof(fragment_params) atIndex:1];
+    float material_parameters[4] = {0};
+    bool has_material_hook = false;
+    @synchronized ([NSObject class]) {
+        if (metal_shader64_graph && metal_shader64_graph->material_source &&
+            metal_shader64_graph->material_source_size) {
+            material_parameters[0] = metal_shader64_parameters.x;
+            material_parameters[1] = metal_shader64_parameters.y;
+            material_parameters[2] = metal_shader64_parameters.z;
+            material_parameters[3] = metal_shader64_parameters.w;
+            has_material_hook = true;
+        }
+    }
+    if (has_material_hook)
+        [metal_encoder setFragmentBytes:material_parameters length:sizeof(material_parameters) atIndex:2];
 
     uint64_t batch_id = ++metal_draw_batch_count;
     if (gfx_metal_diagnostics_enabled() && (batch_id <= 12 || batch_id % 256 == 0)) {
@@ -1420,6 +1500,7 @@ static void gfx_metal_shader64_graph_release(struct MetalShader64Graph *graph) {
         [graph->passes[i].pipeline release];
         [graph->passes[i].library release];
     }
+    free(graph->material_source);
     free(graph);
 }
 
@@ -1506,13 +1587,15 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
     return ok;
 }
 
-bool gfx_metal_load_shader64_graph(const char *pack_id,
+bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
                                    const struct GfxShader64GraphSource *passes,
-                                   size_t pass_count, const float parameters[4],
+                                   size_t pass_count, const char *material_source,
+                                   size_t material_source_size, const float parameters[4],
                                    char *error_out, size_t error_size) {
     struct GfxShader64GraphPass descriptions[GFX_SHADER64_MAX_GRAPH_PASSES];
     struct MetalShader64Graph *graph;
     if (!metal_device || !metal_view || !gfx_metal_shader64_valid_id(pack_id) || !passes ||
+        ((material_source == NULL) != (material_source_size == 0)) ||
         !pass_count || pass_count > GFX_SHADER64_MAX_GRAPH_PASSES) {
         if (error_out && error_size) snprintf(error_out, error_size, "invalid API v2 graph or Metal device unavailable");
         return false;
@@ -1523,6 +1606,22 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
     graph = calloc(1, sizeof(*graph));
     if (!graph) { if (error_out && error_size) snprintf(error_out, error_size, "out of memory preparing graph"); return false; }
     graph->references = 1; graph->count = pass_count;
+    if (material_source) {
+        char validation[192] = {0};
+        if (!gfx_shader64_validate_material_source(material_source, material_source_size,
+                                                   validation, sizeof(validation))) {
+            if (error_out && error_size) snprintf(error_out, error_size, "material hook: %.150s", validation);
+            gfx_metal_shader64_graph_release(graph); return false;
+        }
+        graph->material_source = malloc(material_source_size + 1u);
+        if (!graph->material_source) {
+            if (error_out && error_size) snprintf(error_out, error_size, "out of memory retaining material hook");
+            gfx_metal_shader64_graph_release(graph); return false;
+        }
+        memcpy(graph->material_source, material_source, material_source_size);
+        graph->material_source[material_source_size] = '\0';
+        graph->material_source_size = material_source_size;
+    }
     unsigned int width = (unsigned int)MAX(1.0, metal_view.drawableSize.width);
     unsigned int height = (unsigned int)MAX(1.0, metal_view.drawableSize.height);
     if (!gfx_shader64_validate_graph(descriptions, pass_count, width, height, graph->order, error_out, error_size)) {
@@ -1567,6 +1666,8 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
     struct MetalShader64Graph *old;
     @synchronized ([NSObject class]) {
         old = metal_shader64_graph; metal_shader64_graph = graph;
+        ++metal_material_generation;
+        if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
         [metal_shader64_library release]; metal_shader64_library = nil;
         snprintf(metal_shader64_active_id, sizeof(metal_shader64_active_id), "%s", pack_id);
@@ -1582,6 +1683,14 @@ bool gfx_metal_load_shader64_graph(const char *pack_id,
     if (error_out && error_size) error_out[0] = '\0';
     gfx_ios_diag_log("SHADER64 API v2 graph activated id=%s passes=%lu", pack_id, (unsigned long)pass_count);
     return true;
+}
+
+bool gfx_metal_load_shader64_graph(const char *pack_id,
+                                   const struct GfxShader64GraphSource *passes,
+                                   size_t pass_count, const float parameters[4],
+                                   char *error_out, size_t error_size) {
+    return gfx_metal_load_shader64_graph_with_material(pack_id, passes, pass_count,
+        NULL, 0, parameters, error_out, error_size);
 }
 
 static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibrary> library,
@@ -1609,6 +1718,8 @@ static bool gfx_metal_activate_shader64_library(const char *pack_id, id<MTLLibra
     @synchronized ([NSObject class]) {
         old_graph = metal_shader64_graph;
         metal_shader64_graph = NULL;
+        ++metal_material_generation;
+        if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release];
         [metal_shader64_library release];
         metal_shader64_pipeline = pipeline;
@@ -1711,6 +1822,7 @@ static void gfx_metal_restore_shader64_pack(void) {
         [manifest[@"passes"] count] > 0 && [manifest[@"passes"] count] <= GFX_SHADER64_MAX_GRAPH_PASSES) {
         NSArray *definitions = manifest[@"passes"];
         NSMutableArray<NSData *> *sources = [NSMutableArray array];
+        NSData *material_source = nil;
         struct GfxShader64GraphSource graph_passes[GFX_SHADER64_MAX_GRAPH_PASSES];
         memset(graph_passes, 0, sizeof(graph_passes));
         BOOL valid = [manifest[@"formatVersion"] integerValue] == 2 && [manifest[@"stage"] isEqualToString:@"render_graph"];
@@ -1729,12 +1841,32 @@ static void gfx_metal_restore_shader64_pack(void) {
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
                 source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u };
         }
+        NSDictionary *material_definition = manifest[@"materialShader"];
+        if (valid && material_definition &&
+            ![material_definition isKindOfClass:[NSDictionary class]]) valid = NO;
+        if (valid && material_definition) {
+            NSString *relative_material = material_definition[@"source"];
+            if (![relative_material isKindOfClass:[NSString class]] ||
+                ![relative_material hasPrefix:@"shaders/"] || [relative_material containsString:@".."] ||
+                [relative_material.pathComponents count] != 2 || ![relative_material hasSuffix:@".metal"]) {
+                valid = NO;
+            } else {
+                NSString *material_path = [packRoot stringByAppendingPathComponent:relative_material];
+                NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:material_path error:nil];
+                material_source = [attributes[NSFileType] isEqualToString:NSFileTypeRegular] &&
+                    [attributes[NSFileSize] unsignedLongLongValue] <= GFX_SHADER64_MAX_SOURCE_BYTES ?
+                    [NSData dataWithContentsOfFile:material_path] : nil;
+                if (!material_source) valid = NO;
+            }
+        }
         NSArray *saved = [defaults arrayForKey:@"SM64Shader64Parameters"];
         float parameters[4] = {1, 0, 0, 0};
         if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
             if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
         char error[384] = {0};
-        bool loaded = valid && gfx_metal_load_shader64_graph(packID.UTF8String, graph_passes, sources.count, parameters, error, sizeof(error));
+        bool loaded = valid && gfx_metal_load_shader64_graph_with_material(packID.UTF8String,
+            graph_passes, sources.count, material_source.bytes, material_source.length,
+            parameters, error, sizeof(error));
         if (!loaded) {
             [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
             gfx_ios_diag_log("SHADER64 API v2 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
@@ -1777,6 +1909,8 @@ void gfx_metal_use_classic_shader(void) {
     struct MetalShader64Graph *old_graph = NULL;
     @synchronized ([NSObject class]) {
         old_graph = metal_shader64_graph; metal_shader64_graph = NULL;
+        ++metal_material_generation;
+        if (!metal_material_generation) metal_material_generation = 1;
         [metal_shader64_pipeline release]; metal_shader64_pipeline = nil;
         [metal_shader64_library release]; metal_shader64_library = nil;
         metal_shader64_active_id[0] = '\0';

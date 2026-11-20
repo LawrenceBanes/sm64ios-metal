@@ -46,6 +46,9 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_graph_target_size.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_material_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_material_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
 
@@ -136,6 +139,16 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn(b"return shader64_post(color,in.uv,image,imageSampler,parameters)", wrapper.value)
         bad = VALID.replace(b"shader64_post", b"wrong_name")
         self.assertFalse(self.api.gfx_shader64_validate_post_source(bad, len(bad), error, len(error)))
+
+    def test_material_shader_contract(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, '
+                  b'uint materialClass, constant float4 &params) { '
+                  b'if (materialClass == 3u) baseColor.rgb *= params.x; return baseColor; }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_material_source(source, len(source), error, len(error)), error.value)
+        self.assertFalse(self.api.gfx_shader64_validate_material_source(
+            source.replace(b"shader64_material", b"wrong_material"), len(source), error, len(error)))
 
     def test_api2_graph_topology_and_bounds(self):
         passes = (self.GraphPass * 2)(
@@ -239,6 +252,16 @@ class ShaderPackTests(unittest.TestCase):
                 self.assertTrue(self.api.gfx_shader64_validate_graph(
                     graph_passes, len(definitions), 1920, 1080, order, error, len(error)),
                     f"{pack_id}: {error.value!r}")
+                material_definition = manifest.get("materialShader")
+                if material_definition is not None:
+                    self.assertEqual(pack_id, "GraphDemo", "unexpected material hook in reference pack")
+                    material_path = material_definition["source"]
+                    self.assertTrue(material_path.startswith("shaders/") and ".." not in material_path)
+                    material_source = (directory / material_path).read_bytes()
+                    self.assertTrue(self.api.gfx_shader64_validate_material_source(
+                        material_source, len(material_source), error, len(error)),
+                        f"{pack_id} material hook: {error.value!r}")
+                    entries.append((material_path, material_source))
             for parameter in manifest.get("parameters", []):
                 if parameter.get("type") == "float":
                     minimum, maximum, default = (float(parameter[k]) for k in ("min", "max", "default"))
@@ -261,8 +284,10 @@ class ShaderPackTests(unittest.TestCase):
         for token in ("newLibraryWithSource:wrapped", "newLibraryWithData:bytes", "gfx_shader64_build_wrapper",
                       "gfx_metal_load_shader64_library", "postprocess.metallib",
                       "metal_shader64_pipeline", "shader64_parameters", "gfx_metal_use_classic_shader",
-                      "gfx_metal_restore_shader64_pack", "SM64Shader64ActivePack"):
+                      "gfx_metal_restore_shader64_pack", "SM64Shader64ActivePack",
+                      "gfx_metal_load_shader64_graph_with_material", "gfx_metal_build_shader_with_material"):
             self.assertIn(token, metal)
+        self.assertIn("shader64_material(color", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",
                       "gfx_shader64_install_zip", "shader64_post", "Delete an installed pack",
                       "Configure %@", "gfx_metal_use_classic_shader", "UISlider", "UISwitch",

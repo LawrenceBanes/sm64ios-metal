@@ -31,7 +31,9 @@ WSC materials are translated through the existing scene-material and Fast3D/comb
 
 API 2 (`formatVersion: 2`, `shaderApiVersion: 2`) is a Metal-native fullscreen raster DAG. It is intentionally a small first slice, not a claim of Iris/OptiFine compatibility. Each pass compiles its own Metal source with the common `shader64_pass` entry. The engine supplies a fullscreen triangle, one sampled input image, one clamp/linear sampler, and four pack parameters. Passes write either a named RGBA16Float sampled target or the drawable resource `present`.
 
-The Fast3D/GeoLayout integration now has a bounded material-class signal for a future geometry/material hook: iOS Metal GeoLayout display-list items retain whether they came from static world rendering, a dynamic object, or Mario. The class is carried through tagged no-op commands in the existing Fast3D stream and exposed to the Metal fragment parameter block. This does not yet provide user shaders with per-vertex world-space positions, normals, transforms, custom textures, or a material replacement entry point; the existing N64 combiner remains authoritative. A selectable Material Class diagnostic visualizes the classification when the engine path is compiled for iOS Metal.
+The Fast3D/GeoLayout integration tags iOS Metal display-list items as static world, dynamic object, or Mario. An optional API 2 `materialShader` hook now runs after the existing N64 combiner and fog calculation, so packs can change the resulting color by material class while the Fast3D material remains the input and authority. Its stable entry point is `float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, constant float4 &params)`. Class IDs are 0 unclassified, 1 world, 2 object, and 3 character. UV is zero when the Fast3D draw has no texture coordinates; `screenPosition` is the Fast3D raster position, not a world-space position; `params` is the API 2 four-float parameter vector. Each draw receives the class through the fragment constant block. A selectable Material Class diagnostic visualizes the same classification.
+
+The hook does **not** yet provide world-space positions, normals, transforms, independent material texture bindings, or engine depth. It is a post-combiner fragment customization point, not a programmable geometry/deferred renderer. Failed shader generation/compilation is logged and falls back to the original Fast3D combiner for that program, preserving gameplay/render recovery rather than presenting an unsupported shader as active success.
 
 ```json
 {
@@ -42,6 +44,10 @@ The Fast3D/GeoLayout integration now has a bounded material-class signal for a f
   "version": "1.0",
   "shaderApiVersion": 2,
   "stage": "render_graph",
+  "materialShader": {"source":"shaders/material.metal"},
+  "parameters": [
+    {"name":"characterTint", "label":"Character tint", "type":"float", "default":0.65, "min":0, "max":1}
+  ],
   "passes": [
     {"id":"first", "type":"fullscreen", "input":"sceneColor", "output":"filtered",
      "source":"shaders/first.metal", "scale":0.5},
@@ -50,6 +56,8 @@ The Fast3D/GeoLayout integration now has a bounded material-class signal for a f
   ]
 }
 ```
+
+`materialShader` is optional. Its source file implements the hook above and is capped at the same 256 KiB source limit as graph passes. The material hook shares the graph pack's four parameters. GraphDemo uses its fourth parameter to tint only material class 3, leaving static world geometry on the original combiner output. Host import and Apple MSL compilation cover the contract; the rendered Mario/world separation still needs physical-device visual confirmation.
 
 Each source declares `float4 shader64_pass(float4 color, float2 uv, texture2d<float> image, sampler imageSampler, constant float4 &params)`. The generic `color` argument is the current input sample. Passes can read nearby texels from `image`; they cannot access depth or other pass outputs except through the declared input edge.
 

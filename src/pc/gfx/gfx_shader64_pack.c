@@ -382,6 +382,27 @@ int gfx_shader64_validate_pass_source(const char *source, size_t size,
     return 1;
 }
 
+int gfx_shader64_validate_material_source(const char *source, size_t size,
+                                          char *error, size_t error_size) {
+    static const char *const required[] = {
+        "float4 shader64_material(", "float4 baseColor", "float2 uv",
+        "float4 screenPosition", "uint materialClass", "constant float4 &params",
+        "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "material source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "material source does not implement the SHADER64 material contract"); return 0;
+        }
+    if (contains(source, size, "#include \"")) {
+        err(error, error_size, "local material shader includes are not supported"); return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size) {
     static const char prefix[] =

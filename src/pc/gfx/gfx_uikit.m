@@ -1476,6 +1476,13 @@ static int sm64RenderDiagnosticMode;
             [outputs addObject:output];
         }
         if (![[manifest[@"passes"] lastObject][@"output"] isEqualToString:@"present"]) api2 = NO;
+        id material = manifest[@"materialShader"];
+        if (material) {
+            NSString *materialPath = [material isKindOfClass:[NSDictionary class]] ? material[@"source"] : nil;
+            if (![materialPath isKindOfClass:[NSString class]] || ![materialPath hasPrefix:@"shaders/"] ||
+                [materialPath containsString:@".."] || [materialPath.pathComponents count] != 2 ||
+                ![materialPath hasSuffix:@".metal"]) api2 = NO;
+        }
     }
     if (!identifierOK || !metadataOK || (!api1 && !api2)) {
         if (errorOut) *errorOut = @"Manifest must use the supported API 1 postprocess contract or API 2 bounded fullscreen render graph.";
@@ -1493,6 +1500,7 @@ static int sm64RenderDiagnosticMode;
     NSString *sourcePath = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:relative];
     NSData *source = manifest && !graphPack ? [NSData dataWithContentsOfFile:sourcePath] : nil;
     NSMutableArray<NSData *> *graphSources = [NSMutableArray array];
+    NSData *materialSource = nil;
     struct GfxShader64GraphSource graphPasses[GFX_SHADER64_MAX_GRAPH_PASSES];
     memset(graphPasses, 0, sizeof(graphPasses));
     if (manifest && graphPack) {
@@ -1508,6 +1516,16 @@ static int sm64RenderDiagnosticMode;
             graphPasses[i] = (struct GfxShader64GraphSource){
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
                 bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u };
+        }
+        NSDictionary *materialDefinition = manifest[@"materialShader"];
+        if (validation == nil && materialDefinition) {
+            NSString *path = materialDefinition[@"source"];
+            NSString *file = [[root stringByAppendingPathComponent:packID] stringByAppendingPathComponent:path];
+            NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:file error:nil];
+            materialSource = [attrs[NSFileType] isEqualToString:NSFileTypeRegular] &&
+                [attrs[NSFileSize] unsignedLongLongValue] <= GFX_SHADER64_MAX_SOURCE_BYTES ?
+                [NSData dataWithContentsOfFile:file] : nil;
+            if (!materialSource) validation = @"The material shader is missing or exceeds the 256 KiB limit";
         }
     }
     float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -1557,7 +1575,8 @@ static int sm64RenderDiagnosticMode;
     }
     char error[512] = {0};
     BOOL loaded = !validation && (graphPack ? (graphSources.count == [manifest[@"passes"] count] &&
-        gfx_metal_load_shader64_graph(packID.UTF8String, graphPasses, graphSources.count, parameters, error, sizeof(error))) :
+        gfx_metal_load_shader64_graph_with_material(packID.UTF8String, graphPasses, graphSources.count,
+        materialSource.bytes, materialSource.length, parameters, error, sizeof(error))) :
         (source && (compiledLibrary ? gfx_metal_load_shader64_library(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)) : gfx_metal_load_shader64_source(packID.UTF8String,
         source.bytes, source.length, parameters, error, sizeof(error)))));

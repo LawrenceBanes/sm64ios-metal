@@ -42,6 +42,8 @@ int gfx_shader64_graph_target_size(unsigned int width, unsigned int height,
                                    unsigned int *target_height);
 int gfx_shader64_validate_pass_source(const char *source, size_t size,
                                       char *error, size_t error_size);
+int gfx_shader64_validate_material_source(const char *source, size_t size,
+                                         char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 

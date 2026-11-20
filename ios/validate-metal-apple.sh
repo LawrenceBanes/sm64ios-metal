@@ -99,6 +99,9 @@ xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx"
     -o "$wrapper_v2_tool"
 for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/BlissGridlines/shaders/*.metal; do
+    if [[ "$(basename "$source")" == "material.metal" ]]; then
+        continue
+    fi
     pack=$(basename "$(dirname "$(dirname "$source")")")
     name="shader64-api2-$pack-$(basename "$source" .metal)"
     "$wrapper_v2_tool" "$source" > "$shader_dir/$name.metal"
@@ -106,6 +109,18 @@ for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
     xcrun --sdk iphoneos metallib "$shader_dir/$name.air" -o "$shader_dir/$name.metallib"
     echo "compiled and linked SHADER64 API 2 reference $name"
 done
+
+material_source="$repo_dir/ios/shaderpacks/GraphDemo/shaders/material.metal"
+material_wrapper_tool="$output_dir/shader64-wrap-material"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$material_wrapper_tool"
+"$material_wrapper_tool" "$material_source" > "$shader_dir/shader64-graphdemo-material.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-graphdemo-material.metal" \
+    -o "$shader_dir/shader64-graphdemo-material.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-graphdemo-material.air" \
+    -o "$shader_dir/shader64-graphdemo-material.metallib"
+echo "compiled and linked SHADER64 API 2 GraphDemo material hook"
 
 echo "Compiling the SHADER64 precompiled-library ABI example for iPhoneOS."
 xcrun --sdk iphoneos metal -c "$repo_dir/ios/shaderpacks/examples/compiled_postprocess.metal" \

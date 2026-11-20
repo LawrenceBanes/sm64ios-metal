@@ -96,6 +96,18 @@ int main(void) {
     assert(strstr(source, "params.materialClass==3u") != NULL);
     assert_dense_vertex_attributes(source, &features);
 
+    const char *material_source =
+        "float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition, uint materialClass, constant float4 &params) { "
+        "if(materialClass==3u) baseColor.rgb=mix(baseColor.rgb,float3(1.0,0.1,0.8),params.x); return baseColor; }";
+    assert(gfx_metal_build_shader_with_material(id, material_source, strlen(material_source),
+                                                 source, sizeof(source), &features));
+    assert(strstr(source, "shader64_material(float4 baseColor") != NULL);
+    assert(strstr(source, "shader64_material(color,float2(0.0),in.pos,params.materialClass,shader64Parameters)") != NULL);
+    assert(strstr(source, "constant float4 &shader64Parameters [[buffer(2)]]") != NULL);
+    const char *bad_material = "float4 wrong(void) { return float4(0.0); }";
+    assert(!gfx_metal_build_shader_with_material(id, bad_material, strlen(bad_material),
+                                                  source, sizeof(source), &features));
+
     /* The MSL input slots must be a dense match for pipeline_for()'s packed
      * descriptor: position, optional UV, optional fog, and then shade inputs. */
     uint8_t input2_rgb[4] = { 0, 0, 0, SHADER_INPUT_2 };

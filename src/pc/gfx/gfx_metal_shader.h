@@ -10,6 +10,10 @@
 /* Portable shader-source generation: this code has no Apple SDK dependency. */
 bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
                             struct CCFeatures *features);
+bool gfx_metal_build_shader_with_material(uint32_t shader_id,
+                                         const char *material_source, size_t material_size,
+                                         char *out, size_t out_size,
+                                         struct CCFeatures *features);
 const char *gfx_metal_present_shader_source(void);
 const char *gfx_metal_ssao_shader_source(void);
 const char *gfx_metal_bloom_shader_source(void);

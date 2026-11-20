@@ -127,6 +127,24 @@ static void write_text(struct ShaderWriter *w, const char *text) {
     w->out[w->used] = '\0';
 }
 
+static void write_bytes(struct ShaderWriter *w, const char *bytes, size_t size) {
+    if (!w->ok || w->used >= w->size || size >= w->size - w->used) {
+        w->ok = false;
+        return;
+    }
+    memcpy(w->out + w->used, bytes, size);
+    w->used += size;
+    w->out[w->used] = '\0';
+}
+
+static bool shader_source_contains(const char *source, size_t size, const char *needle) {
+    size_t length = strlen(needle);
+    if (length > size) return false;
+    for (size_t i = 0; i <= size - length; ++i)
+        if (memcmp(source + i, needle, length) == 0) return true;
+    return false;
+}
+
 static void write_format(struct ShaderWriter *w, const char *fmt, int a, int b) {
     int n;
     if (!w->ok || w->used >= w->size) {
@@ -194,14 +212,22 @@ static void write_formula(struct ShaderWriter *w, const struct CCFeatures *f,
     }
 }
 
-bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
-                            struct CCFeatures *features) {
+bool gfx_metal_build_shader_with_material(uint32_t shader_id,
+                                         const char *material_source, size_t material_size,
+                                         char *out, size_t out_size,
+                                         struct CCFeatures *features) {
     struct CCFeatures local;
     struct GfxMetalVertexLayout vertex_layout;
     struct ShaderWriter w = { out, out_size, 0, out != NULL && out_size > 1 };
     int i;
     if (!features) features = &local;
     if (!w.ok) return false;
+    if ((material_source == NULL) != (material_size == 0) ||
+        material_size > 256u * 1024u ||
+        (material_source && (memchr(material_source, '\0', material_size) ||
+         !shader_source_contains(material_source, material_size, "float4 shader64_material(") ||
+         !shader_source_contains(material_source, material_size, "constant float4 &params"))))
+        return false;
     gfx_cc_get_features(shader_id, features);
     if (features->scene_material &&
         ((features->used_textures[1] && !features->used_textures[0]) ||
@@ -271,10 +297,17 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     if (features->opt_fog) write_text(&w, "o.fog=in.fog;\n");
     for (i = 0; i < features->num_inputs; ++i)
         write_format(&w, "o.input%d=in.input%d;\n", i + 1, i + 1);
-    write_text(&w, "return o; }\nfragment float4 sm64_fragment(VOut in [[stage_in]]");
+    write_text(&w, "return o; }\n");
+    if (material_source) {
+        write_bytes(&w, material_source, material_size);
+        write_text(&w, "\n");
+    }
+    write_text(&w, "fragment float4 sm64_fragment(VOut in [[stage_in]]");
     if (features->used_textures[0]) write_text(&w, ", texture2d<float> tex0 [[texture(0)]], sampler samp0 [[sampler(0)]]");
     if (features->used_textures[1]) write_text(&w, ", texture2d<float> tex1 [[texture(1)]], sampler samp1 [[sampler(1)]]");
-    write_text(&w, ", constant FragmentParams &params [[buffer(1)]]) {\n");
+    write_text(&w, ", constant FragmentParams &params [[buffer(1)]]");
+    if (material_source) write_text(&w, ", constant float4 &shader64Parameters [[buffer(2)]]");
+    write_text(&w, ") {\n");
     /* Diagnostic mode 1 substitutes opaque white at the combiner input. This
      * avoids touching texture memory while retaining the original geometry,
      * vertex colors, combiner, fog, depth, and blend state. */
@@ -315,7 +348,13 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
         if (!features->scene_blend) write_text(&w, "color.a=1.0;\n");
         if (features->opt_fog)
             write_text(&w, "color=float4(mix(color.rgb,in.fog.rgb,in.fog.a),color.a);\n");
-        write_text(&w, "return color; }\n");
+        if (material_source) {
+            write_text(&w, "return shader64_material(color,");
+            write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
+            write_text(&w, ",in.pos,params.materialClass,shader64Parameters); }\n");
+        } else {
+            write_text(&w, "return color; }\n");
+        }
         return w.ok;
     }
     if (features->opt_alpha && !features->color_alpha_same) {
@@ -342,6 +381,17 @@ bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
     }
     if (features->opt_alpha && features->opt_noise)
         write_text(&w, "color.a*=floor(randomValue(floor(float3(in.pos.xy,params.frameCount)))+0.5);\n");
-    write_text(&w, "return color; }\n");
+    if (material_source) {
+        write_text(&w, "return shader64_material(color,");
+        write_text(&w, (features->used_textures[0] || features->used_textures[1]) ? "in.uv" : "float2(0.0)");
+        write_text(&w, ",in.pos,params.materialClass,shader64Parameters); }\n");
+    } else {
+        write_text(&w, "return color; }\n");
+    }
     return w.ok;
+}
+
+bool gfx_metal_build_shader(uint32_t shader_id, char *out, size_t out_size,
+                            struct CCFeatures *features) {
+    return gfx_metal_build_shader_with_material(shader_id, NULL, 0, out, out_size, features);
 }
