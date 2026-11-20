@@ -12,6 +12,12 @@ bool gfx_metal_ssao_enabled(void);
 void gfx_metal_set_ssao_enabled(bool enabled);
 uint32_t gfx_metal_ssao_debug_mode(void);
 void gfx_metal_cycle_ssao_mode(void);
+bool gfx_metal_post_enabled(void);
+void gfx_metal_set_post_enabled(bool enabled);
+bool gfx_metal_fxaa_enabled(void);
+void gfx_metal_set_fxaa_enabled(bool enabled);
+float gfx_metal_exposure_stops(void);
+void gfx_metal_step_exposure(void);
 #endif
 
 #ifdef __OBJC__

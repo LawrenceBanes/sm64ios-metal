@@ -26,7 +26,13 @@
 - Added AO pixel counter and host checks for generated shader source and capture limit.
 - Focused host checks passed locally: `tests/run_metal_shader_codegen_test.sh`, `tests/run_scene_capture_test.sh`, `tests/run_gfx_postprocess_test.sh`, `python3 ios/test_metal_graphics_foundation.py`.
 - Apple Metal SDK/iOS backend validation passed at commit `31a60a53ffb77410f1e81b3de3e03e100d634b79`, workflow [44693601221](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44693601221); production SSAO MSL compilation succeeded.
-- **Open:** The AO-only/depth debug-view revision awaits Apple compilation; world/HUD compositing can darken HUD; radius/bias/intensity/quality are fixed; no hardware render, screenshots, or physical device verification.
+- **Open:** The debug views compile under Apple MSL, but world/HUD compositing can darken HUD; radius/bias/intensity/quality are fixed; no hardware render, screenshots, or physical device verification.
+
+### M79-D — Postprocessing (first functional increment)
+
+- Added an optional presentation-pass ACES-inspired tone-map curve with persisted exposure steps (-1/0/+1 EV), plus a separate FXAA toggle. Both request the offscreen path only when enabled, and the default/Classic path remains direct.
+- Added in-panel tone-map, FXAA, and exposure controls. This is a first increment only: bloom, brightness/contrast/saturation/temperature grading, FXAA image-quality validation, and HUD isolation remain open.
+- Added source assertions for tone-map, exposure and FXAA shader paths. Focused shader and renderer wiring tests passed; full Linux and Apple validation are now being run for this increment.
 
 ### M79-C through M79-H — Not implemented
 
@@ -37,9 +43,10 @@
 - Full local Linux suite and Apple workflow Linux suite passed for the current SSAO commit.
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
-- The current debug-view source changes are not yet included in an Apple workflow; that is the next check after focused and full host validation.
+- AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
+- Tone-map/FXAA source work is not yet committed; focused checks and the full Linux suite passed locally, and it still needs Apple compilation before a checkpoint.
 - No Mission 79 IPA, on-device rendering, or physical-device visual/performance claim exists.
 
 ## Next task
 
-Validate the debug-view revision with Apple MSL and Objective-C compilation. Then add practical radius/intensity controls and prevent AO from darkening HUD pixels. Continue implementing the next independent effects (directional shadows and postprocessing); physical-device screenshots and visual/performance checks remain required for acceptance.
+Dispatch Apple SDK validation for tone mapping/FXAA and repair compiler failures. Then extend the postprocess chain with bloom and additional grading controls. Continue to AO controls/HUD separation, directional shadow mapping, atmosphere, and the remaining integrated settings. Physical-device screenshots and visual/performance checks remain required for acceptance.

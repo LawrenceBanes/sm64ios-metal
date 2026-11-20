@@ -15,8 +15,10 @@ const char *gfx_metal_present_shader_source(void) {
         "  o.uv = id == 0 ? float2(0.0, 1.0) : (id == 1 ? float2(2.0, 1.0) : float2(0.0, -1.0));\n"
         "  return o;\n"
         "}\n"
-        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], depth2d<float> depth [[texture(2)]], constant uint2 &presentParams [[buffer(0)]]) {\n"
-        "  float4 color=image.sample(imageSampler,in.uv); if(presentParams.y==1u) { float a=ao.sample(aoSampler,in.uv).r; return float4(a,a,a,1.0); } if(presentParams.y==2u) { float d=depth.sample(aoSampler,in.uv); return float4(d,d,d,1.0); } if(presentParams.x!=0u) color.rgb*=ao.sample(aoSampler,in.uv).r; return color;\n"
+        "fragment float4 sm64_present_fragment(PresentOut in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> ao [[texture(1)]], sampler aoSampler [[sampler(1)]], depth2d<float> depth [[texture(2)]], constant uint4 &presentFlags [[buffer(0)]], constant float4 &gradeParams [[buffer(1)]]) {\n"
+        "  float4 color=image.sample(imageSampler,in.uv); if(presentFlags.y==1u) { float a=ao.sample(aoSampler,in.uv).r; return float4(a,a,a,1.0); } if(presentFlags.y==2u) { float d=depth.sample(aoSampler,in.uv); return float4(d,d,d,1.0); } if(presentFlags.x!=0u) color.rgb*=ao.sample(aoSampler,in.uv).r;\n"
+        "  if(presentFlags.w!=0u) { float2 t=1.0/float2(image.get_width(),image.get_height()); float l=dot(color.rgb,float3(0.299,0.587,0.114)); float ln=dot(image.sample(imageSampler,in.uv+float2(0.0,-t.y)).rgb,float3(0.299,0.587,0.114)); float ls=dot(image.sample(imageSampler,in.uv+float2(0.0,t.y)).rgb,float3(0.299,0.587,0.114)); float le=dot(image.sample(imageSampler,in.uv+float2(t.x,0.0)).rgb,float3(0.299,0.587,0.114)); float lw=dot(image.sample(imageSampler,in.uv+float2(-t.x,0.0)).rgb,float3(0.299,0.587,0.114)); float edge=max(max(ln,ls),max(le,lw))-min(min(ln,ls),min(le,lw)); if(edge>max(0.0312,l*0.125)) color.rgb=mix(color.rgb,(image.sample(imageSampler,in.uv+float2(t.x,t.y)).rgb+image.sample(imageSampler,in.uv-float2(t.x,t.y)).rgb+image.sample(imageSampler,in.uv+float2(-t.x,t.y)).rgb+image.sample(imageSampler,in.uv+float2(t.x,-t.y)).rgb)*0.25,0.5); }\n"
+        "  if(presentFlags.z!=0u) { float3 x=max(color.rgb*exp2(gradeParams.x),0.0); color.rgb=clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0); } return color;\n"
         "}\n";
 }
 

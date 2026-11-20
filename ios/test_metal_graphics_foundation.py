@@ -67,6 +67,7 @@ def main() -> None:
         "SM64MetalAnisotropy", "completed.GPUStartTime", "completed.GPUEndTime",
         "metal_performance_stats.draw_calls", "metal_performance_stats.triangles",
         "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled", "gfx_metal_cycle_ssao_mode",
+        "gfx_metal_set_post_enabled", "gfx_metal_set_fxaa_enabled", "gfx_metal_step_exposure",
         "newComputePipelineStateWithFunction", "dispatchThreads:MTLSizeMake(width, height, 1)",
         "MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite",
         "sm64_ssao_denoise", "metal_ssao_filtered_texture",
@@ -87,7 +88,7 @@ def main() -> None:
         "@selector(toggleGraphicsSettings)", "@selector(resetGraphicsSettings)",
         "@selector(applyGraphicsSettingsSelection:)", "sender == self.presetControl",
         "setEnabled:capabilities.sample_count_4", "GPU timing unavailable",
-        "gfx_metal_classic_settings()",
+        "gfx_metal_classic_settings()", "togglePostprocessing", "toggleFXAA", "stepExposure",
     ):
         require(token in uikit, f"missing native graphics settings UI control: {token}")
     require("gfx_metal_set_cpu_frame_time_ms" in main_source,

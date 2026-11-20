@@ -58,9 +58,9 @@ int main(void) {
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
     assert(strstr(present_source, "sm64_present_fragment") != NULL);
-    assert(strstr(present_source, "presentParams") != NULL);
+    assert(strstr(present_source, "presentFlags") != NULL);
     assert(strstr(present_source, "AO-only debug output") != NULL ||
-           strstr(present_source, "presentParams.y==1u") != NULL);
+           strstr(present_source, "presentFlags.y==1u") != NULL);
     assert(strstr(present_source, "depth2d<float> depth") != NULL);
     const char *ssao_source = gfx_metal_ssao_shader_source();
     assert(strstr(ssao_source, "sm64_ssao") != NULL);
@@ -72,6 +72,9 @@ int main(void) {
     assert(strstr(ssao_source, "exp(-abs(qd-d)*180.0)") != NULL);
     assert(strstr(ssao_source, "d>=0.999999") != NULL);
     assert(strstr(present_source, "texture2d<float> image") != NULL);
+    assert(strstr(present_source, "presentFlags.w!=0u") != NULL);
+    assert(strstr(present_source, "exp2(gradeParams.x)") != NULL);
+    assert(strstr(present_source, "2.51*x+0.03") != NULL);
     uint8_t flat_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint8_t flat_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint32_t id = shader(flat_rgb, flat_alpha, 0);

@@ -79,6 +79,9 @@ static id<MTLTexture> metal_ssao_filtered_texture;
 static NSUInteger metal_ssao_width, metal_ssao_height;
 static bool metal_ssao_is_enabled;
 static uint32_t metal_ssao_debug;
+static bool metal_post_enabled;
+static bool metal_fxaa_enabled;
+static float metal_exposure_stops;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -221,6 +224,9 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     else
         metal_ssao_debug = [defaults boolForKey:@"SM64MetalSSAOEnabled"] ? 1u : 0u;
     metal_ssao_is_enabled = metal_ssao_debug != 0u;
+    metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
+    metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
+    metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -283,6 +289,25 @@ void gfx_metal_cycle_ssao_mode(void) {
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_ssao_debug forKey:@"SM64MetalSSAOMode"];
     [[NSUserDefaults standardUserDefaults] setBool:metal_ssao_debug != 0u forKey:@"SM64MetalSSAOEnabled"];
     gfx_ios_diag_log("Metal SSAO display mode=%u", metal_ssao_debug);
+}
+
+bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_post_enabled; } }
+void gfx_metal_set_post_enabled(bool enabled) {
+    @synchronized ([NSObject class]) { metal_post_enabled = enabled; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalPostEnabled"];
+}
+bool gfx_metal_fxaa_enabled(void) { @synchronized ([NSObject class]) { return metal_fxaa_enabled; } }
+void gfx_metal_set_fxaa_enabled(bool enabled) {
+    @synchronized ([NSObject class]) { metal_fxaa_enabled = enabled; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalFXAAEnabled"];
+}
+float gfx_metal_exposure_stops(void) { @synchronized ([NSObject class]) { return metal_exposure_stops; } }
+void gfx_metal_step_exposure(void) {
+    @synchronized ([NSObject class]) {
+        metal_exposure_stops += 1.0f;
+        if (metal_exposure_stops > 1.0f) metal_exposure_stops = -1.0f;
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_exposure_stops forKey:@"SM64MetalExposureStops"];
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -991,7 +1016,8 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 }
 
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
-    if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled()) return false;
+    if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
+        !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1085,9 +1111,13 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
     [encoder setFragmentTexture:metal_depth_texture atIndex:2];
     uint32_t debug_mode = gfx_metal_ssao_debug_mode();
-    uint32_t present_params[2] = { gfx_metal_ssao_enabled() ? 1u : 0u,
-                                   debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u) };
-    [encoder setFragmentBytes:present_params length:sizeof(present_params) atIndex:0];
+    vector_uint4 present_flags = { gfx_metal_ssao_enabled() ? 1u : 0u,
+                                   debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u),
+                                   gfx_metal_post_enabled() ? 1u : 0u,
+                                   gfx_metal_fxaa_enabled() ? 1u : 0u };
+    vector_float4 grade_params = { gfx_metal_exposure_stops(), 0.0f, 1.0f, 1.0f };
+    [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
+    [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;

@@ -61,6 +61,9 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UISegmentedControl *msaaControl;
 @property(nonatomic, strong) UISegmentedControl *anisotropyControl;
 @property(nonatomic, strong) UIButton *ssaoButton;
+@property(nonatomic, strong) UIButton *postButton;
+@property(nonatomic, strong) UIButton *fxaaButton;
+@property(nonatomic, strong) UIButton *exposureButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -87,6 +90,9 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
 - (void)toggleSSAO;
+- (void)togglePostprocessing;
+- (void)toggleFXAA;
+- (void)stepExposure;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -534,6 +540,15 @@ static int sm64RenderDiagnosticMode;
     self.ssaoButton = [self buttonWithTitle:@"SSAO: Off" action:@selector(toggleSSAO)];
     self.ssaoButton.frame = CGRectMake(14, 244, 150, 30);
     [self.graphicsPanel addSubview:self.ssaoButton];
+    self.postButton = [self buttonWithTitle:@"Tone: Off" action:@selector(togglePostprocessing)];
+    self.postButton.frame = CGRectMake(166, 244, 104, 30);
+    [self.graphicsPanel addSubview:self.postButton];
+    self.fxaaButton = [self buttonWithTitle:@"FXAA: Off" action:@selector(toggleFXAA)];
+    self.fxaaButton.frame = CGRectMake(272, 244, 100, 30);
+    [self.graphicsPanel addSubview:self.fxaaButton];
+    self.exposureButton = [self buttonWithTitle:@"Exposure 0" action:@selector(stepExposure)];
+    self.exposureButton.frame = CGRectMake(374, 244, 132, 30);
+    [self.graphicsPanel addSubview:self.exposureButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
@@ -651,6 +666,33 @@ static int sm64RenderDiagnosticMode;
     uint32_t ssao_mode = gfx_metal_ssao_debug_mode();
     [self.ssaoButton setTitle:[NSString stringWithUTF8String:ssao_modes[MIN(ssao_mode, 3u)]]
                      forState:UIControlStateNormal];
+    [self.postButton setTitle:gfx_metal_post_enabled() ? @"Tone: On" : @"Tone: Off"
+                     forState:UIControlStateNormal];
+    [self.fxaaButton setTitle:gfx_metal_fxaa_enabled() ? @"FXAA: On" : @"FXAA: Off"
+                     forState:UIControlStateNormal];
+    [self.exposureButton setTitle:[NSString stringWithFormat:@"Exposure %+.0f", gfx_metal_exposure_stops()]
+                          forState:UIControlStateNormal];
+#endif
+}
+
+- (void)togglePostprocessing {
+#if defined(RAPI_METAL)
+    gfx_metal_set_post_enabled(!gfx_metal_post_enabled());
+    [self refreshGraphicsSettings];
+#endif
+}
+
+- (void)toggleFXAA {
+#if defined(RAPI_METAL)
+    gfx_metal_set_fxaa_enabled(!gfx_metal_fxaa_enabled());
+    [self refreshGraphicsSettings];
+#endif
+}
+
+- (void)stepExposure {
+#if defined(RAPI_METAL)
+    gfx_metal_step_exposure();
+    [self refreshGraphicsSettings];
 #endif
 }
 
@@ -717,6 +759,8 @@ static int sm64RenderDiagnosticMode;
 - (void)resetGraphicsSettings {
 #if defined(RAPI_METAL)
     gfx_metal_set_ssao_enabled(false);
+    gfx_metal_set_post_enabled(false);
+    gfx_metal_set_fxaa_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
