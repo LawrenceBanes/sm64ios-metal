@@ -7,6 +7,15 @@ import re
 
 
 SOURCE_ERROR = re.compile(r"(?:^|\s)([^\s:]+\.(?:c|cc|cpp|h|m|mm)):(\d+)(?::\d+)?:\s*(?:fatal )?error:")
+DIAGNOSTIC_CATEGORIES = (
+    (re.compile(r"file not found|no such file", re.I), "missing include"),
+    (re.compile(r"use of undeclared|undeclared identifier|undeclared (?:variable|function|symbol)|unknown type name", re.I), "undeclared symbol or type"),
+    (re.compile(r"redefinition|redefined|duplicate (?:symbol|definition|member)|already defined", re.I), "duplicate or repeated declaration"),
+    (re.compile(r"static declaration.*(?:follows|conflicts)|conflicting (?:types|linkage)|different kind of symbol", re.I), "declaration linkage mismatch"),
+    (re.compile(r"incompatible|no matching|cannot initialize|cannot convert|conflicting types|invalid operands|argument of type", re.I), "type or call mismatch"),
+    (re.compile(r"expected (?:identifier|';'|\)|\(|expression|declaration|specifier|type)", re.I), "syntax or declaration error"),
+    (re.compile(r"no member named|member reference|has no member", re.I), "structure member mismatch"),
+)
 
 
 def summarize(text: str) -> list[str]:
@@ -15,15 +24,9 @@ def summarize(text: str) -> list[str]:
         match = SOURCE_ERROR.search(line)
         if match:
             filename = Path(match.group(1)).name
-            # Only the file basename, line number, and broad class leave the runner.
-            kind = "compiler error"
-            lowered = line.lower()
-            if "file not found" in lowered:
-                kind = "missing include"
-            elif "undeclared" in lowered:
-                kind = "undeclared symbol"
-            elif "incompatible" in lowered or "no matching" in lowered:
-                kind = "type or call mismatch"
+            # Only a basename, line number, and allowlisted category leave the runner.
+            kind = next((label for pattern, label in DIAGNOSTIC_CATEGORIES if pattern.search(line)),
+                        "compiler error")
             summary.append(f"{filename}:{match.group(2)}: {kind}")
         elif "Undefined symbols for architecture" in line:
             summary.append("arm64 linker: undefined symbols")

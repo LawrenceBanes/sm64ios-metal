@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `31a60a53ffb77410f1e81b3de3e03e100d634b79` (SSAO compute pass and UI toggle).
+- Current source commit: `f57da1380988c8ed92405ad30c613099a14278d4`; uncommitted work adds depth-aware fog and safer Xcode diagnostic categories.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -32,15 +32,28 @@
 
 - Added an optional presentation-pass ACES-inspired tone-map curve with persisted exposure steps (-1/0/+1 EV), plus a separate FXAA toggle. Both request the offscreen path only when enabled, and the default/Classic path remains direct.
 - Added in-panel tone-map, FXAA, and exposure controls. This is a first increment only: bloom, brightness/contrast/saturation/temperature grading, FXAA image-quality validation, and HUD isolation remain open.
-- Added source assertions for tone-map, exposure and FXAA shader paths. Focused shader and renderer wiring tests passed; full Linux and Apple validation are now being run for this increment.
+- Added source assertions for tone-map, exposure and FXAA shader paths. Focused checks, the full Linux suite, and Apple SDK/MSL validation passed (workflow [44694655649](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694655649)).
 
-### M79-C through M79-H — Not implemented
+### M79-E — Atmosphere (first functional increment)
 
-- Directional shadow maps, bloom/exposure/tone mapping/color grading/FXAA, modern fog/sky/god rays, unified visual presets, device performance measurements, full application build, IPA, and private release remain outstanding.
+- Added an opt-in exponential distance-fog composite using the retained Depth32 texture and inverse captured projection; clear-depth sky is masked. Added a persisted Fog toggle in the developer graphics panel.
+- Fog currently uses a fixed cool gray-blue color, density, and start distance. Sky gradients/presets, sun disk, screen-space light shafts, adjustable fog parameters, world-scale tuning, and device visual checks remain open.
+
+### Build candidate status
+
+- The private full-game IPA workflow [44694849327](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694849327) passed Linux and asset-free Apple validation, but the full iPhoneOS app build failed. The sanitized summary identified `area.c:41: compiler error`; no IPA was produced. Safe declaration/type/syntax diagnostic categories and synthetic secrecy tests have been added; rerun the full build to expose the category.
+
+### M79-C — Directional lighting and shadows (not implemented)
+
+- No shadow-depth pass, directional light, PCF filtering, or world-geometry receiver path exists yet.
+
+### Remaining M79-D/M79-E/M79-F/M79-G/M79-H work
+
+- Bloom, full color grading, adjustable fog and sky/god rays, unified visual presets, device performance measurements, successful full app build, IPA, and private release remain outstanding.
 
 ## Current validation
 
-- Full local Linux suite and Apple workflow Linux suite passed for the current SSAO commit.
+- Full local Linux suite passed for the fog work; Apple validation and complete iPhoneOS compilation are pending for it.
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
@@ -49,4 +62,4 @@
 
 ## Next task
 
-The next action is to produce a private device-test candidate from `2e191182` using the authorized IPA workflow while continuing implementation afterward. Then extend the postprocess chain with bloom and grading controls, AO controls/HUD separation, directional shadow mapping, atmosphere, and integrated presets. Device screenshots and visual/performance checks remain required for acceptance.
+Run Linux and Apple validation on the fog and safe-diagnostic revision, then retry the full app build with the improved sanitized categories. Continue with bloom, grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.

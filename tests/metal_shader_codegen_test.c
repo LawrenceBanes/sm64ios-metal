@@ -75,6 +75,8 @@ int main(void) {
     assert(strstr(present_source, "presentFlags.w!=0u") != NULL);
     assert(strstr(present_source, "exp2(gradeParams.x)") != NULL);
     assert(strstr(present_source, "2.51*x+0.03") != NULL);
+    assert(strstr(present_source, "1.0-exp(-gradeParams.z") != NULL);
+    assert(strstr(present_source, "inverseProjection*clip") != NULL);
     uint8_t flat_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint8_t flat_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint32_t id = shader(flat_rgb, flat_alpha, 0);

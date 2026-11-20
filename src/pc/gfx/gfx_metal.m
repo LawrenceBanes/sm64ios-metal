@@ -82,6 +82,7 @@ static uint32_t metal_ssao_debug;
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
 static float metal_exposure_stops;
+static bool metal_fog_is_enabled;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -227,6 +228,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_exposure_stops = (float)MAX(-2, MIN(2, [defaults integerForKey:@"SM64MetalExposureStops"]));
+    metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -308,6 +310,11 @@ void gfx_metal_step_exposure(void) {
         if (metal_exposure_stops > 1.0f) metal_exposure_stops = -1.0f;
     }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)metal_exposure_stops forKey:@"SM64MetalExposureStops"];
+}
+bool gfx_metal_fog_enabled(void) { @synchronized ([NSObject class]) { return metal_fog_is_enabled; } }
+void gfx_metal_set_fog_enabled(bool enabled) {
+    @synchronized ([NSObject class]) { metal_fog_is_enabled = enabled; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalFogEnabled"];
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -1017,7 +1024,7 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
-        !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled()) return false;
+        !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1115,9 +1122,22 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
                                    debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u),
                                    gfx_metal_post_enabled() ? 1u : 0u,
                                    gfx_metal_fxaa_enabled() ? 1u : 0u };
-    vector_float4 grade_params = { gfx_metal_exposure_stops(), 0.0f, 1.0f, 1.0f };
+    vector_float4 grade_params = { gfx_metal_exposure_stops(), gfx_metal_fog_enabled() ? 1.0f : 0.0f,
+                                   0.0007f, 1200.0f };
+    float inverse_projection[4][4] = {{0}};
+    if (gfx_metal_fog_enabled()) {
+        struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+        if (!capture.has_projection_matrix ||
+            !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection)) {
+            grade_params.y = 0.0f;
+            gfx_ios_diag_log("Metal distance fog disabled for frame: inverse projection unavailable");
+        }
+    }
+    vector_float4 fog_color = { 0.52f, 0.67f, 0.82f, 1.0f };
     [encoder setFragmentBytes:&present_flags length:sizeof(present_flags) atIndex:0];
     [encoder setFragmentBytes:&grade_params length:sizeof(grade_params) atIndex:1];
+    [encoder setFragmentBytes:inverse_projection length:sizeof(inverse_projection) atIndex:2];
+    [encoder setFragmentBytes:&fog_color length:sizeof(fog_color) atIndex:3];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;
