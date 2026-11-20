@@ -204,6 +204,11 @@ static void gfx_metal_release_render_targets(void) {
     metal_depth_width = metal_depth_height = 0;
     metal_depth_samples = 1;
     metal_target_width = metal_target_height = metal_target_samples = 0;
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.ssao_pixels = 0;
+        metal_performance_stats.bloom_pixels = 0;
+        metal_performance_stats.estimated_target_bytes = 0;
+    }
 }
 
 static void gfx_metal_refresh_capabilities(void) {
@@ -330,7 +335,11 @@ void gfx_metal_set_fog_enabled(bool enabled) {
 }
 bool gfx_metal_bloom_enabled(void) { @synchronized ([NSObject class]) { return metal_bloom_is_enabled; } }
 void gfx_metal_set_bloom_enabled(bool enabled) {
-    @synchronized ([NSObject class]) { metal_bloom_is_enabled = enabled; metal_offscreen_runtime_failed = false; }
+    @synchronized ([NSObject class]) {
+        metal_bloom_is_enabled = enabled;
+        metal_offscreen_runtime_failed = false;
+        if (!enabled) metal_performance_stats.bloom_pixels = 0;
+    }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalBloomEnabled"];
 }
 
@@ -1131,6 +1140,14 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     metal_target_width = size.width;
     metal_target_height = size.height;
     metal_target_samples = samples;
+    uint64_t pixels = (uint64_t)size.width * size.height;
+    uint64_t estimated_bytes = pixels * (samples > 1 ? (8u * samples + 8u) : 8u) +
+                               pixels * 4u * samples;
+    if (gfx_metal_ssao_enabled())
+        estimated_bytes += (uint64_t)metal_ssao_width * metal_ssao_height * 2u;
+    if (gfx_metal_bloom_enabled())
+        estimated_bytes += (uint64_t)metal_bloom_width * metal_bloom_height * 24u;
+    @synchronized ([NSObject class]) { metal_performance_stats.estimated_target_bytes = estimated_bytes; }
     gfx_ios_diag_log("Metal offscreen targets ready size=%lux%lu scale=%u%% samples=%lu color=%@ resolve=%@ depth=%@", (unsigned long)size.width, (unsigned long)size.height, metal_settings.render_scale_percent, (unsigned long)samples, samples > 1 ? metal_multisample_color : metal_color_target, samples > 1 ? metal_resolve_texture : nil, depth);
     return true;
 }
@@ -1305,6 +1322,9 @@ static bool gfx_metal_encode_bloom(id<MTLCommandBuffer> command) {
     gfx_metal_dispatch_bloom(encoder, metal_bloom_blur_pipeline, metal_bloom_temp_texture, metal_bloom_output_texture,
                              &axis, sizeof(axis));
     [encoder endEncoding];
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.bloom_pixels = (uint64_t)metal_bloom_width * metal_bloom_height * 3u;
+    }
     return true;
 }
 

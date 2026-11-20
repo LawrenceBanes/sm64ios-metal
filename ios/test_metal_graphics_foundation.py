@@ -27,6 +27,7 @@ def main() -> None:
         "struct GfxMetalSettings", "struct GfxMetalCapabilities",
         "struct GfxMetalPerformanceStats", "gfx_metal_settings_sanitize",
         "gfx_metal_target_size", "gfx_metal_pipeline_cache_index",
+        "estimated_target_bytes", "bloom_pixels",
     ):
         require(token in state_h, f"missing portable graphics settings API: {token}")
     for token in (
@@ -94,6 +95,7 @@ def main() -> None:
         "@selector(applyGraphicsSettingsSelection:)", "sender == self.presetControl",
         "setEnabled:capabilities.sample_count_4", "GPU timing unavailable",
         "gfx_metal_classic_settings()", "togglePostprocessing", "toggleFXAA", "stepExposure", "toggleFog", "toggleBloom",
+        "targets ~%.1f MiB", "bloom_pixels",
     ):
         require(token in uikit, f"missing native graphics settings UI control: {token}")
     require("gfx_metal_set_cpu_frame_time_ms" in main_source,

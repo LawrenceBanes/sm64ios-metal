@@ -55,6 +55,8 @@ struct GfxMetalPerformanceStats {
     uint32_t sample_count;
     uint32_t anisotropy;
     uint64_t ssao_pixels;
+    uint64_t bloom_pixels;
+    uint64_t estimated_target_bytes;
 };
 
 enum GfxSamplerAddressMode gfx_metal_sampler_address_mode(uint32_t n64_mode);

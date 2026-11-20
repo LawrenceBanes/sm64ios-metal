@@ -775,13 +775,16 @@ static int sm64RenderDiagnosticMode;
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = stats.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced";
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ | %llu pixels",
+        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | targets ~%.1f MiB",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
         stats.sample_count, stats.anisotropy,
         gfx_metal_ssao_enabled() ? @"on" : @"off",
-        (unsigned long long)stats.ssao_pixels];
+        (unsigned long long)stats.ssao_pixels,
+        gfx_metal_bloom_enabled() ? @"on" : @"off",
+        (unsigned long long)stats.bloom_pixels,
+        (double)stats.estimated_target_bytes / (1024.0 * 1024.0)];
 #endif
 }
 

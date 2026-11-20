@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `dada985106a1b34d28b5bc65ae08f339a0885419`; uncommitted work adds quarter-resolution bloom and the explicit `<stdbool.h>` fix for the iPhoneOS branding declaration.
+- Current source commit: `aff5bc593b9e5806995b2bf4dd3420180705e5e7`; uncommitted work adds estimated render-target memory and effect-pixel counters.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -39,9 +39,10 @@
 - Added an opt-in exponential distance-fog composite using the retained Depth32 texture and inverse captured projection; clear-depth sky is masked. Added a persisted Fog toggle in the developer graphics panel.
 - Fog currently uses a fixed cool gray-blue color, density, and start distance. Sky gradients/presets, sun disk, screen-space light shafts, adjustable fog parameters, world-scale tuning, and device visual checks remain open.
 
-### M79-D — Bloom (implementation increment, pending Apple validation)
+### M79-D — Bloom (implementation increment)
 
-- Added a quarter-resolution bright pass and two separable blur passes; presentation can composite bloom before tone mapping. A persisted developer toggle keeps it off by default. Apple shader compilation and visual output remain to be verified.
+- Added a quarter-resolution bright pass and two separable blur passes; presentation can composite bloom before tone mapping. A persisted developer toggle keeps it off by default.
+- Apple Metal SDK/MSL validation passed at `aff5bc593b9e5806995b2bf4dd3420180705e5e7`, workflow [44696615662](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696615662), including the bloom compute source and VERSION_US area syntax path. Visual output has not been verified.
 
 ### Build candidate status
 
@@ -57,7 +58,7 @@
 
 ## Current validation
 
-- Full local Linux suite and Apple validation passed for fog at commit `dada9851` (run [44695676469](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695676469)); the new bloom/fix revision is still pending validation.
+- Full local Linux suite and Apple validation passed for fog at commit `dada9851` (run [44695676469](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44695676469)). Linux checks and full iPhoneOS/IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) are running for `aff5bc59` after the bool include fix.
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
@@ -66,4 +67,4 @@
 
 ## Next task
 
-Validate bloom shaders and the `<stdbool.h>` correction with Linux and Apple jobs, then retry the full iPhoneOS app build. Continue with grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.
+Finish the current iPhoneOS app build and inspect its sanitized diagnostics. Continue with render-target memory reporting, postprocessing grading, AO tuning/HUD separation, directional shadows, sky/light shafts, and integrated presets. Device screenshots and performance evidence remain required for acceptance.
