@@ -122,7 +122,7 @@ extern s32 gInGameLanguage;
 #define MOD_MAX_DYNOS_TEXTURE_FILE_BYTES (2u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_DIMENSION 512u
 #define MOD_MAX_DYNOS_TEXTURES_PER_MOD 256u
-#define MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD (16u * 1024u * 1024u)
+#define MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD (32u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_BYTES_GLOBAL (64u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_KEYS 2048u
 #define MOD_MAX_DYNOS_MODEL_BYTES_PER_MOD (16u * 1024u * 1024u)
@@ -247,6 +247,7 @@ struct Mod {
     bool hud_font_fallback_warned;
     bool extended_model_warned;
     bool animation_warned;
+    bool collision_fix_unavailable_warned;
     bool popup_markup_warned;
     bool chat_popup_warned;
     uint64_t behavior_lookup_warned_ids[MOD_BEHAVIOR_WARNING_WORDS];
@@ -1385,6 +1386,7 @@ static void refresh_local_player_tables(void) {
     lua_rawgeti(sLua, -1, 0);
     if (lua_istable(sLua, -1)) {
         lua_pushinteger(sLua, 0); lua_setfield(sLua, -2, "globalIndex");
+        lua_pushinteger(sLua, gCurrCourseNum); lua_setfield(sLua, -2, "currCourseNum");
         lua_pushinteger(sLua, gCurrLevelNum); lua_setfield(sLua, -2, "currLevelNum");
         lua_pushinteger(sLua, gCurrAreaIndex); lua_setfield(sLua, -2, "currAreaIndex");
         lua_pushboolean(sLua, true); lua_setfield(sLua, -2, "connected");
@@ -3633,6 +3635,7 @@ bool mod_runtime_host_get_lua_integer(const char *name, int64_t *value) {
     *value = (int64_t)result;
     return true;
 }
+
 #endif
 
 static int l_obj_has_model_extended(lua_State *L) {
@@ -4078,9 +4081,17 @@ static int l_djui_hud_get_screen_height(lua_State *L) {
 static int l_djui_hud_set_color(lua_State *L) {
     u8 color[4];
     for (int i = 0; i < 4; ++i) {
-        lua_Integer component = luaL_checkinteger(L, i + 1);
-        if (component < 0 || component > 255)
+        /* CoopDX's LuaJIT converter accepts numeric values and converts them
+         * to lua_Integer before the native u8 cast. Lua 5.3's
+         * luaL_checkinteger rejects fractional numbers, which OMM's HUD uses
+         * for faded alpha/color values. Keep the native integer conversion
+         * semantics while validating the range before narrowing. */
+        if (!lua_isnumber(L, i + 1))
+            return luaL_argerror(L, i + 1, "RGBA component must be a number");
+        lua_Number number = lua_tonumber(L, i + 1);
+        if (!isfinite((double)number) || number < 0.0 || number > 255.0)
             return luaL_error(L, "djui_hud_set_color: RGBA components must be in the range 0..255");
+        lua_Integer component = (lua_Integer)number;
         color[i] = (u8)component;
     }
     mod_hud_set_color(color[0], color[1], color[2], color[3]);
@@ -6358,6 +6369,15 @@ int32_t mod_runtime_level_value(ModRuntimeLevelValue value) {
 
 static int level_value_index(lua_State *L) {
     const char *key = luaL_checkstring(L, 2);
+    if (!strncmp(key, "fixCollisionBugs", sizeof("fixCollisionBugs") - 1)) {
+        if (sCurrentMod && !sCurrentMod->collision_fix_unavailable_warned) {
+            sCurrentMod->collision_fix_unavailable_warned = true;
+            mod_log("warning", sCurrentMod->name,
+                    "CoopDX fixCollisionBugs flags have no native collision-pipeline adapter; exposing nil so mods can use their upstream optional-feature fallback");
+        }
+        lua_pushnil(L);
+        return 1;
+    }
     for (int i = 0; i < MOD_LEVEL_VALUE_COUNT; ++i) {
         if (!strcmp(key, sLevelSettingNames[i])) {
             lua_pushinteger(L, mod_runtime_level_value((ModRuntimeLevelValue)i));
@@ -6369,6 +6389,14 @@ static int level_value_index(lua_State *L) {
 
 static int level_value_newindex(lua_State *L) {
     const char *key = luaL_checkstring(L, 2);
+    if (!strncmp(key, "fixCollisionBugs", sizeof("fixCollisionBugs") - 1)) {
+        if (sCurrentMod && !sCurrentMod->collision_fix_unavailable_warned) {
+            sCurrentMod->collision_fix_unavailable_warned = true;
+            mod_log("warning", sCurrentMod->name,
+                    "CoopDX fixCollisionBugs flags have no native collision-pipeline adapter; values are unavailable and writes are ignored");
+        }
+        return 0;
+    }
     int field = -1;
     for (int i = 0; i < MOD_LEVEL_VALUE_COUNT; ++i)
         if (!strcmp(key, sLevelSettingNames[i])) { field = i; break; }

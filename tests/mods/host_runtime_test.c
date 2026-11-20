@@ -122,6 +122,7 @@ f32 gGlobalSoundSource[3];
 f32 gDefaultSoundArgs[3];
 s16 gCurrSaveFileNum = 1;
 s16 gCurrLevelNum;
+s16 gCurrCourseNum;
 s16 gCurrAreaIndex;
 u8 gSpecialTripleJump;
 f32 gSineTable[0x1400];
@@ -1328,6 +1329,11 @@ int main(int argc, char **argv) {
             /* Real game loops dispatch a later update after the initial mod
              * load, allowing cross-file initialization callbacks to publish
              * their globals before HUD hooks consume them. */
+            if (getenv("MOD_TEST_OMM_HUD")) {
+                gCurrLevelNum = LEVEL_BOB;
+                gCurrCourseNum = COURSE_BOB;
+                gCurrAreaIndex = 1;
+            }
             gHudDisplay.flags = HUD_DISPLAY_DEFAULT;
             gHudDisplay.lives = 4;
             gHudDisplay.coins = 3;
@@ -1339,13 +1345,17 @@ int main(int argc, char **argv) {
             mod_runtime_before_mario_update(gMarioState);
             mod_runtime_after_mario_update(gMarioState);
             mod_runtime_hud_render_behind();
+            int hud_behind_texture_count = gModHudTestTextureCount;
             mod_runtime_hud_render();
-            printf("host dispatch: texture HUD calls=%d", gModHudTestTextureCount);
-            if (gModHudTestTextureCount > 0)
+            int hud_front_texture_count = gModHudTestTextureCount;
+            printf("host dispatch: texture HUD calls behind=%d front=%d",
+                   hud_behind_texture_count, hud_front_texture_count);
+            if (hud_front_texture_count > 0)
                 printf(" (%dx%d format=%d size=%d)", gModHudTestTextureWidth,
                        gModHudTestTextureHeight, gModHudTestTextureFormat, gModHudTestTextureSize);
             putchar('\n');
-            if (getenv("MOD_TEST_REQUIRE_TEXTURE_HUD") && gModHudTestTextureCount == 0) {
+            if (getenv("MOD_TEST_REQUIRE_TEXTURE_HUD") &&
+                hud_behind_texture_count + hud_front_texture_count == 0) {
                 fprintf(stderr, "mod did not dispatch a texture HUD draw during the host frame\n");
                 mod_runtime_shutdown();
                 return 1;
