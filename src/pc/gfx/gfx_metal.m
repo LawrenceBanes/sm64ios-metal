@@ -1879,54 +1879,60 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     }
     for (size_t i = 0; i < pass_count; ++i) {
         char validation[192] = {0};
-        bool source_valid = ((passes[i].resource_flags & (GFX_SHADER64_RESOURCE_PACK_TEXTURES |
-                            GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ==
-                            (GFX_SHADER64_RESOURCE_PACK_TEXTURES | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ?
-            gfx_shader64_validate_normals_textured_pass_source(passes[i].source, passes[i].source_size,
-                                                              validation, sizeof(validation)) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
-            gfx_shader64_validate_textured_pass_source(passes[i].source, passes[i].source_size,
-                                                       validation, sizeof(validation)) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?
-            gfx_shader64_validate_normals_pass_source(passes[i].source, passes[i].source_size,
-                                                      validation, sizeof(validation)) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
-            gfx_shader64_validate_shadow_pass_source(passes[i].source, passes[i].source_size,
-                                                     validation, sizeof(validation)) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
-            gfx_shader64_validate_lit_pass_source(passes[i].source, passes[i].source_size,
-                                                  validation, sizeof(validation)) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
-            gfx_shader64_validate_depth_pass_source(passes[i].source, passes[i].source_size,
-                                                    validation, sizeof(validation)) :
-            gfx_shader64_validate_pass_source(passes[i].source, passes[i].source_size,
-                                              validation, sizeof(validation));
+        bool has_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
+        bool has_scene_normals = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) != 0u;
+        bool source_valid;
+        if (has_pack_textures && has_scene_normals)
+            source_valid = gfx_shader64_validate_normals_textured_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (has_pack_textures)
+            source_valid = gfx_shader64_validate_textured_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (has_scene_normals)
+            source_valid = gfx_shader64_validate_normals_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP)
+            source_valid = gfx_shader64_validate_shadow_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)
+            source_valid = gfx_shader64_validate_lit_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH)
+            source_valid = gfx_shader64_validate_depth_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else
+            source_valid = gfx_shader64_validate_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
         if (!source_valid) {
             if (error_out && error_size) snprintf(error_out, error_size, "pass %.32s: %.150s", passes[i].id ?: "?", validation);
             gfx_metal_shader64_graph_release(graph); return false;
         }
         size_t capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 2048u;
         char *wrapper = malloc(capacity);
-        bool wrapper_ok = wrapper && ((passes[i].resource_flags & (GFX_SHADER64_RESOURCE_PACK_TEXTURES |
-                                GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ==
-                                (GFX_SHADER64_RESOURCE_PACK_TEXTURES | GFX_SHADER64_RESOURCE_SCENE_NORMALS)) ?
-            gfx_shader64_build_normals_textured_pass_wrapper(passes[i].source, passes[i].source_size,
-                                                            wrapper, capacity) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
-            gfx_shader64_build_textured_pass_wrapper(passes[i].source, passes[i].source_size,
-                                                     wrapper, capacity) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) ?
-            gfx_shader64_build_normals_pass_wrapper(passes[i].source, passes[i].source_size,
-                                                    wrapper, capacity) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
-            gfx_shader64_build_shadow_pass_wrapper(passes[i].source, passes[i].source_size,
-                                                   wrapper, capacity) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
-            gfx_shader64_build_lit_pass_wrapper(passes[i].source, passes[i].source_size,
-                                                wrapper, capacity) :
-            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH) ?
-            gfx_shader64_build_depth_pass_wrapper(passes[i].source, passes[i].source_size, wrapper, capacity) :
-            gfx_shader64_build_pass_wrapper(passes[i].source, passes[i].source_size, wrapper, capacity));
+        bool wrapper_ok = false;
+        if (wrapper) {
+            if (has_pack_textures && has_scene_normals)
+                wrapper_ok = gfx_shader64_build_normals_textured_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (has_pack_textures)
+                wrapper_ok = gfx_shader64_build_textured_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (has_scene_normals)
+                wrapper_ok = gfx_shader64_build_normals_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP)
+                wrapper_ok = gfx_shader64_build_shadow_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT)
+                wrapper_ok = gfx_shader64_build_lit_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_DEPTH)
+                wrapper_ok = gfx_shader64_build_depth_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else
+                wrapper_ok = gfx_shader64_build_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+        }
         if (!wrapper_ok) {
             free(wrapper); if (error_out && error_size) snprintf(error_out, error_size, "could not wrap pass source");
             gfx_metal_shader64_graph_release(graph); return false;

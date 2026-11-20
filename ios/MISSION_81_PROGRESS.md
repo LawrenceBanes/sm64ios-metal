@@ -78,6 +78,7 @@
 
 - Extending API 2 so one fullscreen pass can sample both the reusable depth-derived `sceneNormals` texture and bounded pack-owned PNG textures. Normal stays at texture 1; four pack images stay at slots 4–7; texture count remains buffer 1; params remain buffer 0.
 - Added a separate validated MSL contract and wrapper, enabled the compatible flag combination in shared/UIKit graph validation, and added `NormalTexture64` with a locally authored checker resource. Explicit scene-depth, lighting, and shadow combinations stay rejected due to current overlapping bindings.
-- Host tests and Apple MSL compilation for this increment are pending.
+- `python3 ios/test_shader64_pack.py`: passed, 23 tests including production import of NormalTexture64 and ASan/UBSan ZIP smoke. Shader codegen, project wiring, shell syntax, and `git diff --check` passed. Full `CC=clang tests/run_linux_checks.sh` passed.
+- The first Apple run (workflow `44813432144`) exposed an extra closing parenthesis in Objective-C wrapper selection at `gfx_metal.m:1929`; host checks do not compile that file. The selection was rewritten as explicit branches. The fixed source has passed the local full suite; Apple CI retry is pending.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
