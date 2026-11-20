@@ -103,7 +103,8 @@
 
 - Added a shared compute `frameInfo` uniform with elapsed seconds, clamped frame delta, frame index, and output aspect ratio. It is bound at buffer 2 for every compute node; pipeline reflection requires the declared ABI.
 - Updated the reference compute filters to consume time: ComputeBlur64 varies its blend slightly, and ComputeTexture64 scrolls the imported checker texture. This validates that animation can be authored in a pack kernel without an engine-specific effect implementation.
-- Focused Shader64 validation (26 tests, including importer and ASan/UBSan archive smoke), Metal codegen, project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh` pass. Apple compile-only validation is pending; even after it passes, runtime timing and image output remain unverified.
-- No final `main` merge yet.
+- Focused Shader64 validation (26 tests, including importer and ASan/UBSan archive smoke), Metal codegen, project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh` pass.
+- Commit `fbbd49b81926f7f511b368e737f64a8436269212` passed Apple workflow [44817761017](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44817761017), including full Linux regression and Xcode 27 Metal backend/MSL compilation of both timed compute examples. GPU execution, animation timing, and rendered output remain unverified.
+- Next achievable renderer increment: expose a documented frame context to API 2 fullscreen passes as well, so external atmosphere and screen-space effects can animate without compute. No final `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
