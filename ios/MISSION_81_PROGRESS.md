@@ -99,12 +99,11 @@
 - Commit `dfcb0bbe` was pushed. Apple workflow [44816848250](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44816848250) passed the full Linux suite and Xcode 27 iOS Metal backend plus both compute MSL examples. The GPU kernels were compiled, not run; no device screenshot exists.
 - The pack-texture compute increment is therefore host- and Apple-compiled, but not GPU/runtime-verified.
 
-## Current working increment — animated compute inputs
+## Current working increment — frame context for fullscreen passes
 
-- Added a shared compute `frameInfo` uniform with elapsed seconds, clamped frame delta, frame index, and output aspect ratio. It is bound at buffer 2 for every compute node; pipeline reflection requires the declared ABI.
-- Updated the reference compute filters to consume time: ComputeBlur64 varies its blend slightly, and ComputeTexture64 scrolls the imported checker texture. This validates that animation can be authored in a pack kernel without an engine-specific effect implementation.
-- Focused Shader64 validation (26 tests, including importer and ASan/UBSan archive smoke), Metal codegen, project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh` pass.
-- Commit `fbbd49b81926f7f511b368e737f64a8436269212` passed Apple workflow [44817761017](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44817761017), including full Linux regression and Xcode 27 Metal backend/MSL compilation of both timed compute examples. GPU execution, animation timing, and rendered output remain unverified.
-- Next achievable renderer increment: expose a documented frame context to API 2 fullscreen passes as well, so external atmosphere and screen-space effects can animate without compute. No final `main` merge yet.
+- Added `frameInfo: true` for generic API 2 fullscreen passes, with `shader64_pass_frame` and a fixed binding at fragment buffer 8. The common float4 carries elapsed seconds, clamped frame delta, frame index, and output aspect ratio. This initial variant cannot be combined with the separately bound scene or pack texture interfaces.
+- Added AnimatedGraph64, a source-defined time-varying color pulse, plus C validator/wrapper tests and graph resource-combination tests.
+- Focused Shader64 validation passes (27 tests, including production importer and ASan/UBSan archive smoke), as do Metal codegen, Xcode project wiring, shell syntax, diff check, and full `CC=clang tests/run_linux_checks.sh`. Apple MSL/backend validation is pending. No GPU timing or rendered output is verified.
+- Previous compute-time work is host-tested and Apple-compiled at `fbbd49b8` / workflow `44817761017`. No final `main` merge yet.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

@@ -54,6 +54,12 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_validate_material_texture_source.restype = ctypes.c_int
         cls.api.gfx_shader64_build_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_pass_wrapper.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_frame_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_frame_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_frame_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_frame_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_depth_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_depth_pass_source.restype = ctypes.c_int
@@ -344,6 +350,34 @@ class ShaderPackTests(unittest.TestCase):
         self.assertTrue(self.api.gfx_shader64_build_pass_wrapper(source, len(source), wrapper, len(wrapper)))
         self.assertIn(b"return shader64_pass", wrapper.value)
 
+    def test_frame_aware_fullscreen_contract(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_pass_frame(float4 color, float2 uv, texture2d<float> image, '
+                  b'sampler imageSampler, constant float4 &params, constant float4 &frameInfo) { '
+                  b'(void)uv; (void)image; (void)imageSampler; return color * (1.0 + '
+                  b'params.x * sin(frameInfo.x)); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_frame_pass_source(
+            source, len(source), error, len(error)), error.value)
+        wrapper = ctypes.create_string_buffer(len(source) + 4096)
+        self.assertTrue(self.api.gfx_shader64_build_frame_pass_wrapper(
+            source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"buffer(8)", wrapper.value)
+        self.assertIn(b"shader64_pass_frame", wrapper.value)
+        missing = source.replace(b"frameInfo", b"notFrameInfo")
+        self.assertFalse(self.api.gfx_shader64_validate_frame_pass_source(
+            missing, len(missing), error, len(error)))
+        order = (ctypes.c_ubyte * 4)()
+        frame_graph = (self.GraphPass * 1)(
+            self.GraphPass(b"frame", b"sceneColor", b"present", 1.0, 1, 32))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            frame_graph, 1, 1920, 1080, order, error, len(error)), error.value)
+        compute_frame_graph = (self.GraphPass * 2)(
+            self.GraphPass(b"compute", b"sceneColor", b"filtered", 0.5, 2, 32),
+            self.GraphPass(b"present", b"filtered", b"present", 1.0, 1, 0))
+        self.assertFalse(self.api.gfx_shader64_validate_graph(
+            compute_frame_graph, 2, 1920, 1080, order, error, len(error)))
+
     def test_compute_graph_node_and_limits(self):
         error = ctypes.create_string_buffer(256)
         order = (ctypes.c_ubyte * 4)()
@@ -445,7 +479,7 @@ class ShaderPackTests(unittest.TestCase):
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             conflicting_resources, 1, 1920, 1080, order, error, len(error)))
         invalid_resource = (self.GraphPass * 1)(
-            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 32))
+            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 64))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resource, 1, 1920, 1080, order, error, len(error)))
         oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
@@ -496,7 +530,7 @@ class ShaderPackTests(unittest.TestCase):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
-                         "ComputeBlur64", "ComputeTexture64")
+                         "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -513,13 +547,15 @@ class ShaderPackTests(unittest.TestCase):
                         source, len(source), error, len(error)), f"{pack_id}: {error.value!r}")
                 else:
                     compute_pass = definition.get("type") == "compute"
+                    frame_info_pass = bool(definition.get("frameInfo"))
                     depth_pass = bool(definition.get("sceneDepth"))
                     normals_pass = bool(definition.get("sceneNormals"))
                     lighting_pass = bool(definition.get("sceneLighting"))
                     shadow_pass = bool(definition.get("sceneShadows"))
                     texture_pass = bool(definition.get("packTextures"))
                     combined_normals_textures = normals_pass and texture_pass
-                    validator = ((self.api.gfx_shader64_validate_compute_textured_pass_source
+                    validator = (self.api.gfx_shader64_validate_frame_pass_source if frame_info_pass else
+                                 (self.api.gfx_shader64_validate_compute_textured_pass_source
                                   if texture_pass else self.api.gfx_shader64_validate_compute_pass_source)
                                  if compute_pass else
                                  self.api.gfx_shader64_validate_normals_textured_pass_source if combined_normals_textures else
@@ -533,7 +569,8 @@ class ShaderPackTests(unittest.TestCase):
                                     f"{pack_id}: {error.value!r}")
                     if not compute_pass:
                         wrapper = ctypes.create_string_buffer(len(source) + 4096)
-                        builder = (self.api.gfx_shader64_build_normals_textured_pass_wrapper if combined_normals_textures else
+                        builder = (self.api.gfx_shader64_build_frame_pass_wrapper if frame_info_pass else
+                               self.api.gfx_shader64_build_normals_textured_pass_wrapper if combined_normals_textures else
                                self.api.gfx_shader64_build_textured_pass_wrapper if texture_pass else
                                self.api.gfx_shader64_build_normals_pass_wrapper if normals_pass else
                                self.api.gfx_shader64_build_shadow_pass_wrapper if shadow_pass else
@@ -554,7 +591,8 @@ class ShaderPackTests(unittest.TestCase):
                                    (2 if p.get("sceneLighting") else 0) |
                                    (4 if p.get("sceneShadows") else 0) |
                                    (16 if p.get("sceneNormals") else 0) |
-                                   (8 if p.get("packTextures") else 0)) for p in definitions])
+                                   (8 if p.get("packTextures") else 0) |
+                                   (32 if p.get("frameInfo") else 0)) for p in definitions])
                 order = (ctypes.c_ubyte * 4)()
                 self.assertTrue(self.api.gfx_shader64_validate_graph(
                     graph_passes, len(definitions), 1920, 1080, order, error, len(error)),

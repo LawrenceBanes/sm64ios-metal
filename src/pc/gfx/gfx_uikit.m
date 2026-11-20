@@ -1506,6 +1506,8 @@ static int sm64RenderDiagnosticMode;
             if (sceneShadows && ![sceneShadows isKindOfClass:[NSNumber class]]) passOK = NO;
             id sceneNormals = pass[@"sceneNormals"];
             if (sceneNormals && ![sceneNormals isKindOfClass:[NSNumber class]]) passOK = NO;
+            id frameInfo = pass[@"frameInfo"];
+            if (frameInfo && ![frameInfo isKindOfClass:[NSNumber class]]) passOK = NO;
             id packTextures = pass[@"packTextures"];
             if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
             if ([packTextures boolValue] && (!textureList.count || [sceneDepth boolValue] ||
@@ -1514,6 +1516,8 @@ static int sm64RenderDiagnosticMode;
                 [sceneShadows boolValue])) passOK = NO;
             if (compute && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue] || [sceneNormals boolValue])) passOK = NO;
+            if ([frameInfo boolValue] && (compute || [sceneDepth boolValue] || [sceneLighting boolValue] ||
+                [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }

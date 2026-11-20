@@ -172,6 +172,18 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-compute-texture.air" \
     -o "$shader_dir/shader64-compute-texture.metallib"
 echo "compiled and linked SHADER64 compute with user textures"
 
+frame_wrapper_tool="$output_dir/shader64-wrap-frame-pass"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_frame_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$frame_wrapper_tool"
+frame_source="$repo_dir/ios/shaderpacks/AnimatedGraph64/shaders/pulse.metal"
+"$frame_wrapper_tool" "$frame_source" > "$shader_dir/shader64-animated-graph.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-animated-graph.metal" \
+    -o "$shader_dir/shader64-animated-graph.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-animated-graph.air" \
+    -o "$shader_dir/shader64-animated-graph.metallib"
+echo "compiled and linked SHADER64 frame-aware fullscreen reference"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
