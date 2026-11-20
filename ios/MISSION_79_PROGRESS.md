@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current pushed source commit before the light-shaft intensity adjustment: `93d33300` (fractional exposure); Apple SDK/MSL and Linux validation passed in [run 44711602870](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44711602870). Latest completed full private IPA [44711031225](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44711031225) builds source `2af1f4af` and is privately uploaded; a newer full build for `93d33300` is running in [44711788932](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44711788932).
+- Current pushed source commit: `4eb283b2` (adjustable screen-space light-shaft intensity); Apple SDK/MSL and Linux CI passed in [run 44712073499](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44712073499). Full IPA `44711031225` from `2af1f4af` is privately uploaded; newer full app builds for `93d33300` and `4eb283b2` are running as [44711788932](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44711788932) and [44712294896](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44712294896).
 - Full IPA workflow [44707824529](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707824529) succeeded for source `6866de41`, including HUD isolation and shadow-map reuse; it predates the adjustable Bloom UI and following controls.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
@@ -53,10 +53,10 @@
 - Corrected saved exposure to retain fractional EV values and added bounded quarter-stop adjustments from −2 to +2 EV. The developer exposure control now provides increase, decrease, and reset actions; presets/reset restore neutral exposure.
 - Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple SDK/MSL and Linux CI validation passed in [run 44711602870](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44711602870).
 
-## M79-E adjustable light-shaft intensity (working tree)
+## M79-E adjustable light-shaft intensity (`4eb283b2`)
 
 - Added bounded, persistent 0.25-step intensity scaling on top of the existing Low / Standard / High screen-space light-shaft sample profiles. The control is explicitly described as screen-space and not volumetric; the intensity multiplier feeds the actual depth-sampled compute kernel.
-- Focused state/source/shader checks, full Clang Linux regression suite, and direct ASan/UBSan state tests pass. Apple validation is pending.
+- Focused state/source/shader checks, full Clang Linux regression suite, and direct ASan/UBSan state tests pass. Apple SDK/MSL and Linux CI validation passed in [run 44712073499](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44712073499).
 
 ## Milestones
 
@@ -183,4 +183,4 @@
 
 The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Next: commit/push adjustable light-shaft intensity, run Apple validation, monitor IPA workflows `44711031225` and `44711788932`, and verify their private artifacts. Then build from the newest validated source and continue remaining renderer reliability items. Physical-device visual/performance evidence remains required.
+Next: monitor IPA workflows `44711031225`, `44711788932`, and `44712294896`, verify their private artifacts, and continue remaining renderer reliability items. Physical-device visual/performance evidence remains required.
