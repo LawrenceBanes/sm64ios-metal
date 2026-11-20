@@ -227,3 +227,12 @@ struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_step(
     }
     return gfx_metal_fog_adjustments_sanitize(adjustments);
 }
+
+uint32_t gfx_metal_tone_mapping_sanitize(uint32_t mode) {
+    return mode <= GFX_METAL_TONE_REINHARD ? mode : GFX_METAL_TONE_ACES;
+}
+
+const char *gfx_metal_tone_mapping_name_for_mode(uint32_t mode) {
+    return gfx_metal_tone_mapping_sanitize(mode) == GFX_METAL_TONE_REINHARD ?
+        "Reinhard" : "ACES";
+}

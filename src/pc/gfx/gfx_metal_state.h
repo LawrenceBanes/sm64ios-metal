@@ -79,6 +79,11 @@ enum GfxMetalFogParameter {
     GFX_METAL_FOG_START = 1,
 };
 
+enum GfxMetalToneMappingMode {
+    GFX_METAL_TONE_ACES = 0,
+    GFX_METAL_TONE_REINHARD = 1,
+};
+
 struct GfxMetalFogAdjustments {
     float density_scale;
     float start_scale;
@@ -139,5 +144,7 @@ struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_sanitize(
     struct GfxMetalFogAdjustments adjustments);
 struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_step(
     struct GfxMetalFogAdjustments adjustments, uint32_t parameter, int direction);
+uint32_t gfx_metal_tone_mapping_sanitize(uint32_t mode);
+const char *gfx_metal_tone_mapping_name_for_mode(uint32_t mode);
 
 #endif

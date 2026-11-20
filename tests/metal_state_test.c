@@ -45,6 +45,9 @@ int main(void) {
     assert(ao.radius_scale == 1.0f && ao.bias_offset == 0.0f && ao.intensity_scale == 1.0f);
     struct GfxMetalFogAdjustments fog = gfx_metal_fog_adjustments_default();
     assert(fog.density_scale == 1.0f && fog.start_scale == 1.0f);
+    assert(gfx_metal_tone_mapping_sanitize(GFX_METAL_TONE_REINHARD) == GFX_METAL_TONE_REINHARD);
+    assert(gfx_metal_tone_mapping_sanitize(99u) == GFX_METAL_TONE_ACES);
+    assert(strcmp(gfx_metal_tone_mapping_name_for_mode(GFX_METAL_TONE_REINHARD), "Reinhard") == 0);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_DENSITY, -1);
     fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_START, 1);
     assert(fog.density_scale == 0.75f && fog.start_scale == 1.25f);

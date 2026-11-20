@@ -107,6 +107,7 @@ static int sm64RenderDiagnosticMode;
 - (void)openColorSettings;
 - (void)openAOSettings;
 - (void)openFogSettings;
+- (void)openToneSettings;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -587,7 +588,7 @@ static int sm64RenderDiagnosticMode;
     self.ssaoButton = [self buttonWithTitle:@"SSAO: Off" action:@selector(toggleSSAO)];
     self.ssaoButton.frame = CGRectMake(14, 244, 140, 30);
     [self.graphicsPanel addSubview:self.ssaoButton];
-    self.postButton = [self buttonWithTitle:@"Tone: Off" action:@selector(togglePostprocessing)];
+    self.postButton = [self buttonWithTitle:@"Tone: Off" action:@selector(openToneSettings)];
     self.postButton.frame = CGRectMake(158, 244, 82, 30);
     [self.graphicsPanel addSubview:self.postButton];
     self.fxaaButton = [self buttonWithTitle:@"FXAA: Off" action:@selector(toggleFXAA)];
@@ -742,7 +743,8 @@ static int sm64RenderDiagnosticMode;
     uint32_t ssao_mode = gfx_metal_ssao_debug_mode();
     [self.ssaoButton setTitle:[NSString stringWithUTF8String:ssao_modes[MIN(ssao_mode, 3u)]]
                      forState:UIControlStateNormal];
-    [self.postButton setTitle:gfx_metal_post_enabled() ? @"Tone: On" : @"Tone: Off"
+    [self.postButton setTitle:gfx_metal_post_enabled() ?
+        [NSString stringWithFormat:@"Tone: %@", [NSString stringWithUTF8String:gfx_metal_tone_mapping_name()]] : @"Tone: Off"
                      forState:UIControlStateNormal];
     [self.fxaaButton setTitle:gfx_metal_fxaa_enabled() ? @"FXAA: On" : @"FXAA: Off"
                      forState:UIControlStateNormal];
@@ -827,8 +829,27 @@ static int sm64RenderDiagnosticMode;
 
 - (void)togglePostprocessing {
 #if defined(RAPI_METAL)
-    gfx_metal_set_post_enabled(!gfx_metal_post_enabled());
-    [self refreshGraphicsSettings];
+    [self openToneSettings];
+#endif
+}
+
+- (void)openToneSettings {
+#if defined(RAPI_METAL)
+    BOOL enabled = gfx_metal_post_enabled();
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Tone Mapping"
+        message:@"Tone mapping runs after bloom and color grading; the HUD is composited separately."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:enabled ? @"Disable tone mapping" : @"Enable tone mapping"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            gfx_metal_set_post_enabled(!enabled);
+            [self refreshGraphicsSettings];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Use ACES-inspired curve" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_set_tone_mapping_mode(0u); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Use Reinhard curve" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_set_tone_mapping_mode(1u); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 #endif
 }
 
@@ -1032,6 +1053,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_ssao_enabled(false);
             gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(false);
+            gfx_metal_set_tone_mapping_mode(0u);
             gfx_metal_set_fxaa_enabled(false);
             gfx_metal_set_bloom_enabled(false);
             gfx_metal_set_bloom_profile(1u);
@@ -1068,6 +1090,7 @@ static int sm64RenderDiagnosticMode;
                                        (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
             gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(true);
+            gfx_metal_set_tone_mapping_mode(preset == GFX_METAL_PRESET_PERFORMANCE ? 1u : 0u);
             gfx_metal_set_fxaa_enabled(preset != GFX_METAL_PRESET_PERFORMANCE);
             gfx_metal_set_bloom_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_bloom_profile(preset == GFX_METAL_PRESET_PERFORMANCE ? 0u :
@@ -1136,6 +1159,7 @@ static int sm64RenderDiagnosticMode;
 #if defined(RAPI_METAL)
     gfx_metal_set_ssao_enabled(false);
     gfx_metal_set_post_enabled(false);
+    gfx_metal_set_tone_mapping_mode(0u);
     gfx_metal_set_fxaa_enabled(false);
     gfx_metal_set_fog_enabled(false);
     gfx_metal_set_bloom_enabled(false);

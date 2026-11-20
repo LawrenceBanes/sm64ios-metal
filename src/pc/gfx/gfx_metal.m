@@ -106,6 +106,7 @@ static uint32_t metal_ssao_debug;
 static uint32_t metal_ssao_quality;
 static struct GfxMetalAOAdjustments metal_ao_adjustments = { 1.0f, 0.0f, 1.0f };
 static bool metal_post_enabled;
+static uint32_t metal_tone_mapping_mode;
 static bool metal_fxaa_enabled;
 static bool metal_effects_enabled;
 static float metal_exposure_stops;
@@ -294,6 +295,7 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
         [defaults objectForKey:@"SM64MetalAOIntensity"] ? (float)[defaults doubleForKey:@"SM64MetalAOIntensity"] : 1.0f
     });
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
+    metal_tone_mapping_mode = (uint32_t)MIN(1, MAX(0, [defaults integerForKey:@"SM64MetalToneMappingMode"]));
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_effects_enabled = ![defaults objectForKey:@"SM64MetalEffectsEnabled"] ||
                             [defaults boolForKey:@"SM64MetalEffectsEnabled"];
@@ -538,6 +540,17 @@ bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return me
 void gfx_metal_set_post_enabled(bool enabled) {
     @synchronized ([NSObject class]) { metal_post_enabled = enabled; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalPostEnabled"];
+}
+uint32_t gfx_metal_tone_mapping_mode(void) {
+    @synchronized ([NSObject class]) { return metal_tone_mapping_mode; }
+}
+void gfx_metal_set_tone_mapping_mode(uint32_t mode) {
+    uint32_t sanitized = gfx_metal_tone_mapping_sanitize(mode);
+    @synchronized ([NSObject class]) { metal_tone_mapping_mode = sanitized; metal_offscreen_runtime_failed = false; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalToneMappingMode"];
+}
+const char *gfx_metal_tone_mapping_name(void) {
+    return gfx_metal_tone_mapping_name_for_mode(gfx_metal_tone_mapping_mode());
 }
 bool gfx_metal_fxaa_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_fxaa_enabled; } }
 void gfx_metal_set_fxaa_enabled(bool enabled) {
@@ -1588,7 +1601,8 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     vector_float4 fog_color = fog_colors[fog_profile];
     struct GfxMetalBloomSettings bloom_settings = gfx_metal_bloom_settings(gfx_metal_bloom_profile());
     vector_float4 bloom_params = { gfx_metal_bloom_enabled() ? 1.0f : 0.0f,
-                                   bloom_settings.intensity, bloom_settings.threshold, 0.0f };
+                                   bloom_settings.intensity, bloom_settings.threshold,
+                                   (float)gfx_metal_tone_mapping_mode() };
     /* saturation, contrast, warm/cool red-blue bias, brightness offset */
     static const vector_float4 grades[4] = {
         { 1.00f, 1.00f, 0.00f, 0.00f }, /* neutral */
