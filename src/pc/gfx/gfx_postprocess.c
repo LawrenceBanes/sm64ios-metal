@@ -64,3 +64,29 @@ bool gfx_postprocess_unproject_depth(const float inverse_projection[4][4],
     }
     return true;
 }
+
+bool gfx_postprocess_project_direction(const float view[4][4], const float projection[4][4],
+                                       const float world_direction[3], float screen_uv[2]) {
+    if (!view || !projection || !world_direction || !screen_uv) return false;
+    double view_direction[3] = {0.0, 0.0, 0.0};
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            if (!isfinite(view[r][c]) || !isfinite(projection[r][c])) return false;
+    for (int c = 0; c < 3; ++c) {
+        if (!isfinite(world_direction[c])) return false;
+        for (int r = 0; r < 3; ++r)
+            view_direction[c] += (double)world_direction[r] * view[r][c];
+    }
+    double clip[4] = {0.0, 0.0, 0.0, 0.0};
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 3; ++r)
+            clip[c] += view_direction[r] * projection[r][c];
+    if (!isfinite(clip[3]) || clip[3] <= 1.0e-9) return false;
+    double u = clip[0] / clip[3] * 0.5 + 0.5;
+    double v = 0.5 - clip[1] / clip[3] * 0.5;
+    if (!isfinite(u) || !isfinite(v) || u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0)
+        return false;
+    screen_uv[0] = (float)u;
+    screen_uv[1] = (float)v;
+    return true;
+}

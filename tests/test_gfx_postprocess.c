@@ -33,6 +33,18 @@ static void test_projection_and_bad_inputs(void) {
     assert(!gfx_postprocess_invert_matrix(singular, inverse));
     assert(!gfx_postprocess_unproject_depth(inverse, .5f, .5f, 1.0f, point));
     assert(!gfx_postprocess_unproject_depth(inverse, NAN, .5f, .5f, point));
+    const float identity_view[4][4] = {
+        {1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0,0,1}
+    };
+    const float directional_projection[4][4] = {
+        {1,0,0,0}, {0,1,0,0}, {0,0,0,-1}, {0,0,-0.1f,0}
+    };
+    const float sun_direction[3] = {0.5f, 0.25f, -1.0f};
+    float sun_uv[2];
+    assert(gfx_postprocess_project_direction(identity_view, directional_projection, sun_direction, sun_uv));
+    assert(fabsf(sun_uv[0] - 0.75f) < 1e-6f && fabsf(sun_uv[1] - 0.375f) < 1e-6f);
+    const float behind_sun[3] = {0.0f, 0.0f, 1.0f};
+    assert(!gfx_postprocess_project_direction(identity_view, directional_projection, behind_sun, sun_uv));
 }
 
 int main(void) {

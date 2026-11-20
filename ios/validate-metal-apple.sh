@@ -67,7 +67,7 @@ xcrun --sdk macosx clang -isysroot "$host_sdk" -std=gnu11 \
     -o "$output_dir/metal_shader_emit"
 "$output_dir/metal_shader_emit" "$shader_dir"
 
-echo "Compiling generated Metal shaders, including SSAO, bloom, and shadow depth shaders, with the iOS Metal compiler and linking metallibs."
+echo "Compiling generated Metal shaders, including SSAO, bloom, shadow depth, and screen-space light-shaft shaders, with the iOS Metal compiler and linking metallibs."
 for source in "$shader_dir"/*.metal; do
     name=$(basename "$source" .metal)
     xcrun --sdk iphoneos metal -c "$source" -o "$shader_dir/$name.air"

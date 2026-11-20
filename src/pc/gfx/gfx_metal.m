@@ -84,13 +84,16 @@ static id<MTLTexture> metal_bloom_extract_texture;
 static id<MTLTexture> metal_bloom_temp_texture;
 static id<MTLTexture> metal_bloom_output_texture;
 static id<MTLTexture> metal_shadow_texture;
+static id<MTLTexture> metal_god_ray_texture;
 static id<MTLRenderPipelineState> metal_shadow_pipeline;
+static id<MTLComputePipelineState> metal_god_ray_pipeline;
 static id<MTLDepthStencilState> metal_shadow_depth_state;
 static id<MTLBuffer> metal_shadow_vertex_buffer;
 static float (*metal_shadow_world_positions)[3];
 static struct GfxShadowMapTransform metal_shadow_transform;
 static bool metal_shadow_transform_valid;
 static NSUInteger metal_shadow_texture_size;
+static NSUInteger metal_god_ray_width, metal_god_ray_height;
 static NSUInteger metal_ssao_width, metal_ssao_height;
 static NSUInteger metal_bloom_width, metal_bloom_height;
 static bool metal_ssao_is_enabled;
@@ -107,6 +110,8 @@ static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
 static bool metal_shadows_is_enabled;
 static uint32_t metal_shadow_resolution = 512u;
+static bool metal_god_rays_is_enabled;
+static uint32_t metal_god_ray_quality = 1u;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -217,6 +222,8 @@ static void gfx_metal_release_render_targets(void) {
     [metal_bloom_temp_texture release]; metal_bloom_temp_texture = nil;
     [metal_bloom_output_texture release]; metal_bloom_output_texture = nil;
     [metal_shadow_texture release]; metal_shadow_texture = nil;
+    [metal_god_ray_texture release]; metal_god_ray_texture = nil;
+    metal_god_ray_width = metal_god_ray_height = 0;
     metal_shadow_texture_size = 0;
     metal_shadow_transform_valid = false;
     metal_ssao_width = metal_ssao_height = 0;
@@ -228,6 +235,7 @@ static void gfx_metal_release_render_targets(void) {
         metal_performance_stats.ssao_pixels = 0;
         metal_performance_stats.bloom_pixels = 0;
         metal_performance_stats.shadow_triangles = 0;
+        metal_performance_stats.god_ray_pixels = 0;
         metal_performance_stats.estimated_target_bytes = 0;
     }
 }
@@ -268,6 +276,10 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     metal_effects_enabled = ![defaults objectForKey:@"SM64MetalEffectsEnabled"] ||
                             [defaults boolForKey:@"SM64MetalEffectsEnabled"];
     metal_shadows_is_enabled = [defaults boolForKey:@"SM64MetalShadowsEnabled"];
+    metal_god_rays_is_enabled = [defaults boolForKey:@"SM64MetalGodRaysEnabled"];
+    NSInteger saved_ray_quality = [defaults integerForKey:@"SM64MetalGodRayQuality"];
+    metal_god_ray_quality = [defaults objectForKey:@"SM64MetalGodRayQuality"] ?
+        (uint32_t)MIN(2, MAX(0, saved_ray_quality)) : 1u;
     NSInteger saved_shadow_resolution = [defaults integerForKey:@"SM64MetalShadowResolution"];
     metal_shadow_resolution = saved_shadow_resolution == 1024 || saved_shadow_resolution == 2048 ?
                               (uint32_t)saved_shadow_resolution : 512u;
@@ -363,6 +375,7 @@ void gfx_metal_set_effects_enabled(bool enabled) {
             metal_performance_stats.ssao_pixels = 0;
             metal_performance_stats.bloom_pixels = 0;
             metal_performance_stats.shadow_triangles = 0;
+            metal_performance_stats.god_ray_pixels = 0;
         }
     }
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalEffectsEnabled"];
@@ -399,6 +412,29 @@ void gfx_metal_cycle_shadow_resolution(void) {
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)next forKey:@"SM64MetalShadowResolution"];
     [metal_shadow_texture release]; metal_shadow_texture = nil;
     metal_shadow_texture_size = 0;
+}
+bool gfx_metal_god_rays_enabled(void) {
+    @synchronized ([NSObject class]) { return metal_effects_enabled && metal_god_rays_is_enabled; }
+}
+void gfx_metal_set_god_rays_enabled(bool enabled) {
+    @synchronized ([NSObject class]) {
+        metal_god_rays_is_enabled = enabled;
+        metal_offscreen_runtime_failed = false;
+        if (!enabled) metal_performance_stats.god_ray_pixels = 0;
+    }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalGodRaysEnabled"];
+    gfx_metal_release_render_targets();
+}
+uint32_t gfx_metal_god_ray_quality(void) {
+    @synchronized ([NSObject class]) { return metal_god_ray_quality; }
+}
+void gfx_metal_set_god_ray_quality(uint32_t quality) {
+    uint32_t sanitized = MIN(quality, 2u);
+    @synchronized ([NSObject class]) { metal_god_ray_quality = sanitized; }
+    [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalGodRayQuality"];
+}
+void gfx_metal_cycle_god_ray_quality(void) {
+    gfx_metal_set_god_ray_quality((gfx_metal_god_ray_quality() + 1u) % 3u);
 }
 bool gfx_metal_post_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled && metal_post_enabled; } }
 void gfx_metal_set_post_enabled(bool enabled) {
@@ -1186,7 +1222,7 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
     if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled() &&
         !gfx_metal_fxaa_enabled() && !gfx_metal_post_enabled() && !gfx_metal_fog_enabled() &&
         !gfx_metal_bloom_enabled() && gfx_metal_color_grade() == 0u && gfx_metal_sky_preset() == 0u &&
-        !gfx_metal_shadows_enabled()) return false;
+        !gfx_metal_shadows_enabled() && !gfx_metal_god_rays_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -1198,7 +1234,7 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         gfx_metal_fallback_to_direct("invalid drawable dimensions or scale");
         return false;
     }
-    NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled()) ? 1u : metal_settings.sample_count;
+    NSUInteger samples = (gfx_metal_ssao_enabled() || gfx_metal_shadows_enabled() || gfx_metal_god_rays_enabled()) ? 1u : metal_settings.sample_count;
     BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
         metal_target_samples == samples && metal_depth_texture != nil &&
         (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
@@ -1208,6 +1244,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
          metal_bloom_output_texture && metal_bloom_width == (size.width + 3u) / 4u &&
          metal_bloom_height == (size.height + 3u) / 4u)) &&
         (!gfx_metal_shadows_enabled() || (metal_shadow_texture && metal_shadow_texture_size == gfx_metal_shadow_resolution())) &&
+        (!gfx_metal_god_rays_enabled() || (metal_god_ray_texture &&
+         metal_god_ray_width == (size.width + 3u) / 4u && metal_god_ray_height == (size.height + 3u) / 4u)) &&
         (samples > 1 ? (metal_multisample_color && metal_resolve_texture) : metal_color_target != nil);
     if (target_ready) return true;
 
@@ -1267,13 +1305,29 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
             metal_bloom_output_texture.label = @"SM64 bloom vertical blur";
         }
     }
+    if (gfx_metal_god_rays_enabled()) {
+        NSUInteger ray_width = (size.width + 3u) / 4u;
+        NSUInteger ray_height = (size.height + 3u) / 4u;
+        MTLTextureDescriptor *rays = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                                                                         width:ray_width height:ray_height mipmapped:NO];
+        rays.storageMode = MTLStorageModePrivate;
+        rays.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        metal_god_ray_texture = [metal_device newTextureWithDescriptor:rays];
+        if (metal_god_ray_texture) {
+            metal_god_ray_width = ray_width;
+            metal_god_ray_height = ray_height;
+            metal_god_ray_texture.label = @"SM64 depth-occluded light shafts";
+        }
+    }
     if ((samples > 1 && (!metal_multisample_color || !metal_resolve_texture)) ||
         (samples == 1 && !metal_color_target) || !depth ||
         (gfx_metal_ssao_enabled() && (!metal_ssao_texture || !metal_ssao_filtered_texture)) ||
-        (gfx_metal_bloom_enabled() && (!metal_bloom_extract_texture || !metal_bloom_temp_texture || !metal_bloom_output_texture))) {
+        (gfx_metal_bloom_enabled() && (!metal_bloom_extract_texture || !metal_bloom_temp_texture || !metal_bloom_output_texture)) ||
+        (gfx_metal_god_rays_enabled() && !metal_god_ray_texture)) {
         gfx_metal_release_render_targets();
         if (gfx_metal_ssao_enabled()) gfx_metal_set_ssao_enabled(false);
         if (gfx_metal_bloom_enabled()) gfx_metal_set_bloom_enabled(false);
+        if (gfx_metal_god_rays_enabled()) gfx_metal_set_god_rays_enabled(false);
         gfx_metal_fallback_to_direct("offscreen color/depth/AO allocation failed");
         return false;
     }
@@ -1289,6 +1343,8 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         estimated_bytes += (uint64_t)metal_bloom_width * metal_bloom_height * 24u;
     if (gfx_metal_shadows_enabled())
         estimated_bytes += (uint64_t)metal_shadow_texture_size * metal_shadow_texture_size * 4u;
+    if (gfx_metal_god_rays_enabled())
+        estimated_bytes += (uint64_t)metal_god_ray_width * metal_god_ray_height;
     @synchronized ([NSObject class]) { metal_performance_stats.estimated_target_bytes = estimated_bytes; }
     gfx_ios_diag_log("Metal offscreen targets ready size=%lux%lu scale=%u%% samples=%lu color=%@ resolve=%@ depth=%@", (unsigned long)size.width, (unsigned long)size.height, metal_settings.render_scale_percent, (unsigned long)samples, samples > 1 ? metal_multisample_color : metal_color_target, samples > 1 ? metal_resolve_texture : nil, depth);
     return true;
@@ -1322,6 +1378,7 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
      * shadow pass did not produce a map. This keeps the shared presentation
      * pipeline's resource bindings deterministic on the Classic path. */
     [encoder setFragmentTexture:(metal_shadow_texture ?: metal_depth_texture) atIndex:4];
+    [encoder setFragmentTexture:(metal_god_ray_texture ?: metal_bloom_output_texture ?: source) atIndex:6];
     uint32_t debug_mode = gfx_metal_ssao_debug_mode();
     vector_uint4 present_flags = { gfx_metal_ssao_enabled() ? 1u : 0u,
                                    debug_mode == 2u ? 1u : (debug_mode == 3u ? 2u : 0u),
@@ -1389,6 +1446,8 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setFragmentBytes:&shadow_up_min length:sizeof(shadow_up_min) atIndex:9];
     [encoder setFragmentBytes:&shadow_forward_min length:sizeof(shadow_forward_min) atIndex:10];
     [encoder setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:11];
+    float ray_params = gfx_metal_god_rays_enabled() ? 1.0f : 0.0f;
+    [encoder setFragmentBytes:&ray_params length:sizeof(ray_params) atIndex:12];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     return true;
@@ -1464,6 +1523,56 @@ static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
     @synchronized ([NSObject class]) {
         metal_performance_stats.ssao_pixels = width * height;
     }
+    return true;
+}
+
+static bool gfx_metal_ensure_god_ray_pipeline(void) {
+    if (metal_god_ray_pipeline) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_god_ray_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    id<MTLFunction> function = library ? [library newFunctionWithName:@"sm64_god_rays"] : nil;
+    if (!function) {
+        gfx_ios_diag_log("Metal god-ray MSL compilation failed: %s", error.localizedDescription.UTF8String ?: "function missing");
+        [library release];
+        return false;
+    }
+    metal_god_ray_pipeline = [metal_device newComputePipelineStateWithFunction:function error:&error];
+    [function release]; [library release];
+    if (!metal_god_ray_pipeline) {
+        gfx_ios_diag_log("Metal god-ray compute pipeline creation failed: %s", error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    return true;
+}
+
+static bool gfx_metal_encode_god_rays(id<MTLCommandBuffer> command) {
+    if (!gfx_metal_god_rays_enabled()) return true;
+    if (!metal_depth_texture || !metal_god_ray_texture || !gfx_metal_ensure_god_ray_pipeline()) return false;
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    float sun_uv[2] = { -2.0f, -2.0f };
+    const float sun_direction[3] = { 0.35f, 1.0f, 0.25f };
+    if (capture.has_view_matrix && capture.has_projection_matrix)
+        (void)gfx_postprocess_project_direction(capture.view_matrix, capture.projection_matrix,
+                                                sun_direction, sun_uv);
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    if (!encoder) return false;
+    static const uint32_t quality_samples[] = { 4u, 8u, 12u };
+    uint32_t quality = gfx_metal_god_ray_quality();
+    float strength = quality == 0 ? 0.35f : (quality == 1 ? 0.55f : 0.75f);
+    uint32_t sample_count = quality_samples[quality];
+    [encoder setComputePipelineState:metal_god_ray_pipeline];
+    [encoder setTexture:metal_depth_texture atIndex:0];
+    [encoder setTexture:metal_god_ray_texture atIndex:1];
+    [encoder setBytes:sun_uv length:sizeof(sun_uv) atIndex:0];
+    [encoder setBytes:&strength length:sizeof(strength) atIndex:1];
+    [encoder setBytes:&sample_count length:sizeof(sample_count) atIndex:2];
+    NSUInteger width = metal_god_ray_width, height = metal_god_ray_height;
+    NSUInteger tw = metal_god_ray_pipeline.threadExecutionWidth;
+    NSUInteger th = MAX(1u, metal_god_ray_pipeline.maxTotalThreadsPerThreadgroup / tw);
+    [encoder dispatchThreads:MTLSizeMake(width, height, 1) threadsPerThreadgroup:MTLSizeMake(tw, th, 1)];
+    [encoder endEncoding];
+    @synchronized ([NSObject class]) { metal_performance_stats.god_ray_pixels = width * height; }
     return true;
 }
 
@@ -1809,6 +1918,10 @@ static void gfx_metal_end_frame(void) {
         gfx_metal_set_ssao_enabled(false);
         gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
     }
+    if (!gfx_metal_encode_god_rays(metal_command)) {
+        gfx_metal_set_god_rays_enabled(false);
+        gfx_ios_diag_log("Metal screen-space light shafts disabled after depth or compute-pipeline failure");
+    }
     if (!gfx_metal_encode_shadows(metal_command)) {
         metal_shadow_transform_valid = false;
         @synchronized ([NSObject class]) { metal_performance_stats.shadow_triangles = 0; }
@@ -1922,6 +2035,7 @@ static void gfx_metal_shutdown(void) {
     [metal_bloom_extract_pipeline release]; metal_bloom_extract_pipeline = nil;
     [metal_bloom_blur_pipeline release]; metal_bloom_blur_pipeline = nil;
     [metal_shadow_pipeline release]; metal_shadow_pipeline = nil;
+    [metal_god_ray_pipeline release]; metal_god_ray_pipeline = nil;
     [metal_shadow_depth_state release]; metal_shadow_depth_state = nil;
     [metal_shadow_vertex_buffer release]; metal_shadow_vertex_buffer = nil;
     free(metal_shadow_world_positions); metal_shadow_world_positions = NULL;

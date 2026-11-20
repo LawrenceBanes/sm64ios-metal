@@ -95,6 +95,18 @@ static int emit_shadow_shader(const char *directory) {
     return ok;
 }
 
+static int emit_god_ray_shader(const char *directory) {
+    char path[1024];
+    int length = snprintf(path, sizeof(path), "%s/%s.metal", directory, "god_rays");
+    if (length <= 0 || (size_t)length >= sizeof(path)) return 0;
+    FILE *file = fopen(path, "wb");
+    if (!file) return 0;
+    const char *source = gfx_metal_god_ray_shader_source();
+    size_t written = fwrite(source, 1, strlen(source), file);
+    int close_result = fclose(file);
+    return written == strlen(source) && close_result == 0;
+}
+
 static int emit(const char *directory, const char *name, const uint8_t rgb[4],
                 const uint8_t alpha[4], uint32_t options) {
     return emit_shader_id(directory, name, make_shader(rgb, alpha, options));
@@ -128,5 +140,5 @@ int main(int argc, char **argv) {
            emit_shader_id(argv[1], "wsc3_dual_cutout", SHADER_OPT_SCENE_MATERIAL | SHADER_SCENE_TEX0 |
                                                          SHADER_SCENE_TEX1 | SHADER_SCENE_CUTOUT) &&
            emit_present_shader(argv[1]) && emit_ssao_shader(argv[1]) && emit_bloom_shader(argv[1]) &&
-           emit_shadow_shader(argv[1]) ? 0 : 1;
+           emit_shadow_shader(argv[1]) && emit_god_ray_shader(argv[1]) ? 0 : 1;
 }

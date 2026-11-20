@@ -67,14 +67,22 @@ def main() -> None:
             "Apple validation must compile the production bloom compute source")
     require('"shadow_depth"' in shader_emit and "gfx_metal_shadow_shader_source" in shader_emit,
             "Apple validation must compile the production shadow-depth vertex source")
+    require('"god_rays"' in shader_emit and "gfx_metal_god_ray_shader_source" in shader_emit,
+            "Apple validation must compile the production screen-space light-shaft kernel")
     require("gfx_metal_encode_shadows(metal_command)" in metal and
             "setFragmentTexture:(metal_shadow_texture ?: metal_depth_texture) atIndex:4" in metal and
             "setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:11" in metal,
             "directional depth pass must feed the production final-pass receiver bindings")
     require("shadowMap.sample(shadowSampler" in shader_c and "shadowRanges.w>0.0" in shader_c,
             "receiver shader must sample the depth map with bounded PCF only when a valid fit exists")
+    require("kernel void sm64_god_rays" in shader_c and "depthTex.read(p).r>=0.999999" in shader_c and
+            "gfx_postprocess_project_direction" in metal,
+            "light shafts must use depth occlusion and project the directional source through the camera")
     require("openShadowSettings" in uikit and "gfx_metal_cycle_shadow_resolution" in uikit,
             "developer UI must expose a shadow toggle and resolution control")
+    require("openGodRaySettings" in uikit and "gfx_metal_cycle_god_ray_quality" in uikit and
+            "quarter-resolution screen-space approximation" in uikit,
+            "developer UI must expose and correctly label the screen-space light-shaft approximation")
 
     for token in (
         "supportsTextureSampleCount:2", "supportsTextureSampleCount:4",

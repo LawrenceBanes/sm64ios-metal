@@ -11,5 +11,8 @@ bool gfx_postprocess_invert_matrix(const float matrix[4][4], float inverse[4][4]
 bool gfx_postprocess_unproject_depth(const float inverse_projection[4][4],
                                      float u, float v, float depth,
                                      float position[3]);
+/* Projects a world-space direction (w=0) through row-vector view/projection matrices. */
+bool gfx_postprocess_project_direction(const float view[4][4], const float projection[4][4],
+                                       const float world_direction[3], float screen_uv[2]);
 
 #endif

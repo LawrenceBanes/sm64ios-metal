@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `945e6467b7ce90f7e77580071c66eb3b3c5c7536` (latest pushed); native shadow-map integration is being validated.
+- Current pushed source commit: `9794d8bfd89be99ca57683069dc061a2c0211f6c` (full iPhoneOS/IPA workflow passed); screen-space light-shaft work is in the current uncommitted iteration.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -79,7 +79,8 @@
 - Added bounded CPU math for directional-light basis construction, stabilized light-space bounds, and world-point projection to shadow-map clip/UV/depth coordinates. XY projection now uses the stabilized square extent; regression tests include asymmetric bounds.
 - Added a Depth32Float map, depth-only Metal pipeline, bounded conversion of up to 8,192 captured world-space triangles, map submission, and 3x3 PCF receiver sampling in final composition. The developer Graphics panel exposes Off/On and 512/1024/2048 resolution choices. Enhanced and Cinematic presets enable shadows at 512 and 1024 respectively; Classic/Performance keep them off. Shadow allocations and pipeline resources are released on shutdown/settings changes.
 - The map currently uses a fixed directional vector and darkens the existing rasterized color based on the actual depth comparison. It is a first directional shadow pass, not a full physically lit sunlight model; actor/material-specific shadow exclusions, cascades, and dynamic/static caster separation remain open.
-- Focused shadow math, shader-emission/source checks, and the full Linux suite pass. The `945e6467` Apple SDK validation workflow [44700879289](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44700879289) passed before this integration was added; a new Apple run is still required. No physical GPU output is verified.
+- Factored the engine's row-vector object-transform application into the portable shadow module and tested nonuniform scale, translation, and non-finite matrices.
+- Focused shadow math, shader-emission/source checks, and full Linux regression pass. The Apple SDK/MSL compile and Linux jobs passed for the integrated depth pass in [run 44702337813](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44702337813) at `824385aed80c3a8e61224082e98ba2f0ad889514`. A direct Clang ASan/UBSan shadow math run also passed. Full app compile/package workflow [44702525374](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44702525374) is running for `9794d8bfd89be99ca57683069dc061a2c0211f6c`.
 
 ### Build candidate status
 
@@ -104,12 +105,23 @@
 - Tone-map/FXAA is committed as `2e1911824acd5791796c013979792b5c1c348971`; focused checks, the full Linux suite, and Apple SDK/MSL validation passed (workflow [44694655649](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694655649)).
 - The latest completed full IPA predates the master switch and shadow integration. No physical-device visual, AO contact-occlusion, shadow, postprocessing quality, or performance claim exists.
 
-## Latest shadow integration checkpoint (working tree after `945e6467`)
+## Latest shadow integration checkpoint (`9794d8bf`)
 
 - Implemented a production-path depth-map pass from `gfx_scene_capture` and a final-pass receiver. The map's fitting, capture conversion, Metal depth writes, and PCF output are separate observable stages; triangle counts report processed bounded casters, not GPU frame-time measurement.
 - `tests/run_shadow_map_test.sh`, `python3 ios/test_metal_graphics_foundation.py`, `tests/run_metal_shader_codegen_test.sh`, `tests/run_gfx_postprocess_test.sh`, and `git diff --check` passed. A direct Clang ASan/UBSan build/run of `tests/shadow_map_test.c` passed. The full `tests/run_linux_checks.sh` passed twice during this increment; the second used `CC=clang`.
-- Apple SDK validation for the integration has not yet run. No physical iPhone/iPad output or performance data exists. Do not call shadows visually validated until the GPU output is inspected.
+- Apple backend/MSL validation passed at `824385ae` in run [44702337813](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44702337813); full app compile/package for `9794d8bf` passed in [44702525374](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44702525374). No physical iPhone/iPad output or performance data exists. Do not call shadows visually validated until the GPU output is inspected.
+
+### M79-H — First shadow-enabled full app candidate
+
+- Full iPhoneOS arm64 compile, unsigned IPA structure validation, and private upload passed in [workflow 44702525374](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44702525374), source `9794d8bfd89be99ca57683069dc061a2c0211f6c`. Private draft [unsigned build 44702525374.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-c8f3c97f60fd5b172288); IPA asset `sm64ios-connected-world-arm64-unsigned.ipa`, 9,333,214 bytes, SHA-256 `21499a2211e17a3c6d640d534c6fb29421fcd1fc1b887071a4515a886c8299ec`.
+- The IPA contains the directional shadow-map implementation. It does not include the following screen-space light-shaft work. The build was not installed or visually tested on device.
+
+### M79-E — Depth-occluded screen-space light shafts (implementation in progress)
+
+- Added camera projection math for the fixed world-space light direction, a quarter-resolution depth-sampled radial kernel, final-pass additive compositing, persistent Off/On and Low/Standard/High controls, and an explicit UI label stating that this is a screen-space approximation rather than volumetric scattering.
+- Focused source checks, shader generation, postprocess projection tests, and full Clang Linux regressions pass. The sun direction is projected from the same world-space direction as shadow casting; the shader samples clear-depth visibility along a radial screen-space ray and adds a warm shaft contribution at quarter resolution. This remains an approximation, not physically volumetric light.
+- Apple MSL/backend validation and a full app candidate for this new path are still required. Physical output, sunlight visibility, and performance are unverified.
 
 ## Next task
 
-Commit and push the current shadow-map integration, run the Apple Metal/iPhoneOS validation, fix any actual compiler/shader errors, then produce an updated full IPA if its source/configuration checks pass. Continue after that with AO/HUD isolation, god rays/sky refinement, and remaining effect controls; physical-device image and timing review is still needed.
+Run Apple shader/backend validation for the new light-shaft kernel and current graphics sources, repair any actual failures, and package a full IPA for the next integrated test candidate. Then continue with AO/HUD isolation, sky refinement, and remaining effect controls. Physical-device image and timing review is still needed.

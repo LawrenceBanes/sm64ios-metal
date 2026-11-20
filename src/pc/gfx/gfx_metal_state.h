@@ -59,6 +59,7 @@ struct GfxMetalPerformanceStats {
     uint64_t ssao_pixels;
     uint64_t bloom_pixels;
     uint64_t shadow_triangles;
+    uint64_t god_ray_pixels;
     uint64_t estimated_target_bytes;
 };
 

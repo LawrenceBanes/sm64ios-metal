@@ -72,6 +72,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UIButton *aoQualityButton;
 @property(nonatomic, strong) UIButton *skyPresetButton;
 @property(nonatomic, strong) UIButton *masterEffectsButton;
+@property(nonatomic, strong) UIButton *godRaysButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -575,14 +576,17 @@ static int sm64RenderDiagnosticMode;
     self.shadowButton.frame = CGRectMake(398, 278, 108, 30);
     [self.graphicsPanel addSubview:self.shadowButton];
     self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(cycleAOQuality)];
-    self.aoQualityButton.frame = CGRectMake(14, 312, 172, 30);
+    self.aoQualityButton.frame = CGRectMake(14, 312, 144, 30);
     [self.graphicsPanel addSubview:self.aoQualityButton];
     self.skyPresetButton = [self buttonWithTitle:@"Sky: Original" action:@selector(cycleSkyPreset)];
-    self.skyPresetButton.frame = CGRectMake(194, 312, 168, 30);
+    self.skyPresetButton.frame = CGRectMake(166, 312, 134, 30);
     [self.graphicsPanel addSubview:self.skyPresetButton];
     self.masterEffectsButton = [self buttonWithTitle:@"Effects: On" action:@selector(toggleMasterEffects)];
-    self.masterEffectsButton.frame = CGRectMake(370, 312, 136, 30);
+    self.masterEffectsButton.frame = CGRectMake(304, 312, 100, 30);
     [self.graphicsPanel addSubview:self.masterEffectsButton];
+    self.godRaysButton = [self buttonWithTitle:@"Rays: Off" action:@selector(openGodRaySettings)];
+    self.godRaysButton.frame = CGRectMake(408, 312, 98, 30);
+    [self.graphicsPanel addSubview:self.godRaysButton];
 
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
@@ -727,6 +731,10 @@ static int sm64RenderDiagnosticMode;
     [self.shadowButton setTitle:[NSString stringWithFormat:@"Shadows: %@ %u", gfx_metal_shadows_enabled() ? @"On" : @"Off",
                                 gfx_metal_shadow_resolution()]
                        forState:UIControlStateNormal];
+    static NSString *const ray_quality_names[] = { @"Low", @"Standard", @"High" };
+    [self.godRaysButton setTitle:[NSString stringWithFormat:@"Rays: %@ %@", gfx_metal_god_rays_enabled() ? @"On" : @"Off",
+                                 ray_quality_names[MIN(gfx_metal_god_ray_quality(), 2u)]]
+                        forState:UIControlStateNormal];
 #endif
 }
 
@@ -748,6 +756,26 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_cycle_shadow_resolution();
             [self refreshGraphicsSettings];
         }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+#endif
+}
+
+- (void)openGodRaySettings {
+#if defined(RAPI_METAL)
+    NSString *message = @"Depth-occluded radial light shafts are a quarter-resolution screen-space approximation. The source is projected from the renderer's directional sun vector; this is not volumetric scattering.";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Screen-Space Light Shafts"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    BOOL enabled = gfx_metal_god_rays_enabled();
+    [alert addAction:[UIAlertAction actionWithTitle:enabled ? @"Turn Off" : @"Turn On"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            gfx_metal_set_god_rays_enabled(!enabled);
+            [self refreshGraphicsSettings];
+            [self refreshGraphicsPerformance];
+            [self appendStatus:gfx_metal_god_rays_enabled() ? @"Screen-space light shafts enabled" : @"Screen-space light shafts disabled"];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cycle quality" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_cycle_god_ray_quality(); [self refreshGraphicsSettings]; }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 #endif
@@ -853,6 +881,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_color_grade(0u);
             gfx_metal_set_sky_preset(0u);
             gfx_metal_set_shadows_enabled(false);
+            gfx_metal_set_god_rays_enabled(false);
             gfx_metal_set_effects_enabled(false);
         } else {
             if (preset == GFX_METAL_PRESET_CINEMATIC) settings = gfx_metal_cinematic_settings();
@@ -884,6 +913,8 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_shadow_resolution(preset == GFX_METAL_PRESET_CINEMATIC ? 1024u : 512u);
             gfx_metal_set_shadows_enabled(preset == GFX_METAL_PRESET_ENHANCED ||
                                           preset == GFX_METAL_PRESET_CINEMATIC);
+            gfx_metal_set_god_rays_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
+            gfx_metal_set_god_ray_quality(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u);
             gfx_metal_set_effects_enabled(true);
         }
     } else {
@@ -913,7 +944,7 @@ static int sm64RenderDiagnosticMode;
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = [NSString stringWithUTF8String:gfx_metal_preset_name(stats.preset)];
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | Shadows %@ %llu tris | targets ~%.1f MiB",
+        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | Shadows %@ %llu tris | Rays %@ %llu px | targets ~%.1f MiB",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
@@ -924,6 +955,8 @@ static int sm64RenderDiagnosticMode;
         (unsigned long long)stats.bloom_pixels,
         gfx_metal_shadows_enabled() ? @"on" : @"off",
         (unsigned long long)stats.shadow_triangles,
+        gfx_metal_god_rays_enabled() ? @"on" : @"off",
+        (unsigned long long)stats.god_ray_pixels,
         (double)stats.estimated_target_bytes / (1024.0 * 1024.0)];
 #endif
 }
@@ -940,6 +973,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_ssao_quality(1u);
     gfx_metal_set_sky_preset(0u);
     gfx_metal_set_shadows_enabled(false);
+    gfx_metal_set_god_rays_enabled(false);
     gfx_metal_set_shadow_resolution(512u);
     gfx_metal_set_effects_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
