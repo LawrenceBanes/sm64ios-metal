@@ -58,6 +58,16 @@ int main(void) {
     const char *present_source = gfx_metal_present_shader_source();
     assert(strstr(present_source, "sm64_present_vertex") != NULL);
     assert(strstr(present_source, "sm64_present_fragment") != NULL);
+    assert(strstr(present_source, "aoEnabled") != NULL);
+    const char *ssao_source = gfx_metal_ssao_shader_source();
+    assert(strstr(ssao_source, "sm64_ssao") != NULL);
+    assert(strstr(ssao_source, "inverseProjection") != NULL);
+    assert(strstr(ssao_source, "depthTex.read") != NULL);
+    assert(strstr(ssao_source, "float3 normal=normalize(cross") != NULL);
+    assert(strstr(ssao_source, "hemisphere>bias") != NULL);
+    assert(strstr(ssao_source, "sm64_ssao_denoise") != NULL);
+    assert(strstr(ssao_source, "exp(-abs(qd-d)*180.0)") != NULL);
+    assert(strstr(ssao_source, "d>=0.999999") != NULL);
     assert(strstr(present_source, "texture2d<float> image") != NULL);
     uint8_t flat_rgb[4] = { 0, 0, 0, SHADER_INPUT_1 };
     uint8_t flat_alpha[4] = { 0, 0, 0, SHADER_INPUT_1 };

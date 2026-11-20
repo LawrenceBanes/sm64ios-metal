@@ -60,6 +60,7 @@ static int sm64RenderDiagnosticMode;
 @property(nonatomic, strong) UISegmentedControl *scaleControl;
 @property(nonatomic, strong) UISegmentedControl *msaaControl;
 @property(nonatomic, strong) UISegmentedControl *anisotropyControl;
+@property(nonatomic, strong) UIButton *ssaoButton;
 @property(nonatomic, strong) UILabel *performanceLabel;
 @property(nonatomic, strong) NSTimer *performanceTimer;
 @property(nonatomic, strong) id<MTLCommandQueue> probeQueue;
@@ -85,6 +86,7 @@ static int sm64RenderDiagnosticMode;
 - (void)refreshGraphicsSettings;
 - (void)refreshGraphicsPerformance;
 - (void)resetGraphicsSettings;
+- (void)toggleSSAO;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -529,11 +531,16 @@ static int sm64RenderDiagnosticMode;
     [self addGraphicsLabel:@"Anisotropic filtering" y:190];
     self.anisotropyControl = [self graphicsControl:@[@"Off", @"2×", @"4×", @"8×", @"16×"] y:208];
 
+    self.ssaoButton = [self buttonWithTitle:@"SSAO: Off" action:@selector(toggleSSAO)];
+    self.ssaoButton.frame = CGRectMake(14, 244, 150, 30);
+    [self.graphicsPanel addSubview:self.ssaoButton];
+
     self.performanceLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
     self.performanceLabel.textColor = [UIColor colorWithWhite:0.94 alpha:1.0];
     self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:10.0 weight:UIFontWeightRegular];
-    self.performanceLabel.numberOfLines = 4;
-    self.performanceLabel.frame = CGRectMake(14, 245, 492, 72);
+    self.performanceLabel.font = [UIFont monospacedSystemFontOfSize:8.0 weight:UIFontWeightRegular];
+    self.performanceLabel.numberOfLines = 5;
+    self.performanceLabel.frame = CGRectMake(14, 276, 492, 50);
     self.performanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.graphicsPanel addSubview:self.performanceLabel];
 
@@ -634,10 +641,23 @@ static int sm64RenderDiagnosticMode;
     self.anisotropyControl.selectedSegmentIndex = 0;
     for (NSUInteger i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i)
         if (levels[i] == settings.anisotropy) self.anisotropyControl.selectedSegmentIndex = (NSInteger)i;
+    self.msaaControl.enabled = YES;
     [self.msaaControl setEnabled:capabilities.sample_count_2 forSegmentAtIndex:1];
     [self.msaaControl setEnabled:capabilities.sample_count_4 forSegmentAtIndex:2];
+    if (gfx_metal_ssao_enabled()) self.msaaControl.enabled = NO;
     for (NSUInteger i = 1; i < sizeof(levels) / sizeof(levels[0]); ++i)
         [self.anisotropyControl setEnabled:levels[i] <= capabilities.max_anisotropy forSegmentAtIndex:i];
+    [self.ssaoButton setTitle:gfx_metal_ssao_enabled() ? @"SSAO: On" : @"SSAO: Off"
+                     forState:UIControlStateNormal];
+#endif
+}
+
+- (void)toggleSSAO {
+#if defined(RAPI_METAL)
+    gfx_metal_set_ssao_enabled(!gfx_metal_ssao_enabled());
+    [self refreshGraphicsSettings];
+    [self refreshGraphicsPerformance];
+    [self appendStatus:gfx_metal_ssao_enabled() ? @"SSAO enabled (single-sample offscreen path)" : @"SSAO disabled"];
 #endif
 }
 
@@ -680,16 +700,19 @@ static int sm64RenderDiagnosticMode;
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
     NSString *preset = stats.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced";
     self.performanceLabel.text = [NSString stringWithFormat:
-        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×",
+        @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ | %llu pixels",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,
         (unsigned long long)stats.draw_calls, (unsigned long long)stats.triangles,
         stats.render_width, stats.render_height, stats.render_scale_percent,
-        stats.sample_count, stats.anisotropy];
+        stats.sample_count, stats.anisotropy,
+        gfx_metal_ssao_enabled() ? @"on" : @"off",
+        (unsigned long long)stats.ssao_pixels];
 #endif
 }
 
 - (void)resetGraphicsSettings {
 #if defined(RAPI_METAL)
+    gfx_metal_set_ssao_enabled(false);
     gfx_metal_apply_settings(gfx_metal_classic_settings());
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];

@@ -2658,6 +2658,10 @@ void gfx_start_frame(void) {
 
 void gfx_run(Gfx *commands) {
     gfx_sp_reset();
+#if defined(TARGET_OS_IOS) && defined(RAPI_METAL)
+    gfx_scene_capture_set_enabled(gfx_metal_ssao_enabled());
+    gfx_scene_capture_set_triangle_limit(gfx_metal_ssao_enabled() ? 8192u : 0u);
+#endif
     gfx_scene_capture_begin_frame();
     
     //puts("New frame");

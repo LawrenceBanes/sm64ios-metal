@@ -82,6 +82,16 @@ int main(void) {
     assert(split_transform[3][0] == 2.0f);
     float singular_view[4][4] = {{0}};
     assert(!gfx_scene_capture_split_modelview(combined_modelview, singular_view, split_transform));
+    gfx_scene_capture_set_enabled(true);
+    gfx_scene_capture_set_triangle_limit(2);
+    gfx_scene_capture_begin_frame();
+    assert(gfx_scene_capture_submit(&triangle));
+    assert(gfx_scene_capture_submit(&triangle));
+    assert(!gfx_scene_capture_submit(&triangle));
+    frame = gfx_scene_capture_get_frame();
+    assert(frame.triangle_count == 2 && frame.dropped_triangles == 1);
+    gfx_scene_capture_set_triangle_limit(0);
+    gfx_scene_capture_set_enabled(false);
     puts("Scene capture storage checks passed");
     return 0;
 }

@@ -8,6 +8,8 @@ extern struct GfxRenderingAPI gfx_metal_api;
 
 #if defined(TARGET_OS_IOS)
 bool gfx_metal_hd_textures_enabled(void);
+bool gfx_metal_ssao_enabled(void);
+void gfx_metal_set_ssao_enabled(bool enabled);
 #endif
 
 #ifdef __OBJC__

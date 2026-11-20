@@ -18,12 +18,16 @@ Added tested CPU helpers for matrix inversion and RSP-convention depth unproject
 
 This is the 79A render-target foundation, not a complete postprocess pipeline. HUD/UI is still rasterized into the same scene color target and is therefore not yet isolated from postprocessing. No tone mapping, AO, bloom, fog, sky, shadows, or god rays are implemented in this checkpoint.
 
-## Required next gate: actual SSAO
+## M79-B in progress: SSAO
 
-1. Make a bounded offscreen render target mandatory only when an implemented effect requires it; leave Classic untouched.
-2. Retain a sampleable Depth32Float target for single-sample SSAO and derive depth conventions from the renderer's RSP-to-Metal Z remap.
-3. Add a Metal compute SSAO kernel using reconstructed view-space positions, depth-aware neighborhood tests, bounded samples, and edge-aware blur.
-4. Apply AO only to scene geometry, preserving HUD overlays; validate this with controlled contact geometry and on-device AO-off/on screenshots.
-5. Add disabled-by-default UI controls, memory/time counters, resize/lifecycle tests, Apple shader compile and device IPA.
+Added a native Metal compute path behind a persisted developer toggle. Enabling AO forces bounded offscreen rendering at 1x MSAA, enables bounded scene capture for the camera projection, reconstructs view-space positions from the retained depth texture, derives normals from neighboring depth, tests an eight-direction neighborhood against a hemisphere, masks clear-depth sky, applies a depth edge guard, and runs a 3x3 depth-weighted denoise pass at half resolution. The final Metal presentation shader multiplies scene color by the filtered AO texture. The Graphics panel exposes an AO On/Off control and reports processed pixels. Capture is capped at 8,192 triangles; the shader currently samples depth directly and does not need copied world geometry.
+
+This code is not yet visually verified. The final AO modulation currently affects HUD pixels that overlap scene depth because SM64 HUD display lists share the scene color target. The requested world/HUD separation remains open. Radius/bias/intensity and quality settings are currently fixed shader parameters, and there is no AO-only debug view. Avoid calling the milestone complete until the Apple shader workflow succeeds and contact occlusion has been inspected on actual SM64 and WSC geometry.
+
+## Remaining architecture gates
+
+1. Separate or correctly mask HUD/UI before adding bloom, exposure, grading, or AO composition; the current SM64 renderer submits world and HUD through a common color pass.
+2. Add controllable values, AO/depth debug view, edge/temporal stability validation, and physical AO-off/on captures.
+3. Then implement rasterized shadow maps independently of Mission 77 ray tracing, followed by HDR postprocessing and atmosphere.
 
 Bloom, exposure, color grading, FXAA, fog, sky, and directional shadow maps remain future milestones. No visual effect, iOS build, IPA, or device behavior is claimed in this checkpoint.

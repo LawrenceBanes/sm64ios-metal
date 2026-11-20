@@ -19,6 +19,8 @@ sources=("$repo_dir/src/pc/gfx/gfx_metal.m"
          "$repo_dir/src/pc/gfx/gfx_texture_override.c"
          "$repo_dir/src/pc/gfx/gfx_metal_shader.c"
          "$repo_dir/src/pc/gfx/gfx_metal_state.c"
+         "$repo_dir/src/pc/gfx/gfx_scene_capture.c"
+         "$repo_dir/src/pc/gfx/gfx_postprocess.c"
          "$repo_dir/src/pc/gfx/gfx_cc.c"
          "$repo_dir/tests/metal_backend_diagnostics_stub.m"
          "$repo_dir/tests/metal_backend_config_stub.c"
@@ -64,7 +66,7 @@ xcrun --sdk macosx clang -isysroot "$host_sdk" -std=gnu11 \
     -o "$output_dir/metal_shader_emit"
 "$output_dir/metal_shader_emit" "$shader_dir"
 
-echo "Compiling generated Metal shaders with the iOS Metal compiler and linking metallibs."
+echo "Compiling generated Metal shaders, including the SSAO compute kernel, with the iOS Metal compiler and linking metallibs."
 for source in "$shader_dir"/*.metal; do
     name=$(basename "$source" .metal)
     xcrun --sdk iphoneos metal -c "$source" -o "$shader_dir/$name.air"

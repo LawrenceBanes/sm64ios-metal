@@ -10,6 +10,7 @@
 #import <Metal/MTLDrawable.h>
 #import <MetalKit/MetalKit.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <simd/simd.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -20,6 +21,8 @@
 #include "gfx_metal_shader.h"
 #include "gfx_metal_vertex_layout.h"
 #include "gfx_cc.h"
+#include "gfx_scene_capture.h"
+#include "gfx_postprocess.h"
 #include "gfx_uikit.h"
 #include "../configfile.h"
 
@@ -69,6 +72,12 @@ static NSUInteger metal_target_height;
 static NSUInteger metal_target_samples;
 static id<MTLRenderPipelineState> metal_present_pipeline;
 static id<MTLSamplerState> metal_present_sampler;
+static id<MTLComputePipelineState> metal_ssao_pipeline;
+static id<MTLComputePipelineState> metal_ssao_denoise_pipeline;
+static id<MTLTexture> metal_ssao_texture;
+static id<MTLTexture> metal_ssao_filtered_texture;
+static NSUInteger metal_ssao_width, metal_ssao_height;
+static bool metal_ssao_is_enabled;
 static struct GfxMetalSettings metal_settings = { GFX_METAL_PRESET_CLASSIC, 100u, 1u, 1u, false };
 static struct GfxMetalCapabilities metal_capabilities = { false, false, 1u };
 static struct GfxMetalPerformanceStats metal_performance_stats;
@@ -173,6 +182,9 @@ static void gfx_metal_release_render_targets(void) {
     [metal_multisample_color release]; metal_multisample_color = nil;
     [metal_resolve_texture release]; metal_resolve_texture = nil;
     [metal_depth_texture release]; metal_depth_texture = nil;
+    [metal_ssao_texture release]; metal_ssao_texture = nil;
+    [metal_ssao_filtered_texture release]; metal_ssao_filtered_texture = nil;
+    metal_ssao_width = metal_ssao_height = 0;
     metal_depth_width = metal_depth_height = 0;
     metal_depth_samples = 1;
     metal_target_width = metal_target_height = metal_target_samples = 0;
@@ -203,6 +215,7 @@ static void gfx_metal_refresh_capabilities(void) {
 
 static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    metal_ssao_is_enabled = [defaults boolForKey:@"SM64MetalSSAOEnabled"];
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
@@ -233,6 +246,20 @@ bool gfx_metal_hd_textures_enabled(void) {
     @synchronized ([NSObject class]) {
         return metal_settings.preset == GFX_METAL_PRESET_ENHANCED && metal_settings.hd_textures;
     }
+}
+
+bool gfx_metal_ssao_enabled(void) {
+    @synchronized ([NSObject class]) { return metal_ssao_is_enabled; }
+}
+
+void gfx_metal_set_ssao_enabled(bool enabled) {
+    @synchronized ([NSObject class]) {
+        metal_ssao_is_enabled = enabled;
+        metal_offscreen_runtime_failed = false;
+        if (!enabled) metal_performance_stats.ssao_pixels = 0;
+    }
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"SM64MetalSSAOEnabled"];
+    gfx_ios_diag_log("Metal SSAO %s", enabled ? "enabled" : "disabled");
 }
 
 struct GfxMetalSettings gfx_metal_get_settings(void) {
@@ -941,7 +968,7 @@ static void gfx_metal_fallback_to_direct(const char *reason) {
 }
 
 static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
-    if (!gfx_metal_settings_use_offscreen(metal_settings)) return false;
+    if (!gfx_metal_settings_use_offscreen(metal_settings) && !gfx_metal_ssao_enabled()) return false;
     if (!gfx_metal_create_present_pipeline()) {
         gfx_metal_fallback_to_direct("final pass unavailable");
         return false;
@@ -953,9 +980,12 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         gfx_metal_fallback_to_direct("invalid drawable dimensions or scale");
         return false;
     }
-    NSUInteger samples = metal_settings.sample_count;
+    NSUInteger samples = gfx_metal_ssao_enabled() ? 1u : metal_settings.sample_count;
     BOOL target_ready = metal_target_width == size.width && metal_target_height == size.height &&
         metal_target_samples == samples && metal_depth_texture != nil &&
+        (!gfx_metal_ssao_enabled() || (metal_ssao_texture && metal_ssao_filtered_texture &&
+         metal_ssao_width == (size.width + 1u) / 2u &&
+         metal_ssao_height == (size.height + 1u) / 2u)) &&
         (samples > 1 ? (metal_multisample_color && metal_resolve_texture) : metal_color_target != nil);
     if (target_ready) return true;
 
@@ -973,10 +1003,32 @@ static bool gfx_metal_ensure_offscreen_targets(id<CAMetalDrawable> drawable) {
         if (metal_color_target) metal_color_target.label = @"SM64 scaled color";
     }
     id<MTLTexture> depth = gfx_metal_depth_for_size(size.width, size.height, samples);
+    if (gfx_metal_ssao_enabled()) {
+        NSUInteger ao_width = (size.width + 1u) / 2u;
+        NSUInteger ao_height = (size.height + 1u) / 2u;
+        MTLTextureDescriptor *ao = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                                                                       width:ao_width height:ao_height mipmapped:NO];
+        ao.storageMode = MTLStorageModePrivate;
+        ao.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        metal_ssao_texture = [metal_device newTextureWithDescriptor:ao];
+        metal_ssao_filtered_texture = [metal_device newTextureWithDescriptor:ao];
+        if (metal_ssao_texture) {
+            metal_ssao_texture.label = @"SM64 SSAO visibility";
+        }
+        if (metal_ssao_filtered_texture) {
+            metal_ssao_filtered_texture.label = @"SM64 SSAO filtered visibility";
+        }
+        if (metal_ssao_texture && metal_ssao_filtered_texture) {
+            metal_ssao_width = ao_width;
+            metal_ssao_height = ao_height;
+        }
+    }
     if ((samples > 1 && (!metal_multisample_color || !metal_resolve_texture)) ||
-        (samples == 1 && !metal_color_target) || !depth) {
+        (samples == 1 && !metal_color_target) || !depth ||
+        (gfx_metal_ssao_enabled() && (!metal_ssao_texture || !metal_ssao_filtered_texture))) {
         gfx_metal_release_render_targets();
-        gfx_metal_fallback_to_direct("offscreen color/depth allocation failed");
+        if (gfx_metal_ssao_enabled()) gfx_metal_set_ssao_enabled(false);
+        gfx_metal_fallback_to_direct("offscreen color/depth/AO allocation failed");
         return false;
     }
     metal_target_width = size.width;
@@ -1006,8 +1058,76 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
     [encoder setRenderPipelineState:metal_present_pipeline];
     [encoder setFragmentTexture:source atIndex:0];
     [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
+    [encoder setFragmentTexture:(gfx_metal_ssao_enabled() ? metal_ssao_filtered_texture : source) atIndex:1];
+    [encoder setFragmentSamplerState:metal_present_sampler atIndex:1];
+    uint32_t ao_enabled = gfx_metal_ssao_enabled() ? 1u : 0u;
+    [encoder setFragmentBytes:&ao_enabled length:sizeof(ao_enabled) atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
+    return true;
+}
+
+static bool gfx_metal_ensure_ssao_pipeline(void) {
+    if (metal_ssao_pipeline) return true;
+    NSString *source = [NSString stringWithUTF8String:gfx_metal_ssao_shader_source()];
+    NSError *error = nil;
+    id<MTLLibrary> library = [metal_device newLibraryWithSource:source options:nil error:&error];
+    id<MTLFunction> function = library ? [library newFunctionWithName:@"sm64_ssao"] : nil;
+    id<MTLFunction> denoiseFunction = library ? [library newFunctionWithName:@"sm64_ssao_denoise"] : nil;
+    if (!function || !denoiseFunction) {
+        gfx_ios_diag_log("Metal SSAO MSL compilation failed: %s", error.localizedDescription.UTF8String ?: "function missing");
+        [function release]; [denoiseFunction release]; [library release];
+        return false;
+    }
+    metal_ssao_pipeline = [metal_device newComputePipelineStateWithFunction:function error:&error];
+    metal_ssao_denoise_pipeline = [metal_device newComputePipelineStateWithFunction:denoiseFunction error:&error];
+    [function release]; [denoiseFunction release]; [library release];
+    if (!metal_ssao_pipeline || !metal_ssao_denoise_pipeline) {
+        gfx_ios_diag_log("Metal SSAO pipeline creation failed: %s", error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    gfx_ios_diag_log("Metal SSAO compute pipeline ready threadsPerGroup=%lu", (unsigned long)metal_ssao_pipeline.maxTotalThreadsPerThreadgroup);
+    return true;
+}
+
+static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
+    if (!gfx_metal_ssao_enabled()) return true;
+    struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();
+    float inverse_projection[4][4];
+    if (!capture.has_projection_matrix ||
+        !gfx_postprocess_invert_matrix(capture.projection_matrix, inverse_projection) ||
+        !metal_depth_texture || !metal_ssao_texture || !gfx_metal_ensure_ssao_pipeline()) {
+        gfx_ios_diag_log("Metal SSAO skipped: projection, depth, output, or compute pipeline unavailable");
+        return false;
+    }
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    if (!encoder) return false;
+    vector_float4 parameters = { 2.0f, 0.025f, 1.15f, 120.0f };
+    [encoder setComputePipelineState:metal_ssao_pipeline];
+    [encoder setTexture:metal_depth_texture atIndex:0];
+    [encoder setTexture:metal_ssao_texture atIndex:1];
+    [encoder setBytes:inverse_projection length:sizeof(inverse_projection) atIndex:0];
+    [encoder setBytes:&parameters length:sizeof(parameters) atIndex:1];
+    NSUInteger width = metal_ssao_width, height = metal_ssao_height;
+    NSUInteger thread_width = metal_ssao_pipeline.threadExecutionWidth;
+    NSUInteger thread_height = MAX(1u, metal_ssao_pipeline.maxTotalThreadsPerThreadgroup / thread_width);
+    [encoder dispatchThreads:MTLSizeMake(width, height, 1)
+        threadsPerThreadgroup:MTLSizeMake(thread_width, thread_height, 1)];
+    [encoder endEncoding];
+    encoder = [command computeCommandEncoder];
+    if (!encoder) return false;
+    [encoder setComputePipelineState:metal_ssao_denoise_pipeline];
+    [encoder setTexture:metal_depth_texture atIndex:0];
+    [encoder setTexture:metal_ssao_texture atIndex:1];
+    [encoder setTexture:metal_ssao_filtered_texture atIndex:2];
+    NSUInteger blur_width = metal_ssao_denoise_pipeline.threadExecutionWidth;
+    NSUInteger blur_height = MAX(1u, metal_ssao_denoise_pipeline.maxTotalThreadsPerThreadgroup / blur_width);
+    [encoder dispatchThreads:MTLSizeMake(width, height, 1)
+        threadsPerThreadgroup:MTLSizeMake(blur_width, blur_height, 1)];
+    [encoder endEncoding];
+    @synchronized ([NSObject class]) {
+        metal_performance_stats.ssao_pixels = width * height;
+    }
     return true;
 }
 
@@ -1197,6 +1317,10 @@ static void gfx_metal_start_frame(void) {
 static void gfx_metal_end_frame(void) {
     if (!metal_encoder) return;
     [metal_encoder endEncoding]; metal_encoder = nil;
+    if (!gfx_metal_encode_ssao(metal_command)) {
+        gfx_metal_set_ssao_enabled(false);
+        gfx_ios_diag_log("Metal SSAO disabled after frame resources or projection became unavailable");
+    }
     if (metal_frame_uses_offscreen && !gfx_metal_encode_final_pass(metal_drawable, metal_command))
         metal_offscreen_runtime_failed = true;
     @synchronized ([NSObject class]) {
@@ -1299,6 +1423,8 @@ static void gfx_metal_finish_render(void) { [metal_command waitUntilCompleted]; 
 static void gfx_metal_shutdown(void) {
     metal_encoder = nil; metal_drawable = nil; metal_command = nil;
     gfx_metal_release_render_targets();
+    [metal_ssao_pipeline release]; metal_ssao_pipeline = nil;
+    [metal_ssao_denoise_pipeline release]; metal_ssao_denoise_pipeline = nil;
     [metal_present_pipeline release]; metal_present_pipeline = nil;
     [metal_present_sampler release]; metal_present_sampler = nil;
     for (size_t i = 0; i < program_count; ++i) {

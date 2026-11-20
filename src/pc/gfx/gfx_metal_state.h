@@ -54,6 +54,7 @@ struct GfxMetalPerformanceStats {
     uint32_t render_scale_percent;
     uint32_t sample_count;
     uint32_t anisotropy;
+    uint64_t ssao_pixels;
 };
 
 enum GfxSamplerAddressMode gfx_metal_sampler_address_mode(uint32_t n64_mode);

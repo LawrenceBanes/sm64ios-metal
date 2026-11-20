@@ -48,6 +48,8 @@ def main() -> None:
             "present pass shader must be shared with the Apple Metal compiler validation")
     require('"enhanced_present"' in shader_emit,
             "Apple validation shader emitter must emit the exact final-pass source")
+    require('"ssao_compute"' in shader_emit and "gfx_metal_ssao_shader_source" in shader_emit,
+            "Apple validation must compile the production SSAO compute source")
 
     for token in (
         "supportsTextureSampleCount:2", "supportsTextureSampleCount:4",
@@ -64,6 +66,10 @@ def main() -> None:
         "SM64MetalPreset", "SM64MetalRenderScale", "SM64MetalSampleCount",
         "SM64MetalAnisotropy", "completed.GPUStartTime", "completed.GPUEndTime",
         "metal_performance_stats.draw_calls", "metal_performance_stats.triangles",
+        "gfx_metal_ssao_enabled", "gfx_metal_set_ssao_enabled",
+        "newComputePipelineStateWithFunction", "dispatchThreads:MTLSizeMake(width, height, 1)",
+        "MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite",
+        "sm64_ssao_denoise", "metal_ssao_filtered_texture",
     ):
         require(token in metal, f"missing Metal backend capability or fallback invariant: {token}")
     require("gfx_metal_settings_use_offscreen(metal_settings)" in metal,
