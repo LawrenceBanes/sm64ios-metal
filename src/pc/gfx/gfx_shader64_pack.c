@@ -1,6 +1,7 @@
 #include "gfx_shader64_pack.h"
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,15 +71,21 @@ static int safe_name(const unsigned char *s, size_t n, int *is_dir) {
 
 static int allowed_name(const unsigned char *s, size_t n, int dir) {
     static const char manifest[] = "manifest.json";
-    if (dir) return n == 8 && memcmp(s, "shaders/", 8) == 0;
+    if (dir) return (n == 8 && memcmp(s, "shaders/", 8) == 0) ||
+                     (n == 9 && memcmp(s, "textures/", 9) == 0);
     return (n == sizeof(manifest) - 1 && memcmp(s, manifest, n) == 0) ||
            (n > 14 && memcmp(s, "shaders/", 8) == 0 &&
             !memchr(s + 8, '/', n - 8) &&
             (memcmp(s + n - 6, ".metal", 6) == 0 ||
-             (n > 17 && memcmp(s + n - 9, ".metallib", 9) == 0)));
+             (n > 17 && memcmp(s + n - 9, ".metallib", 9) == 0))) ||
+           (n > 13 && memcmp(s, "textures/", 9) == 0 &&
+            !memchr(s + 9, '/', n - 9) && memcmp(s + n - 4, ".png", 4) == 0);
 }
 
 static size_t entry_limit(const struct entry *e) {
+    if (e->name_len > 13 && memcmp(e->name, "textures/", 9) == 0 &&
+        memcmp(e->name + e->name_len - 4, ".png", 4) == 0)
+        return GFX_SHADER64_MAX_PACK_TEXTURE_BYTES;
     if (e->name_len >= 9 && memcmp(e->name + e->name_len - 9, ".metallib", 9) == 0)
         return GFX_SHADER64_MAX_LIBRARY_BYTES;
     return GFX_SHADER64_MAX_SOURCE_BYTES;
@@ -207,20 +214,30 @@ int gfx_shader64_install_zip(const void *data, size_t size, const char *destinat
             total += uncomp;
             entries[accepted++] = (struct entry){ name, name_len, flags, method, u32(zip + pos + 16), comp, uncomp, u32(zip + pos + 42), external };
             if (name_len == 13 && memcmp(name, "manifest.json", 13) == 0) { if (have_manifest++) { err(error, error_size, "duplicate manifest"); return 0; } }
-            else have_source = 1;
-        } else if (!accepted_name) { err(error, error_size, "archive contains unsupported paths; only manifest.json and direct shaders/*.metal or *.metallib files are accepted"); return 0; }
+            else if (name_len > 8 && memcmp(name, "shaders/", 8) == 0) have_source = 1;
+        } else if (!accepted_name) { err(error, error_size, "archive contains unsupported paths; expected manifest.json, direct shaders/*.metal or *.metallib, or textures/*.png files"); return 0; }
         pos += rec_len;
     }
     if (pos != cdir_end || !have_manifest || !have_source) { err(error, error_size, "pack needs one manifest.json and at least one direct shader source or compiled library"); return 0; }
-    char shader_dir[1024];
+    char shader_dir[1024], texture_dir[1024];
     if (snprintf(shader_dir, sizeof(shader_dir), "%s/shaders", destination) >= (int)sizeof(shader_dir) ||
         SHADER64_MKDIR(shader_dir, 0700) != 0) { err(error, error_size, "could not create shader source directory"); return 0; }
+    if (snprintf(texture_dir, sizeof(texture_dir), "%s/textures", destination) >= (int)sizeof(texture_dir)) {
+        SHADER64_RMDIR(shader_dir); err(error, error_size, "shader texture directory path too long"); return 0;
+    }
+    bool has_textures = false;
+    for (size_t i = 0; i < accepted; ++i)
+        if (entries[i].name_len > 9 && memcmp(entries[i].name, "textures/", 9) == 0) has_textures = true;
+    if (has_textures && SHADER64_MKDIR(texture_dir, 0700) != 0) {
+        SHADER64_RMDIR(shader_dir); err(error, error_size, "could not create shader texture directory"); return 0;
+    }
     for (size_t i = 0; i < accepted; ++i) if (!extract_one(zip, size, &entries[i], destination, error, error_size)) {
         char path[1024];
         for (size_t j = 0; j <= i; ++j) {
             if (snprintf(path, sizeof(path), "%s/%.*s", destination, (int)entries[j].name_len, entries[j].name) < (int)sizeof(path)) remove(path);
         }
         SHADER64_RMDIR(shader_dir);
+        if (has_textures) SHADER64_RMDIR(texture_dir);
         return 0;
     }
     if (error && error_size) error[0] = '\0';
@@ -302,7 +319,12 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
         if (p->node_type != 1u ||
             (p->resource_flags & ~(GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
-                                   GFX_SHADER64_RESOURCE_SHADOW_MAP)) != 0u ||
+                                   GFX_SHADER64_RESOURCE_SHADOW_MAP |
+                                   GFX_SHADER64_RESOURCE_PACK_TEXTURES)) != 0u ||
+            ((p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) &&
+             (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
+                                   GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
+                                   GFX_SHADER64_RESOURCE_SHADOW_MAP))) ||
             !graph_name(p->id) || !graph_name(p->input) ||
             !p->output || (!graph_name(p->output) && strcmp(p->output, "present") != 0) ||
             !isfinite(p->resolution_scale) || p->resolution_scale < 0.25f ||
@@ -456,6 +478,32 @@ int gfx_shader64_validate_shadow_pass_source(const char *source, size_t size,
     return 1;
 }
 
+int gfx_shader64_validate_textured_pass_source(const char *source, size_t size,
+                                              char *error, size_t error_size) {
+    static const char *const required[] = {
+        "float4 shader64_pass_textured(", "float4 color", "float2 uv",
+        "texture2d<float> image", "sampler imageSampler",
+        "texture2d<float> packTexture0", "sampler packSampler0",
+        "texture2d<float> packTexture1", "sampler packSampler1",
+        "texture2d<float> packTexture2", "sampler packSampler2",
+        "texture2d<float> packTexture3", "sampler packSampler3",
+        "uint packTextureCount", "constant float4 &params",
+        "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "textured pass source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "source does not implement the pack-texture pass contract"); return 0;
+        }
+    if (contains(source, size, "#include \"")) {
+        err(error, error_size, "local shader includes are not supported in API v2"); return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
 int gfx_shader64_validate_material_source(const char *source, size_t size,
                                           char *error, size_t error_size) {
     static const char *const required[] = {
@@ -538,6 +586,23 @@ int gfx_shader64_build_shadow_pass_wrapper(const char *source, size_t source_siz
     size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
     if (!output || output_size < needed ||
         !gfx_shader64_validate_shadow_pass_source(source, source_size, NULL, 0)) return 0;
+    memcpy(output, prefix, sizeof(prefix) - 1u);
+    memcpy(output + sizeof(prefix) - 1u, source, source_size);
+    memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));
+    return 1;
+}
+
+int gfx_shader64_build_textured_pass_wrapper(const char *source, size_t source_size,
+                                             char *output, size_t output_size) {
+    static const char prefix[] =
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct Shader64In { float4 position [[position]]; float2 uv; };\n"
+        "vertex Shader64In sm64_shader64_vertex(uint id [[vertex_id]]) { Shader64In o; o.position = id == 0 ? float4(-1.0,-1.0,0.0,1.0) : (id == 1 ? float4(3.0,-1.0,0.0,1.0) : float4(-1.0,3.0,0.0,1.0)); o.uv = id == 0 ? float2(0.0,1.0) : (id == 1 ? float2(2.0,1.0) : float2(0.0,-1.0)); return o; }\n";
+    static const char suffix[] =
+        "\nfragment float4 sm64_shader64_fragment(Shader64In in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> packTexture0 [[texture(4)]], sampler packSampler0 [[sampler(4)]], texture2d<float> packTexture1 [[texture(5)]], sampler packSampler1 [[sampler(5)]], texture2d<float> packTexture2 [[texture(6)]], sampler packSampler2 [[sampler(6)]], texture2d<float> packTexture3 [[texture(7)]], sampler packSampler3 [[sampler(7)]], constant float4 &parameters [[buffer(0)]], constant uint &packTextureCount [[buffer(1)]]) { float4 color=image.sample(imageSampler,in.uv); return shader64_pass_textured(color,in.uv,image,imageSampler,packTexture0,packSampler0,packTexture1,packSampler1,packTexture2,packSampler2,packTexture3,packSampler3,packTextureCount,parameters); }\n";
+    size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
+    if (!output || output_size < needed ||
+        !gfx_shader64_validate_textured_pass_source(source, source_size, NULL, 0)) return 0;
     memcpy(output, prefix, sizeof(prefix) - 1u);
     memcpy(output + sizeof(prefix) - 1u, source, source_size);
     memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));

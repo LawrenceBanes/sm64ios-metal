@@ -6,7 +6,9 @@
 #define GFX_SHADER64_MAX_ARCHIVE_BYTES (8u * 1024u * 1024u)
 #define GFX_SHADER64_MAX_SOURCE_BYTES (256u * 1024u)
 #define GFX_SHADER64_MAX_LIBRARY_BYTES (4u * 1024u * 1024u)
-#define GFX_SHADER64_MAX_PACK_FILES 10u
+#define GFX_SHADER64_MAX_PACK_FILES 16u
+#define GFX_SHADER64_MAX_PACK_TEXTURES 4u
+#define GFX_SHADER64_MAX_PACK_TEXTURE_BYTES (4u * 1024u * 1024u)
 #define GFX_SHADER64_MAX_GRAPH_PASSES 4u
 #define GFX_SHADER64_MAX_GRAPH_TARGETS 3u
 #define GFX_SHADER64_MAX_GRAPH_TARGET_BYTES (32u * 1024u * 1024u)
@@ -14,10 +16,10 @@
 #define GFX_SHADER64_RESOURCE_SCENE_DEPTH 1u
 #define GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT 2u
 #define GFX_SHADER64_RESOURCE_SHADOW_MAP 4u
+#define GFX_SHADER64_RESOURCE_PACK_TEXTURES 8u
 
-/* API v2 exposes bounded fullscreen raster nodes and an optional scene-depth
- * auxiliary resource. Geometry, compute, and other external resources remain
- * rejected until stable engine contracts exist. */
+/* API v2 exposes bounded fullscreen raster nodes with opt-in scene-depth,
+ * directional-light, shadow-map, or pack-texture resources. */
 struct GfxShader64GraphPass {
     const char *id;
     const char *input;
@@ -53,6 +55,8 @@ int gfx_shader64_validate_lit_pass_source(const char *source, size_t size,
                                           char *error, size_t error_size);
 int gfx_shader64_validate_shadow_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size);
+int gfx_shader64_validate_textured_pass_source(const char *source, size_t size,
+                                               char *error, size_t error_size);
 int gfx_shader64_validate_material_source(const char *source, size_t size,
                                          char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
@@ -63,8 +67,11 @@ int gfx_shader64_build_lit_pass_wrapper(const char *source, size_t source_size,
                                         char *output, size_t output_size);
 int gfx_shader64_build_shadow_pass_wrapper(const char *source, size_t source_size,
                                            char *output, size_t output_size);
+int gfx_shader64_build_textured_pass_wrapper(const char *source, size_t source_size,
+                                             char *output, size_t output_size);
 
-/* Installs only manifest.json and direct-child .metal/.metallib files under shaders/.
+/* Installs manifest.json, direct-child .metal/.metallib files under shaders/,
+ * and bounded direct-child .png files under textures/.
  * The destination must be a new private directory. Partial recognized files
  * are removed if extraction fails. */
 int gfx_shader64_install_zip(const void *bytes, size_t size,

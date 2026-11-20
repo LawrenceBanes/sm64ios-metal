@@ -10,6 +10,7 @@
 #import <Metal/MTLDrawable.h>
 #import <MetalKit/MetalKit.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <UIKit/UIKit.h>
 #import <simd/simd.h>
 
 #include <stdlib.h>
@@ -80,6 +81,8 @@ struct MetalShader64Graph {
     char *material_source;
     size_t material_source_size;
     unsigned char order[GFX_SHADER64_MAX_GRAPH_PASSES];
+    NSUInteger pack_texture_count;
+    id<MTLTexture> pack_textures[GFX_SHADER64_MAX_PACK_TEXTURES];
     struct MetalShader64GraphPass passes[GFX_SHADER64_MAX_GRAPH_PASSES];
 };
 
@@ -1504,6 +1507,8 @@ static void gfx_metal_shader64_graph_release(struct MetalShader64Graph *graph) {
         [graph->passes[i].pipeline release];
         [graph->passes[i].library release];
     }
+    for (NSUInteger i = 0; i < graph->pack_texture_count; ++i)
+        [graph->pack_textures[i] release];
     free(graph->material_source);
     free(graph);
 }
@@ -1523,6 +1528,91 @@ static id<MTLTexture> gfx_metal_shader64_target(struct MetalShader64GraphPass *p
     pass->target.label = [NSString stringWithFormat:@"SHADER64 %s output", pass->id];
     pass->target_width = width; pass->target_height = height;
     return pass->target;
+}
+
+static bool gfx_metal_shader64_load_pack_textures(const char *pack_id,
+                                                   struct MetalShader64Graph *graph,
+                                                   char *error_out, size_t error_size) {
+    NSArray<NSString *> *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+        NSUserDomainMask, YES);
+    if (!documents.count || !pack_id || !graph) {
+        if (error_out && error_size) snprintf(error_out, error_size, "texture storage is unavailable");
+        return false;
+    }
+    NSString *pack_root = [[documents[0] stringByAppendingPathComponent:@"shaderpacks"]
+        stringByAppendingPathComponent:[NSString stringWithUTF8String:pack_id]];
+    NSData *manifest_data = [NSData dataWithContentsOfFile:[pack_root stringByAppendingPathComponent:@"manifest.json"]];
+    NSDictionary *manifest = manifest_data ? [NSJSONSerialization JSONObjectWithData:manifest_data options:0 error:nil] : nil;
+    NSArray *definitions = [manifest[@"textures"] isKindOfClass:[NSArray class]] ? manifest[@"textures"] : nil;
+    if (!definitions || definitions.count == 0 || definitions.count > GFX_SHADER64_MAX_PACK_TEXTURES) {
+        if (error_out && error_size) snprintf(error_out, error_size, "textured pass needs 1 to %u declared PNG textures", GFX_SHADER64_MAX_PACK_TEXTURES);
+        return false;
+    }
+    NSMutableSet<NSString *> *ids = [NSMutableSet set];
+    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    NSUInteger total_pixels = 0;
+    for (NSUInteger i = 0; i < definitions.count; ++i) {
+        NSDictionary *definition = definitions[i];
+        NSString *identifier = [definition isKindOfClass:[NSDictionary class]] ? definition[@"id"] : nil;
+        NSString *relative = [definition isKindOfClass:[NSDictionary class]] ? definition[@"source"] : nil;
+        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,32}$" options:0 error:nil];
+        BOOL id_ok = [identifier isKindOfClass:[NSString class]] &&
+            [regex numberOfMatchesInString:identifier options:0 range:NSMakeRange(0, identifier.length)] == 1;
+        BOOL path_ok = [relative isKindOfClass:[NSString class]] && [relative hasPrefix:@"textures/"] &&
+            ![relative containsString:@".."] && relative.pathComponents.count == 2 && [relative hasSuffix:@".png"];
+        if (!id_ok || !path_ok || [ids containsObject:identifier] || [paths containsObject:relative]) {
+            if (error_out && error_size) snprintf(error_out, error_size, "invalid or duplicate texture id/path at slot %lu", (unsigned long)i);
+            return false;
+        }
+        [ids addObject:identifier]; [paths addObject:relative];
+        NSString *path = [pack_root stringByAppendingPathComponent:relative];
+        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+        unsigned long long file_size = [attributes[NSFileSize] unsignedLongLongValue];
+        if (![attributes[NSFileType] isEqualToString:NSFileTypeRegular] ||
+            file_size == 0 || file_size > GFX_SHADER64_MAX_PACK_TEXTURE_BYTES) {
+            if (error_out && error_size) snprintf(error_out, error_size, "texture %lu is missing or exceeds 4 MiB", (unsigned long)i);
+            return false;
+        }
+        UIImage *image = [UIImage imageWithContentsOfFile:path];
+        CGImageRef cg_image = image.CGImage;
+        size_t width = cg_image ? CGImageGetWidth(cg_image) : 0;
+        size_t height = cg_image ? CGImageGetHeight(cg_image) : 0;
+        if (!width || !height || width > 2048 || height > 2048 ||
+            width > 4194304u / height || total_pixels > 4194304u - width * height) {
+            if (error_out && error_size) snprintf(error_out, error_size, "texture dimensions exceed the per-pack 4 megapixel limit");
+            return false;
+        }
+        total_pixels += width * height;
+        size_t row_bytes = width * 4u, byte_count = row_bytes * height;
+        uint8_t *pixels = calloc(byte_count, 1u);
+        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = pixels && color_space ? CGBitmapContextCreate(pixels, width, height,
+            8, row_bytes, color_space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big) : NULL;
+        if (!context) {
+            free(pixels); if (color_space) CGColorSpaceRelease(color_space);
+            if (error_out && error_size) snprintf(error_out, error_size, "could not decode texture %lu to RGBA8", (unsigned long)i);
+            return false;
+        }
+        CGContextDrawImage(context, CGRectMake(0, 0, width, height), cg_image);
+        CGContextRelease(context); CGColorSpaceRelease(color_space);
+        MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+            width:width height:height mipmapped:NO];
+        descriptor.storageMode = MTLStorageModeShared;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        id<MTLTexture> texture = [metal_device newTextureWithDescriptor:descriptor];
+        if (texture) [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
+            withBytes:pixels bytesPerRow:row_bytes];
+        free(pixels);
+        if (!texture) {
+            if (error_out && error_size) snprintf(error_out, error_size, "Metal texture allocation failed at slot %lu", (unsigned long)i);
+            return false;
+        }
+        texture.label = [NSString stringWithFormat:@"SHADER64 %@ texture %lu", identifier, (unsigned long)i];
+        graph->pack_textures[i] = texture;
+        graph->pack_texture_count = i + 1u;
+    }
+    if (error_out && error_size) error_out[0] = '\0';
+    return true;
 }
 
 static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
@@ -1661,6 +1751,16 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
             [encoder setFragmentBytes:&shadow_forward_min length:sizeof(shadow_forward_min) atIndex:6];
             [encoder setFragmentBytes:&shadow_ranges length:sizeof(shadow_ranges) atIndex:7];
         }
+        if (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) {
+            for (NSUInteger texture_index = 0; texture_index < 4; ++texture_index) {
+                id<MTLTexture> texture = graph->pack_textures[MIN(texture_index,
+                    graph->pack_texture_count - 1u)];
+                [encoder setFragmentTexture:texture atIndex:4u + texture_index];
+                [encoder setFragmentSamplerState:metal_present_sampler atIndex:4u + texture_index];
+            }
+            uint32_t texture_count = (uint32_t)graph->pack_texture_count;
+            [encoder setFragmentBytes:&texture_count length:sizeof(texture_count) atIndex:1];
+        }
         [encoder setFragmentBytes:&parameters length:sizeof(parameters) atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
@@ -1717,9 +1817,18 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
     if (!gfx_shader64_validate_graph(descriptions, pass_count, width, height, graph->order, error_out, error_size)) {
         gfx_metal_shader64_graph_release(graph); return false;
     }
+    bool uses_pack_textures = false;
+    for (size_t i = 0; i < pass_count; ++i)
+        if (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) uses_pack_textures = true;
+    if (uses_pack_textures && !gfx_metal_shader64_load_pack_textures(pack_id, graph, error_out, error_size)) {
+        gfx_metal_shader64_graph_release(graph); return false;
+    }
     for (size_t i = 0; i < pass_count; ++i) {
         char validation[192] = {0};
-        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
+        bool source_valid = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
+            gfx_shader64_validate_textured_pass_source(passes[i].source, passes[i].source_size,
+                                                       validation, sizeof(validation)) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
             gfx_shader64_validate_shadow_pass_source(passes[i].source, passes[i].source_size,
                                                      validation, sizeof(validation)) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
@@ -1736,7 +1845,10 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         }
         size_t capacity = GFX_SHADER64_MAX_SOURCE_BYTES + 2048u;
         char *wrapper = malloc(capacity);
-        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
+        bool wrapper_ok = wrapper && ((passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) ?
+            gfx_shader64_build_textured_pass_wrapper(passes[i].source, passes[i].source_size,
+                                                     wrapper, capacity) :
+            (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SHADOW_MAP) ?
             gfx_shader64_build_shadow_pass_wrapper(passes[i].source, passes[i].source_size,
                                                    wrapper, capacity) :
             (passes[i].resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) ?
@@ -1971,7 +2083,9 @@ static void gfx_metal_restore_shader64_pack(void) {
                 (definition[@"sceneLighting"] &&
                  ![definition[@"sceneLighting"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"sceneShadows"] &&
-                 ![definition[@"sceneShadows"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
+                 ![definition[@"sceneShadows"] isKindOfClass:[NSNumber class]]) ||
+                (definition[@"packTextures"] &&
+                 ![definition[@"packTextures"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
             NSString *relative = definition[@"source"];
             if (![relative isKindOfClass:[NSString class]] || ![relative hasPrefix:@"shaders/"] ||
                 [relative containsString:@".."] || [relative.pathComponents count] != 2 || ![relative hasSuffix:@".metal"]) { valid = NO; break; }
@@ -1986,7 +2100,8 @@ static void gfx_metal_restore_shader64_pack(void) {
                 source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u,
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
-                ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) };
+                ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
+                ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) };
         }
         NSDictionary *material_definition = manifest[@"materialShader"];
         if (valid && material_definition &&

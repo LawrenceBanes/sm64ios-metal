@@ -69,6 +69,12 @@ class ShaderPackTests(unittest.TestCase):
         cls.api.gfx_shader64_build_shadow_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_build_shadow_pass_wrapper.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_textured_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_textured_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_textured_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_textured_pass_wrapper.restype = ctypes.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -97,6 +103,13 @@ class ShaderPackTests(unittest.TestCase):
         self.assertEqual((path / "shaders/postprocess.metal").read_bytes(), VALID)
         self.assertEqual((path / "manifest.json").read_bytes(), b'{"shaderApiVersion":1}')
 
+    def test_imports_bounded_pack_png_textures(self):
+        png = (ROOT / "ios/shaderpacks/TextureDemo64/textures/checker.png").read_bytes()
+        ok, error, path = self.install(self.archive([("manifest.json", b'{"shaderApiVersion":2}'),
+            ("shaders/textured.metal", VALID), ("textures/checker.png", png), ("textures/", b"")]))
+        self.assertTrue(ok, error)
+        self.assertEqual((path / "textures/checker.png").read_bytes(), png)
+
     def test_imports_bounded_precompiled_metallib(self):
         binary = b"MTLB" + bytes(range(64))
         manifest = json.dumps({"formatVersion": 1, "shaderApiVersion": 1,
@@ -118,6 +131,7 @@ class ShaderPackTests(unittest.TestCase):
         for entries in (
             [("manifest.json", b"{}"), ("shaders/a.metal", VALID), ("../escape", b"x")],
             [("manifest.json", b"{}"), ("shaders/a.metal", VALID), ("payload.bin", b"x")],
+            [("manifest.json", b"{}"), ("shaders/a.metal", VALID), ("textures/nested/a.png", b"x")],
         ):
             data = self.archive(entries)
             ok, _, _ = self.install(data)
@@ -222,6 +236,26 @@ class ShaderPackTests(unittest.TestCase):
         self.assertFalse(self.api.gfx_shader64_validate_shadow_pass_source(
             invalid, len(invalid), error, len(error)))
 
+    def test_pack_texture_pass_contract_and_wrapper(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_pass_textured(float4 color, float2 uv, texture2d<float> image, '
+                  b'sampler imageSampler, texture2d<float> packTexture0, sampler packSampler0, '
+                  b'texture2d<float> packTexture1, sampler packSampler1, '
+                  b'texture2d<float> packTexture2, sampler packSampler2, '
+                  b'texture2d<float> packTexture3, sampler packSampler3, uint packTextureCount, '
+                  b'constant float4 &params) { return color * packTexture0.sample(packSampler0, uv); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_textured_pass_source(
+            source, len(source), error, len(error)), error.value)
+        wrapper = ctypes.create_string_buffer(len(source) + 2048)
+        self.assertTrue(self.api.gfx_shader64_build_textured_pass_wrapper(
+            source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"texture2d<float> packTexture0 [[texture(4)]]", wrapper.value)
+        self.assertIn(b"constant uint &packTextureCount [[buffer(1)]]", wrapper.value)
+        invalid = source.replace(b"packTexture3", b"packTextureWrong")
+        self.assertFalse(self.api.gfx_shader64_validate_textured_pass_source(
+            invalid, len(invalid), error, len(error)))
+
     def test_api2_graph_topology_and_bounds(self):
         passes = (self.GraphPass * 2)(
             self.GraphPass(b"grade", b"sceneColor", b"graded", 0.5, 1),
@@ -255,8 +289,16 @@ class ShaderPackTests(unittest.TestCase):
             self.GraphPass(b"shadowed", b"sceneColor", b"present", 1.0, 1, 4))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             shadow_resource, 1, 1920, 1080, order, error, len(error)), error.value)
+        texture_resource = (self.GraphPass * 1)(
+            self.GraphPass(b"textured", b"sceneColor", b"present", 1.0, 1, 8))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            texture_resource, 1, 1920, 1080, order, error, len(error)), error.value)
+        conflicting_resources = (self.GraphPass * 1)(
+            self.GraphPass(b"invalid", b"sceneColor", b"present", 1.0, 1, 9))
+        self.assertFalse(self.api.gfx_shader64_validate_graph(
+            conflicting_resources, 1, 1920, 1080, order, error, len(error)))
         invalid_resource = (self.GraphPass * 1)(
-            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 8))
+            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 16))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resource, 1, 1920, 1080, order, error, len(error)))
         oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
@@ -306,7 +348,7 @@ class ShaderPackTests(unittest.TestCase):
     def test_production_importer_accepts_every_reference_pack(self):
         reference_ids = ("Classic64", "Paper64", "Lumen64", "GraphDemo", "BlissGridlines",
                          "DepthDebug64", "NormalDebug64", "MaterialDebug64", "Lumen64Graph",
-                         "Lumen64ShadowGraph")
+                         "Lumen64ShadowGraph", "TextureDemo64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())
@@ -325,14 +367,17 @@ class ShaderPackTests(unittest.TestCase):
                     depth_pass = bool(definition.get("sceneDepth"))
                     lighting_pass = bool(definition.get("sceneLighting"))
                     shadow_pass = bool(definition.get("sceneShadows"))
-                    validator = (self.api.gfx_shader64_validate_shadow_pass_source if shadow_pass else
+                    texture_pass = bool(definition.get("packTextures"))
+                    validator = (self.api.gfx_shader64_validate_textured_pass_source if texture_pass else
+                                 self.api.gfx_shader64_validate_shadow_pass_source if shadow_pass else
                                  self.api.gfx_shader64_validate_lit_pass_source if lighting_pass else
                                  self.api.gfx_shader64_validate_depth_pass_source if depth_pass else
                                  self.api.gfx_shader64_validate_pass_source)
                     self.assertTrue(validator(source, len(source), error, len(error)),
                                     f"{pack_id}: {error.value!r}")
                     wrapper = ctypes.create_string_buffer(len(source) + 2048)
-                    builder = (self.api.gfx_shader64_build_shadow_pass_wrapper if shadow_pass else
+                    builder = (self.api.gfx_shader64_build_textured_pass_wrapper if texture_pass else
+                               self.api.gfx_shader64_build_shadow_pass_wrapper if shadow_pass else
                                self.api.gfx_shader64_build_lit_pass_wrapper if lighting_pass else
                                self.api.gfx_shader64_build_depth_pass_wrapper if depth_pass else
                                self.api.gfx_shader64_build_pass_wrapper)
@@ -347,7 +392,8 @@ class ShaderPackTests(unittest.TestCase):
                                    ctypes.c_float(p["scale"]).value, 1,
                                    (1 if p.get("sceneDepth") else 0) |
                                    (2 if p.get("sceneLighting") else 0) |
-                                   (4 if p.get("sceneShadows") else 0)) for p in definitions])
+                                   (4 if p.get("sceneShadows") else 0) |
+                                   (8 if p.get("packTextures") else 0)) for p in definitions])
                 order = (ctypes.c_ubyte * 4)()
                 self.assertTrue(self.api.gfx_shader64_validate_graph(
                     graph_passes, len(definitions), 1920, 1080, order, error, len(error)),
@@ -361,6 +407,13 @@ class ShaderPackTests(unittest.TestCase):
                         material_source, len(material_source), error, len(error)),
                         f"{pack_id} material hook: {error.value!r}")
                     entries.append((material_path, material_source))
+            for texture in manifest.get("textures", []):
+                self.assertLessEqual(len(manifest.get("textures", [])), 4, pack_id)
+                texture_path = texture["source"]
+                self.assertTrue(texture_path.startswith("textures/") and ".." not in texture_path)
+                texture_data = (directory / texture_path).read_bytes()
+                self.assertLessEqual(len(texture_data), 4 * 1024 * 1024)
+                entries.append((texture_path, texture_data))
             for parameter in manifest.get("parameters", []):
                 if parameter.get("type") == "float":
                     minimum, maximum, default = (float(parameter[k]) for k in ("min", "max", "default"))
@@ -386,12 +439,15 @@ class ShaderPackTests(unittest.TestCase):
                       "gfx_metal_restore_shader64_pack", "SM64Shader64ActivePack",
                       "gfx_metal_load_shader64_graph_with_material", "gfx_metal_build_shader_with_material",
                       "gfx_metal_shader64_needs_scene_depth", "gfx_metal_shader64_requires_shadows",
-                      "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows"):
+                      "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows",
+                      "gfx_metal_shader64_load_pack_textures", "graph->pack_texture_count",
+                      "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures"):
             self.assertIn(token, metal)
         pack_header = (ROOT / "src/pc/gfx/gfx_shader64_pack.h").read_text()
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_SHADOW_MAP", pack_header)
+        self.assertIn("GFX_SHADER64_RESOURCE_PACK_TEXTURES", pack_header)
         self.assertIn("depth2d<float>", (ROOT / "src/pc/gfx/gfx_shader64_pack.c").read_text())
         self.assertIn("shader64_material(color", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
         for token in ("UIDocumentPickerViewController", "shaderPackRoot", "shaderpacks",

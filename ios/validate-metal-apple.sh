@@ -127,7 +127,7 @@ echo "compiled and linked SHADER64 Lumen64Graph directional-light pass"
 shadow_wrapper_tool="$output_dir/shader64-wrap-shadow"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_shadow_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
-    -o "$shadow_wrapper_tool"
+    -lm -o "$shadow_wrapper_tool"
 shadow_source="$repo_dir/ios/shaderpacks/Lumen64ShadowGraph/shaders/shadows.metal"
 "$shadow_wrapper_tool" "$shadow_source" > "$shader_dir/shader64-lumen64-shadowgraph-shadows.metal"
 xcrun --sdk iphoneos metal -c "$shader_dir/shader64-lumen64-shadowgraph-shadows.metal" \
@@ -135,6 +135,18 @@ xcrun --sdk iphoneos metal -c "$shader_dir/shader64-lumen64-shadowgraph-shadows.
 xcrun --sdk iphoneos metallib "$shader_dir/shader64-lumen64-shadowgraph-shadows.air" \
     -o "$shader_dir/shader64-lumen64-shadowgraph-shadows.metallib"
 echo "compiled and linked SHADER64 Lumen64ShadowGraph shadow-map pass"
+
+texture_wrapper_tool="$output_dir/shader64-wrap-textured"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_textured_pass.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -lm -o "$texture_wrapper_tool"
+texture_source="$repo_dir/ios/shaderpacks/TextureDemo64/shaders/textured.metal"
+"$texture_wrapper_tool" "$texture_source" > "$shader_dir/shader64-textured-demo.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-textured-demo.metal" \
+    -o "$shader_dir/shader64-textured-demo.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-textured-demo.air" \
+    -o "$shader_dir/shader64-textured-demo.metallib"
+echo "compiled and linked SHADER64 TextureDemo64 user texture pass"
 
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \

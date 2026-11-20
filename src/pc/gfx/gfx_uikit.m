@@ -1460,8 +1460,31 @@ static int sm64RenderDiagnosticMode;
         [manifest[@"passes"] count] <= GFX_SHADER64_MAX_GRAPH_PASSES;
     if (api2) {
         NSRegularExpression *nameRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,32}$" options:0 error:nil];
+        id textureListValue = manifest[@"textures"];
+        NSArray *textureList = [textureListValue isKindOfClass:[NSArray class]] ? textureListValue : nil;
+        if ((textureListValue && !textureList) || textureList.count > GFX_SHADER64_MAX_PACK_TEXTURES) api2 = NO;
+        NSMutableSet *textureIds = [NSMutableSet set];
+        NSMutableSet *texturePaths = [NSMutableSet set];
+        NSString *packDirectory = [root stringByAppendingPathComponent:packID];
+        for (NSDictionary *texture in textureList ?: @[]) {
+            NSString *textureID = [texture isKindOfClass:[NSDictionary class]] ? texture[@"id"] : nil;
+            NSString *texturePath = [texture isKindOfClass:[NSDictionary class]] ? texture[@"source"] : nil;
+            BOOL textureOK = [textureID isKindOfClass:[NSString class]] &&
+                [nameRegex numberOfMatchesInString:textureID options:0 range:NSMakeRange(0, textureID.length)] == 1 &&
+                [texturePath isKindOfClass:[NSString class]] && [texturePath hasPrefix:@"textures/"] &&
+                ![texturePath containsString:@".."] && texturePath.pathComponents.count == 2 &&
+                [texturePath hasSuffix:@".png"] && ![textureIds containsObject:textureID] &&
+                ![texturePaths containsObject:texturePath];
+            NSString *textureFile = textureOK ? [packDirectory stringByAppendingPathComponent:texturePath] : @"";
+            NSDictionary *textureAttributes = textureOK ? [[NSFileManager defaultManager] attributesOfItemAtPath:textureFile error:nil] : nil;
+            unsigned long long textureSize = [textureAttributes[NSFileSize] unsignedLongLongValue];
+            if (!textureOK || ![textureAttributes[NSFileType] isEqualToString:NSFileTypeRegular] ||
+                !textureSize || textureSize > GFX_SHADER64_MAX_PACK_TEXTURE_BYTES) { api2 = NO; break; }
+            [textureIds addObject:textureID]; [texturePaths addObject:texturePath];
+        }
         NSMutableSet *outputs = [NSMutableSet set];
         for (NSDictionary *pass in manifest[@"passes"]) {
+            if (!api2) break;
             if (![pass isKindOfClass:[NSDictionary class]]) { api2 = NO; break; }
             NSString *pid = pass[@"id"], *input = pass[@"input"], *output = pass[@"output"], *path = pass[@"source"], *type = pass[@"type"];
             NSNumber *scale = pass[@"scale"];
@@ -1478,6 +1501,10 @@ static int sm64RenderDiagnosticMode;
             if (sceneLighting && ![sceneLighting isKindOfClass:[NSNumber class]]) passOK = NO;
             id sceneShadows = pass[@"sceneShadows"];
             if (sceneShadows && ![sceneShadows isKindOfClass:[NSNumber class]]) passOK = NO;
+            id packTextures = pass[@"packTextures"];
+            if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
+            if ([packTextures boolValue] && (!textureList.count || [sceneDepth boolValue] ||
+                [sceneLighting boolValue] || [sceneShadows boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }
@@ -1524,7 +1551,8 @@ static int sm64RenderDiagnosticMode;
                 bytes.bytes, bytes.length, [definition[@"scale"] floatValue], 1u,
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
-                ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) };
+                ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
+                ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) };
         }
         NSDictionary *materialDefinition = manifest[@"materialShader"];
         if (validation == nil && materialDefinition) {
