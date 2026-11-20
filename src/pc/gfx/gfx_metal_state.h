@@ -62,6 +62,18 @@ struct GfxMetalColorAdjustments {
     float temperature;
 };
 
+enum GfxMetalAOParameter {
+    GFX_METAL_AO_RADIUS = 0,
+    GFX_METAL_AO_BIAS = 1,
+    GFX_METAL_AO_INTENSITY = 2,
+};
+
+struct GfxMetalAOAdjustments {
+    float radius_scale;
+    float bias_offset;
+    float intensity_scale;
+};
+
 struct GfxMetalPerformanceStats {
     double cpu_frame_ms;
     double gpu_frame_ms;
@@ -107,5 +119,10 @@ struct GfxMetalColorAdjustments gfx_metal_color_adjustments_sanitize(
     struct GfxMetalColorAdjustments adjustments);
 struct GfxMetalColorAdjustments gfx_metal_color_adjustments_step(
     struct GfxMetalColorAdjustments adjustments, uint32_t parameter, int direction);
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_default(void);
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_sanitize(
+    struct GfxMetalAOAdjustments adjustments);
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_step(
+    struct GfxMetalAOAdjustments adjustments, uint32_t parameter, int direction);
 
 #endif

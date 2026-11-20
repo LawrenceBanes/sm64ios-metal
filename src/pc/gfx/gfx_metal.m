@@ -104,6 +104,7 @@ static NSUInteger metal_bloom_width, metal_bloom_height;
 static bool metal_ssao_is_enabled;
 static uint32_t metal_ssao_debug;
 static uint32_t metal_ssao_quality;
+static struct GfxMetalAOAdjustments metal_ao_adjustments = { 1.0f, 0.0f, 1.0f };
 static bool metal_post_enabled;
 static bool metal_fxaa_enabled;
 static bool metal_effects_enabled;
@@ -286,6 +287,11 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
         metal_ssao_debug = [defaults boolForKey:@"SM64MetalSSAOEnabled"] ? 1u : 0u;
     metal_ssao_is_enabled = metal_ssao_debug != 0u;
     metal_ssao_quality = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSSAOQuality"]));
+    metal_ao_adjustments = gfx_metal_ao_adjustments_sanitize((struct GfxMetalAOAdjustments){
+        [defaults objectForKey:@"SM64MetalAORadius"] ? (float)[defaults doubleForKey:@"SM64MetalAORadius"] : 1.0f,
+        (float)[defaults doubleForKey:@"SM64MetalAOBias"],
+        [defaults objectForKey:@"SM64MetalAOIntensity"] ? (float)[defaults doubleForKey:@"SM64MetalAOIntensity"] : 1.0f
+    });
     metal_post_enabled = [defaults boolForKey:@"SM64MetalPostEnabled"];
     metal_fxaa_enabled = [defaults boolForKey:@"SM64MetalFXAAEnabled"];
     metal_effects_enabled = ![defaults objectForKey:@"SM64MetalEffectsEnabled"] ||
@@ -389,6 +395,31 @@ void gfx_metal_set_ssao_quality(uint32_t quality) {
 }
 void gfx_metal_cycle_ssao_quality(void) {
     gfx_metal_set_ssao_quality((gfx_metal_ssao_quality() + 1u) % 3u);
+}
+struct GfxMetalAOAdjustments gfx_metal_get_ao_adjustments(void) {
+    @synchronized ([NSObject class]) { return metal_ao_adjustments; }
+}
+void gfx_metal_adjust_ao(uint32_t parameter, int direction) {
+    struct GfxMetalAOAdjustments value;
+    @synchronized ([NSObject class]) {
+        metal_ao_adjustments = gfx_metal_ao_adjustments_step(metal_ao_adjustments, parameter, direction);
+        metal_offscreen_runtime_failed = false;
+        value = metal_ao_adjustments;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value.radius_scale forKey:@"SM64MetalAORadius"];
+    [defaults setDouble:value.bias_offset forKey:@"SM64MetalAOBias"];
+    [defaults setDouble:value.intensity_scale forKey:@"SM64MetalAOIntensity"];
+}
+void gfx_metal_reset_ao_adjustments(void) {
+    @synchronized ([NSObject class]) {
+        metal_ao_adjustments = gfx_metal_ao_adjustments_default();
+        metal_offscreen_runtime_failed = false;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:1.0 forKey:@"SM64MetalAORadius"];
+    [defaults setDouble:0.0 forKey:@"SM64MetalAOBias"];
+    [defaults setDouble:1.0 forKey:@"SM64MetalAOIntensity"];
 }
 
 bool gfx_metal_effects_enabled(void) { @synchronized ([NSObject class]) { return metal_effects_enabled; } }
@@ -1624,6 +1655,10 @@ static bool gfx_metal_encode_ssao(id<MTLCommandBuffer> command) {
     static const uint32_t quality_samples[] = { 4u, 8u, 8u };
     uint32_t quality = gfx_metal_ssao_quality();
     vector_float4 parameters = quality_parameters[quality];
+    struct GfxMetalAOAdjustments adjustments = gfx_metal_get_ao_adjustments();
+    parameters.x *= adjustments.radius_scale;
+    parameters.y = MAX(0.0f, parameters.y + adjustments.bias_offset);
+    parameters.z *= adjustments.intensity_scale;
     uint32_t sample_count = quality_samples[quality];
     [encoder setComputePipelineState:metal_ssao_pipeline];
     [encoder setTexture:metal_depth_texture atIndex:0];

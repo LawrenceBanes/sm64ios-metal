@@ -32,6 +32,17 @@ int main(void) {
         NAN, INFINITY, -INFINITY, NAN });
     assert(color.brightness == 0.0f && color.contrast == 1.0f &&
            color.saturation == 1.0f && color.temperature == 0.0f);
+    struct GfxMetalAOAdjustments ao = gfx_metal_ao_adjustments_default();
+    assert(ao.radius_scale == 1.0f && ao.bias_offset == 0.0f && ao.intensity_scale == 1.0f);
+    ao = gfx_metal_ao_adjustments_step(ao, GFX_METAL_AO_RADIUS, 1);
+    ao = gfx_metal_ao_adjustments_step(ao, GFX_METAL_AO_BIAS, -1);
+    ao = gfx_metal_ao_adjustments_step(ao, GFX_METAL_AO_INTENSITY, 1);
+    assert(ao.radius_scale == 1.25f && ao.bias_offset < -0.004f && ao.intensity_scale > 1.14f);
+    ao = gfx_metal_ao_adjustments_sanitize((struct GfxMetalAOAdjustments){
+        99.0f, -99.0f, 99.0f });
+    assert(ao.radius_scale == 2.0f && ao.bias_offset == -0.02f && ao.intensity_scale == 2.0f);
+    ao = gfx_metal_ao_adjustments_sanitize((struct GfxMetalAOAdjustments){ NAN, INFINITY, NAN });
+    assert(ao.radius_scale == 1.0f && ao.bias_offset == 0.0f && ao.intensity_scale == 1.0f);
     assert(gfx_metal_sampler_address_mode(0) == GFX_SAMPLER_REPEAT);
     assert(gfx_metal_sampler_address_mode(0x1u) == GFX_SAMPLER_MIRROR);
     assert(gfx_metal_sampler_address_mode(0x2u) == GFX_SAMPLER_CLAMP);

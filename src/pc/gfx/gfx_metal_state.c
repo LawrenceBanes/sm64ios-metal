@@ -171,3 +171,33 @@ struct GfxMetalColorAdjustments gfx_metal_color_adjustments_step(
     }
     return gfx_metal_color_adjustments_sanitize(adjustments);
 }
+
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_default(void) {
+    return (struct GfxMetalAOAdjustments){ 1.0f, 0.0f, 1.0f };
+}
+
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_sanitize(
+    struct GfxMetalAOAdjustments adjustments) {
+    if (!isfinite(adjustments.radius_scale)) adjustments.radius_scale = 1.0f;
+    if (!isfinite(adjustments.bias_offset)) adjustments.bias_offset = 0.0f;
+    if (!isfinite(adjustments.intensity_scale)) adjustments.intensity_scale = 1.0f;
+    if (adjustments.radius_scale < 0.5f) adjustments.radius_scale = 0.5f;
+    if (adjustments.radius_scale > 2.0f) adjustments.radius_scale = 2.0f;
+    if (adjustments.bias_offset < -0.02f) adjustments.bias_offset = -0.02f;
+    if (adjustments.bias_offset > 0.04f) adjustments.bias_offset = 0.04f;
+    if (adjustments.intensity_scale < 0.0f) adjustments.intensity_scale = 0.0f;
+    if (adjustments.intensity_scale > 2.0f) adjustments.intensity_scale = 2.0f;
+    return adjustments;
+}
+
+struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_step(
+    struct GfxMetalAOAdjustments adjustments, uint32_t parameter, int direction) {
+    float step = direction < 0 ? -1.0f : 1.0f;
+    switch (parameter) {
+        case GFX_METAL_AO_RADIUS: adjustments.radius_scale += step * 0.25f; break;
+        case GFX_METAL_AO_BIAS: adjustments.bias_offset += step * 0.005f; break;
+        case GFX_METAL_AO_INTENSITY: adjustments.intensity_scale += step * 0.15f; break;
+        default: return gfx_metal_ao_adjustments_sanitize(adjustments);
+    }
+    return gfx_metal_ao_adjustments_sanitize(adjustments);
+}

@@ -105,6 +105,7 @@ static int sm64RenderDiagnosticMode;
 - (void)toggleFog;
 - (void)toggleBloom;
 - (void)openColorSettings;
+- (void)openAOSettings;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -609,7 +610,7 @@ static int sm64RenderDiagnosticMode;
     self.shadowButton = [self buttonWithTitle:@"Shadows: Off" action:@selector(openShadowSettings)];
     self.shadowButton.frame = CGRectMake(398, 278, 108, 30);
     [self.graphicsPanel addSubview:self.shadowButton];
-    self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(cycleAOQuality)];
+    self.aoQualityButton = [self buttonWithTitle:@"AO quality: Standard" action:@selector(openAOSettings)];
     self.aoQualityButton.frame = CGRectMake(14, 312, 144, 30);
     [self.graphicsPanel addSubview:self.aoQualityButton];
     self.skyPresetButton = [self buttonWithTitle:@"Sky: Original" action:@selector(cycleSkyPreset)];
@@ -930,6 +931,41 @@ static int sm64RenderDiagnosticMode;
 #endif
 }
 
+- (void)openAOSettings {
+#if defined(RAPI_METAL)
+    struct GfxMetalAOAdjustments value = gfx_metal_get_ao_adjustments();
+    NSString *message = [NSString stringWithFormat:
+        @"Quality: %@  Radius ×%.2f  Bias %+.3f  Intensity ×%.2f",
+        @[ @"Low", @"Standard", @"High" ][MIN(gfx_metal_ssao_quality(), 2u)],
+        value.radius_scale, value.bias_offset, value.intensity_scale];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Ambient Occlusion"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    static NSString *const quality_names[] = { @"Low quality", @"Standard quality", @"High quality" };
+    for (uint32_t quality = 0; quality < 3u; ++quality) {
+        uint32_t selected = quality;
+        [alert addAction:[UIAlertAction actionWithTitle:quality_names[quality] style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *action) { gfx_metal_set_ssao_quality(selected); [self refreshGraphicsSettings]; }]];
+    }
+    static NSString *const labels[] = { @"Radius", @"Bias", @"Intensity" };
+    for (uint32_t parameter = 0; parameter < 3u; ++parameter) {
+        for (int direction = -1; direction <= 1; direction += 2) {
+            uint32_t selected_parameter = parameter;
+            int selected_direction = direction;
+            [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ %@",
+                labels[parameter], direction < 0 ? @"−" : @"+"] style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction *action) {
+                    gfx_metal_adjust_ao(selected_parameter, selected_direction);
+                    [self refreshGraphicsSettings];
+                }]];
+        }
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reset AO tuning" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { gfx_metal_reset_ao_adjustments(); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+#endif
+}
+
 - (void)cycleSkyPreset {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_sky_preset();
@@ -965,6 +1001,7 @@ static int sm64RenderDiagnosticMode;
         if (preset == GFX_METAL_PRESET_CLASSIC) {
             settings = gfx_metal_classic_settings();
             gfx_metal_set_ssao_enabled(false);
+            gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(false);
             gfx_metal_set_fxaa_enabled(false);
             gfx_metal_set_bloom_enabled(false);
@@ -999,6 +1036,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_ssao_enabled(true);
             gfx_metal_set_ssao_quality(preset == GFX_METAL_PRESET_PERFORMANCE ? 0u :
                                        (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
+            gfx_metal_reset_ao_adjustments();
             gfx_metal_set_post_enabled(true);
             gfx_metal_set_fxaa_enabled(preset != GFX_METAL_PRESET_PERFORMANCE);
             gfx_metal_set_bloom_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
@@ -1075,6 +1113,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_reset_color_adjustments();
     gfx_metal_set_fog_profile(0u);
     gfx_metal_set_ssao_quality(1u);
+    gfx_metal_reset_ao_adjustments();
     gfx_metal_set_sky_preset(0u);
     gfx_metal_set_shadows_enabled(false);
     gfx_metal_set_god_rays_enabled(false);

@@ -53,6 +53,8 @@ def main() -> None:
         "gfx_metal_bloom_settings(0u)", "bloom_low.threshold > bloom_standard.threshold",
         "gfx_metal_color_adjustments_default", "gfx_metal_color_adjustments_sanitize",
         "gfx_metal_color_adjustments_step", "GFX_METAL_COLOR_TEMPERATURE",
+        "gfx_metal_ao_adjustments_default", "gfx_metal_ao_adjustments_sanitize",
+        "gfx_metal_ao_adjustments_step", "GFX_METAL_AO_INTENSITY",
     ):
         require(token in state_test, f"missing host regression case: {token}")
     for token in (
@@ -183,6 +185,9 @@ def main() -> None:
         "SM64MetalColorGrade", "gfx_metal_cycle_color_grade",
         "gfx_metal_set_color_grade", "grade_style", "Color: %@",
         "gfx_metal_get_color_adjustments", "gfx_metal_adjust_color", "gfx_metal_reset_color_adjustments",
+        "gfx_metal_get_ao_adjustments", "gfx_metal_adjust_ao", "gfx_metal_reset_ao_adjustments",
+        "SM64MetalAORadius", "SM64MetalAOBias", "SM64MetalAOIntensity", "AO quality: %@",
+        "Ambient Occlusion", "Reset AO tuning", "parameters.x *= adjustments.radius_scale",
         "SM64MetalBrightness", "SM64MetalContrast", "SM64MetalSaturation", "SM64MetalTemperature",
         "Color Grading", "static NSString *const labels[] = { @\"Brightness\", @\"Contrast\", @\"Saturation\", @\"Temperature\" }",
         "gradeStyle [[buffer(5)]]", "gradeStyle.x", "gradeStyle.y",
