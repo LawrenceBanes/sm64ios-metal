@@ -20,6 +20,8 @@ struct GfxMetalSamplerState {
 enum GfxMetalPreset {
     GFX_METAL_PRESET_CLASSIC = 0,
     GFX_METAL_PRESET_ENHANCED = 1,
+    GFX_METAL_PRESET_CINEMATIC = 2,
+    GFX_METAL_PRESET_PERFORMANCE = 3,
 };
 
 struct GfxMetalSettings {
@@ -67,6 +69,9 @@ uint32_t gfx_metal_pipeline_state_key(bool depth_test, bool depth_write,
                                      bool blend, bool decal);
 struct GfxMetalSettings gfx_metal_classic_settings(void);
 struct GfxMetalSettings gfx_metal_enhanced_settings(void);
+struct GfxMetalSettings gfx_metal_cinematic_settings(void);
+struct GfxMetalSettings gfx_metal_performance_settings(void);
+const char *gfx_metal_preset_name(uint32_t preset);
 struct GfxMetalSettings gfx_metal_settings_sanitize(
     struct GfxMetalSettings requested, struct GfxMetalCapabilities capabilities);
 bool gfx_metal_settings_use_offscreen(struct GfxMetalSettings settings);

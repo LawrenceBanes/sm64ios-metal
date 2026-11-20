@@ -537,7 +537,7 @@ static int sm64RenderDiagnosticMode;
     self.graphicsPanel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
         UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
 
-    self.presetControl = [self graphicsControl:@[@"Classic", @"Enhanced"] y:38];
+    self.presetControl = [self graphicsControl:@[@"Classic", @"Enhanced", @"Cinematic", @"Performance"] y:38];
     [self addGraphicsLabel:@"Render scale" y:78];
     self.scaleControl = [self graphicsControl:@[@"50%", @"75%", @"100%"] y:96];
     [self addGraphicsLabel:@"Anti-aliasing" y:134];
@@ -673,7 +673,7 @@ static int sm64RenderDiagnosticMode;
 #if defined(RAPI_METAL)
     struct GfxMetalSettings settings = gfx_metal_get_settings();
     struct GfxMetalCapabilities capabilities = gfx_metal_get_capabilities();
-    self.presetControl.selectedSegmentIndex = settings.preset == GFX_METAL_PRESET_ENHANCED ? 1 : 0;
+    self.presetControl.selectedSegmentIndex = MIN(settings.preset, GFX_METAL_PRESET_PERFORMANCE);
     self.scaleControl.selectedSegmentIndex = settings.render_scale_percent == 50 ? 0 :
         (settings.render_scale_percent == 75 ? 1 : 2);
     self.msaaControl.selectedSegmentIndex = settings.sample_count >= 4 ? 2 :
@@ -795,19 +795,51 @@ static int sm64RenderDiagnosticMode;
 - (void)applyGraphicsSettingsSelection:(UISegmentedControl *)sender {
 #if defined(RAPI_METAL)
     struct GfxMetalSettings settings;
-    if (self.presetControl.selectedSegmentIndex == 0) {
-        settings = gfx_metal_classic_settings();
-    } else {
-        if (sender == self.presetControl) {
-            struct GfxMetalCapabilities capabilities = gfx_metal_get_capabilities();
+    uint32_t preset = (uint32_t)MAX(0, MIN(GFX_METAL_PRESET_PERFORMANCE, self.presetControl.selectedSegmentIndex));
+    if (sender == self.presetControl) {
+        struct GfxMetalCapabilities capabilities = gfx_metal_get_capabilities();
+        if (preset == GFX_METAL_PRESET_CLASSIC) {
+            settings = gfx_metal_classic_settings();
+            gfx_metal_set_ssao_enabled(false);
+            gfx_metal_set_post_enabled(false);
+            gfx_metal_set_fxaa_enabled(false);
+            gfx_metal_set_bloom_enabled(false);
+            gfx_metal_set_fog_enabled(false);
+            gfx_metal_set_fog_profile(0u);
+            gfx_metal_set_color_grade(0u);
+            gfx_metal_set_sky_preset(0u);
+        } else {
+            if (preset == GFX_METAL_PRESET_CINEMATIC) settings = gfx_metal_cinematic_settings();
+            else if (preset == GFX_METAL_PRESET_PERFORMANCE) settings = gfx_metal_performance_settings();
+            else settings = gfx_metal_enhanced_settings();
+            if (preset == GFX_METAL_PRESET_PERFORMANCE) {
+                self.scaleControl.selectedSegmentIndex = 1;
+                self.msaaControl.selectedSegmentIndex = 0;
+                self.anisotropyControl.selectedSegmentIndex = capabilities.max_anisotropy >= 2 ? 1 : 0;
+            } else {
             self.scaleControl.selectedSegmentIndex = 2;
             self.msaaControl.selectedSegmentIndex = capabilities.sample_count_4 ? 2 :
                 (capabilities.sample_count_2 ? 1 : 0);
-            self.anisotropyControl.selectedSegmentIndex = capabilities.max_anisotropy >= 8 ? 3 :
+            self.anisotropyControl.selectedSegmentIndex = capabilities.max_anisotropy >= 16 && preset == GFX_METAL_PRESET_CINEMATIC ? 4 :
+                (capabilities.max_anisotropy >= 8 ? 3 :
                 (capabilities.max_anisotropy >= 4 ? 2 :
-                 (capabilities.max_anisotropy >= 2 ? 1 : 0));
+                 (capabilities.max_anisotropy >= 2 ? 1 : 0)));
+            }
+            gfx_metal_set_ssao_enabled(true);
+            gfx_metal_set_ssao_quality(preset == GFX_METAL_PRESET_PERFORMANCE ? 0u :
+                                       (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
+            gfx_metal_set_post_enabled(true);
+            gfx_metal_set_fxaa_enabled(preset != GFX_METAL_PRESET_PERFORMANCE);
+            gfx_metal_set_bloom_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
+            gfx_metal_set_fog_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
+            gfx_metal_set_fog_profile(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
+            gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
+            gfx_metal_set_sky_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
         }
-        settings = gfx_metal_enhanced_settings();
+    } else {
+        struct GfxMetalSettings current = gfx_metal_get_settings();
+        settings = current;
+        settings.preset = preset;
         settings.render_scale_percent = self.scaleControl.selectedSegmentIndex == 0 ? 50u :
             (self.scaleControl.selectedSegmentIndex == 1 ? 75u : 100u);
         settings.sample_count = self.msaaControl.selectedSegmentIndex == 0 ? 1u :
@@ -819,7 +851,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_apply_settings(settings);
     [self refreshGraphicsSettings];
     [self refreshGraphicsPerformance];
-    [self appendStatus:[NSString stringWithFormat:@"Graphics: %@", settings.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced"]];
+    [self appendStatus:[NSString stringWithFormat:@"Graphics: %s", gfx_metal_preset_name(settings.preset)]];
 #endif
 }
 
@@ -829,7 +861,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_get_performance_stats(&stats);
     NSString *gpu = stats.gpu_timing_available ?
         [NSString stringWithFormat:@"GPU %.2f ms", stats.gpu_frame_ms] : @"GPU timing unavailable";
-    NSString *preset = stats.preset == GFX_METAL_PRESET_CLASSIC ? @"Classic" : @"Enhanced";
+    NSString *preset = [NSString stringWithUTF8String:gfx_metal_preset_name(stats.preset)];
     self.performanceLabel.text = [NSString stringWithFormat:
         @"%@  |  CPU %.2f ms  |  %.1f FPS est.\n%@\nDraws %llu  |  Triangles %llu\nRender %ux%u (%u%%)  |  MSAA %ux  |  AF %u×\nSSAO %@ %llu px | Bloom %@ %llu px | targets ~%.1f MiB",
         preset, stats.cpu_frame_ms, stats.estimated_fps, gpu,

@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
     assert(gfx_metal_sampler_address_mode(0) == GFX_SAMPLER_REPEAT);
@@ -49,6 +50,19 @@ int main(void) {
     assert(enhanced.render_scale_percent == 100 && enhanced.sample_count == 4 &&
            enhanced.anisotropy == 8 && enhanced.hd_textures);
     assert(gfx_metal_settings_use_offscreen(enhanced));
+    struct GfxMetalSettings cinematic = gfx_metal_settings_sanitize(
+        gfx_metal_cinematic_settings(), a16_like);
+    assert(cinematic.preset == GFX_METAL_PRESET_CINEMATIC && cinematic.sample_count == 4 &&
+           cinematic.anisotropy == 16 && cinematic.hd_textures);
+    struct GfxMetalSettings performance = gfx_metal_settings_sanitize(
+        gfx_metal_performance_settings(), a16_like);
+    assert(performance.preset == GFX_METAL_PRESET_PERFORMANCE && performance.render_scale_percent == 75 &&
+           performance.sample_count == 1 && performance.anisotropy == 2);
+    assert(strcmp(gfx_metal_preset_name(GFX_METAL_PRESET_CINEMATIC), "Cinematic") == 0);
+    assert(strcmp(gfx_metal_preset_name(GFX_METAL_PRESET_PERFORMANCE), "Performance") == 0);
+    struct GfxMetalSettings unknown = { 99u, 100u, 1u, 1u, true };
+    unknown = gfx_metal_settings_sanitize(unknown, a16_like);
+    assert(unknown.preset == GFX_METAL_PRESET_CLASSIC && !unknown.hd_textures);
 
     struct GfxMetalCapabilities no_4x = { true, false, 4 };
     enhanced = gfx_metal_settings_sanitize(gfx_metal_enhanced_settings(), no_4x);

@@ -33,10 +33,32 @@ struct GfxMetalSettings gfx_metal_enhanced_settings(void) {
     };
 }
 
+struct GfxMetalSettings gfx_metal_cinematic_settings(void) {
+    return (struct GfxMetalSettings) {
+        GFX_METAL_PRESET_CINEMATIC, 100u, 4u, 16u, true
+    };
+}
+
+struct GfxMetalSettings gfx_metal_performance_settings(void) {
+    return (struct GfxMetalSettings) {
+        GFX_METAL_PRESET_PERFORMANCE, 75u, 1u, 2u, true
+    };
+}
+
+const char *gfx_metal_preset_name(uint32_t preset) {
+    switch (preset) {
+        case GFX_METAL_PRESET_CLASSIC: return "Classic";
+        case GFX_METAL_PRESET_ENHANCED: return "Enhanced";
+        case GFX_METAL_PRESET_CINEMATIC: return "Cinematic";
+        case GFX_METAL_PRESET_PERFORMANCE: return "Performance";
+        default: return "Classic";
+    }
+}
+
 struct GfxMetalSettings gfx_metal_settings_sanitize(
     struct GfxMetalSettings requested, struct GfxMetalCapabilities capabilities) {
     struct GfxMetalSettings settings = requested;
-    if (settings.preset > GFX_METAL_PRESET_ENHANCED)
+    if (settings.preset > GFX_METAL_PRESET_PERFORMANCE)
         settings.preset = GFX_METAL_PRESET_CLASSIC;
     if (settings.preset == GFX_METAL_PRESET_CLASSIC)
         settings.hd_textures = false;

@@ -257,8 +257,12 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     struct GfxMetalSettings requested = gfx_metal_classic_settings();
     if ([defaults objectForKey:@"SM64MetalPreset"]) {
         requested.preset = (uint32_t)[defaults integerForKey:@"SM64MetalPreset"];
-        requested = requested.preset == GFX_METAL_PRESET_ENHANCED ?
-                    gfx_metal_enhanced_settings() : gfx_metal_classic_settings();
+        switch (requested.preset) {
+            case GFX_METAL_PRESET_ENHANCED: requested = gfx_metal_enhanced_settings(); break;
+            case GFX_METAL_PRESET_CINEMATIC: requested = gfx_metal_cinematic_settings(); break;
+            case GFX_METAL_PRESET_PERFORMANCE: requested = gfx_metal_performance_settings(); break;
+            default: requested = gfx_metal_classic_settings(); break;
+        }
     }
     if ([defaults objectForKey:@"SM64MetalRenderScale"])
         requested.render_scale_percent = (uint32_t)[defaults integerForKey:@"SM64MetalRenderScale"];
@@ -282,7 +286,7 @@ static void gfx_metal_persist_settings(struct GfxMetalSettings settings) {
 
 bool gfx_metal_hd_textures_enabled(void) {
     @synchronized ([NSObject class]) {
-        return metal_settings.preset == GFX_METAL_PRESET_ENHANCED && metal_settings.hd_textures;
+        return metal_settings.preset != GFX_METAL_PRESET_CLASSIC && metal_settings.hd_textures;
     }
 }
 
@@ -413,7 +417,7 @@ void gfx_metal_apply_settings(struct GfxMetalSettings requested) {
         metal_performance_stats.anisotropy = sanitized.anisotropy;
         if (targets_changed) gfx_metal_release_render_targets();
         if (changed) {
-            gfx_ios_diag_log("Metal graphics settings applied preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", sanitized.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", sanitized.render_scale_percent, sanitized.sample_count, sanitized.anisotropy, sanitized.hd_textures);
+            gfx_ios_diag_log("Metal graphics settings applied preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", gfx_metal_preset_name(sanitized.preset), sanitized.render_scale_percent, sanitized.sample_count, sanitized.anisotropy, sanitized.hd_textures);
         }
     }
     gfx_metal_persist_settings(sanitized);
@@ -1412,7 +1416,7 @@ static void gfx_metal_init(void) {
     metal_performance_stats.sample_count = metal_settings.sample_count;
     metal_performance_stats.anisotropy = metal_settings.anisotropy;
     gfx_metal_persist_settings(metal_settings);
-    gfx_ios_diag_log("Metal startup graphics settings preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", metal_settings.preset == GFX_METAL_PRESET_CLASSIC ? "Classic" : "Enhanced", metal_settings.render_scale_percent, metal_settings.sample_count, metal_settings.anisotropy, metal_settings.hd_textures);
+    gfx_ios_diag_log("Metal startup graphics settings preset=%s scale=%u%% samples=%ux anisotropy=%u hdTextures=%d", gfx_metal_preset_name(metal_settings.preset), metal_settings.render_scale_percent, metal_settings.sample_count, metal_settings.anisotropy, metal_settings.hd_textures);
     texture_count = 0;
     for (int i = 0; i < 2; ++i) {
         [metal_samplers[i] release];

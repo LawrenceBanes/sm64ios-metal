@@ -32,6 +32,7 @@ def main() -> None:
         require(token in state_h, f"missing portable graphics settings API: {token}")
     for token in (
         "gfx_metal_classic_settings", "gfx_metal_enhanced_settings",
+        "gfx_metal_cinematic_settings", "gfx_metal_performance_settings", "gfx_metal_preset_name",
         "capabilities.sample_count_4", "capabilities.sample_count_2",
         "anisotropy_levels[] = { 1u, 2u, 4u, 8u, 16u }",
         "settings.render_scale_percent != 75u",
@@ -90,7 +91,7 @@ def main() -> None:
             "settings and performance API must be visible to native UIKit")
 
     for token in (
-        '[@"Classic", @"Enhanced"]', '[@"50%", @"75%", @"100%"]',
+        '[@"Classic", @"Enhanced", @"Cinematic", @"Performance"]', '[@"50%", @"75%", @"100%"]',
         '[@"Off", @"2×", @"4×"]', '[@"Off", @"2×", @"4×", @"8×", @"16×"]',
         "@selector(toggleGraphicsSettings)", "@selector(resetGraphicsSettings)",
         "@selector(applyGraphicsSettingsSelection:)", "sender == self.presetControl",

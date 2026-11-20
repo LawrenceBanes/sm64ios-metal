@@ -4,7 +4,7 @@
 
 - Branch: `mission-79-modern-metal-renderer`
 - Base: Mission 76 `7c57539c85ccdd14734f83b994a894cbe197dc8e`
-- Current source commit: `300cc597685623222c2e96301ea801eeb8152cef`.
+- Current source commit: `9eb49d007a4a2bc8313a88eac42c69094399f8ad`, with four-preset settings integration in progress.
 - Mission 77 ray-tracing branch and Mission 78 worktree are independent and unchanged.
 
 ## Milestones
@@ -64,6 +64,11 @@
 - Added persisted Original / Day / Sunset selection. The final presentation pass replaces only clear-depth pixels with a camera-relative horizon gradient, so scene geometry remains untouched and sky pixels stay excluded from fog and AO reconstruction.
 - This is a simple gradient, not an OoT skybox or sun disk. Full Linux regression and Apple SDK/MSL validation passed for the combined AO/sky commit in [run 44698930438](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44698930438). Sky appearance remains device-unverified.
 
+### M79-F — Unified visual presets (implementation increment)
+
+- Expanded settings state to Classic / Enhanced / Cinematic / Performance and added base render configurations. The UIKit control applies these profiles to the implemented AO, tone mapping, FXAA, bloom, fog, color-grade, and sky features; reset restores Classic.
+- Focused host checks, full Linux regression, and ASan/UBSan state/postprocess tests pass. Apple compilation is pending for this increment; profiles still require device usability/performance feedback.
+
 ### Build candidate status
 
 - The private full-game IPA workflow [44696628601](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44696628601) succeeded for source `aff5bc593b9e5806995b2bf4dd3420180705e5e7`: iPhoneOS arm64 compile, unsigned IPA packaging/structure checks, and private draft upload all passed. Private draft release: [unsigned build 44696628601.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-e913a2ca7bce91e3e18f). IPA SHA-256: `44ed16d6fd278c336bfaa9b1445dd67ffa8e604e5e13a80bb15d7e7652daacaa`. This is an install candidate, not proof of effect appearance or device performance.
@@ -88,4 +93,4 @@
 
 ## Next task
 
-Build a current private IPA containing AO quality and sky controls, then continue with AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and unified presets. Device screenshots and performance evidence remain required for acceptance.
+Run Apple validation for the unified presets, build a current private IPA, then continue with a master effects toggle, AO/HUD separation, real directional shadow mapping, sun disk/light shafts, and device performance evidence.
