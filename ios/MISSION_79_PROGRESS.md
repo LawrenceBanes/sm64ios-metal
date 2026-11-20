@@ -44,9 +44,9 @@
 - Focused postprocess CPU math test passed ASan/UBSan.
 - Apple SDK validation passed for both the HDR/depth foundation (`2be23bf8`, run `44690695136`) and SSAO (`31a60a53`, run `44693601221`).
 - AO/depth debug-view code passed Apple and Linux jobs at `16887bb47ca4f3e791ee25fbdbd9ed879f462675`, workflow [44694078066](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694078066).
-- Tone-map/FXAA source work is not yet committed; focused checks and the full Linux suite passed locally, and it still needs Apple compilation before a checkpoint.
+- Tone-map/FXAA is committed as `2e1911824acd5791796c013979792b5c1c348971`; focused checks, the full Linux suite, and Apple SDK/MSL validation passed (workflow [44694655649](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44694655649)).
 - No Mission 79 IPA, on-device rendering, or physical-device visual/performance claim exists.
 
 ## Next task
 
-Dispatch Apple SDK validation for tone mapping/FXAA and repair compiler failures. Then extend the postprocess chain with bloom and additional grading controls. Continue to AO controls/HUD separation, directional shadow mapping, atmosphere, and the remaining integrated settings. Physical-device screenshots and visual/performance checks remain required for acceptance.
+The next action is to produce a private device-test candidate from `2e191182` using the authorized IPA workflow while continuing implementation afterward. Then extend the postprocess chain with bloom and grading controls, AO controls/HUD separation, directional shadow mapping, atmosphere, and integrated presets. Device screenshots and visual/performance checks remain required for acceptance.
