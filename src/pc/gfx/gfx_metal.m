@@ -113,6 +113,7 @@ static uint32_t metal_color_grade;
 static struct GfxMetalColorAdjustments metal_color_adjustments = { 0.0f, 1.0f, 1.0f, 0.0f };
 static bool metal_fog_is_enabled;
 static uint32_t metal_fog_profile;
+static struct GfxMetalFogAdjustments metal_fog_adjustments = { 1.0f, 1.0f };
 static uint32_t metal_sky_preset;
 static bool metal_bloom_is_enabled;
 static uint32_t metal_bloom_profile = 1u;
@@ -316,6 +317,10 @@ static struct GfxMetalSettings gfx_metal_read_persisted_settings(void) {
     });
     metal_fog_is_enabled = [defaults boolForKey:@"SM64MetalFogEnabled"];
     metal_fog_profile = (uint32_t)MIN(3, MAX(0, [defaults integerForKey:@"SM64MetalFogProfile"]));
+    metal_fog_adjustments = gfx_metal_fog_adjustments_sanitize((struct GfxMetalFogAdjustments){
+        [defaults objectForKey:@"SM64MetalFogDensity"] ? (float)[defaults doubleForKey:@"SM64MetalFogDensity"] : 1.0f,
+        [defaults objectForKey:@"SM64MetalFogStart"] ? (float)[defaults doubleForKey:@"SM64MetalFogStart"] : 1.0f
+    });
     metal_sky_preset = (uint32_t)MIN(2, MAX(0, [defaults integerForKey:@"SM64MetalSkyPreset"]));
     metal_bloom_is_enabled = [defaults boolForKey:@"SM64MetalBloomEnabled"];
     if ([defaults objectForKey:@"SM64MetalBloomProfile"])
@@ -595,6 +600,29 @@ void gfx_metal_set_fog_profile(uint32_t profile) {
     uint32_t sanitized = MIN(profile, 3u);
     @synchronized ([NSObject class]) { metal_fog_profile = sanitized; metal_offscreen_runtime_failed = false; }
     [[NSUserDefaults standardUserDefaults] setInteger:(NSInteger)sanitized forKey:@"SM64MetalFogProfile"];
+}
+struct GfxMetalFogAdjustments gfx_metal_get_fog_adjustments(void) {
+    @synchronized ([NSObject class]) { return metal_fog_adjustments; }
+}
+void gfx_metal_adjust_fog(uint32_t parameter, int direction) {
+    struct GfxMetalFogAdjustments value;
+    @synchronized ([NSObject class]) {
+        metal_fog_adjustments = gfx_metal_fog_adjustments_step(metal_fog_adjustments, parameter, direction);
+        metal_offscreen_runtime_failed = false;
+        value = metal_fog_adjustments;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:value.density_scale forKey:@"SM64MetalFogDensity"];
+    [defaults setDouble:value.start_scale forKey:@"SM64MetalFogStart"];
+}
+void gfx_metal_reset_fog_adjustments(void) {
+    @synchronized ([NSObject class]) {
+        metal_fog_adjustments = gfx_metal_fog_adjustments_default();
+        metal_offscreen_runtime_failed = false;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setDouble:1.0 forKey:@"SM64MetalFogDensity"];
+    [defaults setDouble:1.0 forKey:@"SM64MetalFogStart"];
 }
 uint32_t gfx_metal_sky_preset(void) { @synchronized ([NSObject class]) { return metal_effects_enabled ? metal_sky_preset : 0u; } }
 void gfx_metal_cycle_sky_preset(void) {
@@ -1524,8 +1552,10 @@ static bool gfx_metal_encode_final_pass(id<CAMetalDrawable> drawable,
         { 0.85f, 0.42f, 0.22f, 1.0f }, { 0.40f, 0.60f, 0.76f, 1.0f }
     };
     uint32_t fog_profile = gfx_metal_fog_profile() % 4u;
+    struct GfxMetalFogAdjustments fog_adjustments = gfx_metal_get_fog_adjustments();
     vector_float4 grade_params = { gfx_metal_exposure_stops(), gfx_metal_fog_enabled() ? 1.0f : 0.0f,
-                                   fog_density[fog_profile], fog_start[fog_profile] };
+                                   fog_density[fog_profile] * fog_adjustments.density_scale,
+                                   fog_start[fog_profile] * fog_adjustments.start_scale };
     float inverse_projection[4][4] = {{0}};
     float inverse_view[4][4] = {{0}};
     struct GfxSceneCaptureFrame capture = gfx_scene_capture_get_frame();

@@ -201,3 +201,29 @@ struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_step(
     }
     return gfx_metal_ao_adjustments_sanitize(adjustments);
 }
+
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_default(void) {
+    return (struct GfxMetalFogAdjustments){ 1.0f, 1.0f };
+}
+
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_sanitize(
+    struct GfxMetalFogAdjustments adjustments) {
+    if (!isfinite(adjustments.density_scale)) adjustments.density_scale = 1.0f;
+    if (!isfinite(adjustments.start_scale)) adjustments.start_scale = 1.0f;
+    if (adjustments.density_scale < 0.25f) adjustments.density_scale = 0.25f;
+    if (adjustments.density_scale > 2.0f) adjustments.density_scale = 2.0f;
+    if (adjustments.start_scale < 0.5f) adjustments.start_scale = 0.5f;
+    if (adjustments.start_scale > 2.0f) adjustments.start_scale = 2.0f;
+    return adjustments;
+}
+
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_step(
+    struct GfxMetalFogAdjustments adjustments, uint32_t parameter, int direction) {
+    float step = direction < 0 ? -1.0f : 1.0f;
+    switch (parameter) {
+        case GFX_METAL_FOG_DENSITY: adjustments.density_scale += step * 0.25f; break;
+        case GFX_METAL_FOG_START: adjustments.start_scale += step * 0.25f; break;
+        default: return gfx_metal_fog_adjustments_sanitize(adjustments);
+    }
+    return gfx_metal_fog_adjustments_sanitize(adjustments);
+}

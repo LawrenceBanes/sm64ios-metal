@@ -38,6 +38,11 @@
 - Added persistent, bounded radius, bias, and intensity adjustments layered on the Low / Standard / High sample profiles. The AO menu exposes profile selection, each parameter, and reset; presets and Classic restore neutral tuning.
 - Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple Metal SDK validation and CI Linux suite passed in [run 44709773683](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44709773683). AO remains visually unverified on physical hardware.
 
+## M79-E fog density and distance tuning (working tree)
+
+- Added bounded persistent fog density/start-distance multipliers layered on the four existing fog color/density/range profiles. The developer Fog control now exposes profile selection, near/far start, density adjustment, and reset; presets and Classic restore neutral multipliers.
+- Focused state/source/shader checks, full Clang Linux regressions, and direct ASan/UBSan state tests pass. Apple validation is pending. No physical appearance test has been performed.
+
 ## Milestones
 
 ### M79-A — Infrastructure (partial)
@@ -162,4 +167,4 @@
 
 The latest full IPA is a private draft from source `12b4cfe8`, SHA-256 `bf00039f3eb18c046ad1a52cf889340de289ef9a46aaa791a7862e1bf447c725`, uploaded by workflow [44705973596](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44705973596), draft [unsigned build 44705973596.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/sm64-ios-unsigned-44705973596-1). It predates HUD isolation. Apple Metal/MSL + Linux validation for `eda005d8` passed in [run 44707130346](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44707130346).
 
-Next: monitor the full IPA workflow for `dd3d5894`, verify its private artifact, then continue implementing the remaining renderer controls and reliability items. Physical-device image and timing review remains required.
+Next: commit/push the fog tuning, run Apple validation, and monitor the full IPA workflow for `dd3d5894` before verifying its private artifact. Continue remaining renderer controls and reliability items afterward; physical-device image and timing review remains required.

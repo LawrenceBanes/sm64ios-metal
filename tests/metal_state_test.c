@@ -43,6 +43,15 @@ int main(void) {
     assert(ao.radius_scale == 2.0f && ao.bias_offset == -0.02f && ao.intensity_scale == 2.0f);
     ao = gfx_metal_ao_adjustments_sanitize((struct GfxMetalAOAdjustments){ NAN, INFINITY, NAN });
     assert(ao.radius_scale == 1.0f && ao.bias_offset == 0.0f && ao.intensity_scale == 1.0f);
+    struct GfxMetalFogAdjustments fog = gfx_metal_fog_adjustments_default();
+    assert(fog.density_scale == 1.0f && fog.start_scale == 1.0f);
+    fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_DENSITY, -1);
+    fog = gfx_metal_fog_adjustments_step(fog, GFX_METAL_FOG_START, 1);
+    assert(fog.density_scale == 0.75f && fog.start_scale == 1.25f);
+    fog = gfx_metal_fog_adjustments_sanitize((struct GfxMetalFogAdjustments){ -10.0f, 99.0f });
+    assert(fog.density_scale == 0.25f && fog.start_scale == 2.0f);
+    fog = gfx_metal_fog_adjustments_sanitize((struct GfxMetalFogAdjustments){ NAN, INFINITY });
+    assert(fog.density_scale == 1.0f && fog.start_scale == 1.0f);
     assert(gfx_metal_sampler_address_mode(0) == GFX_SAMPLER_REPEAT);
     assert(gfx_metal_sampler_address_mode(0x1u) == GFX_SAMPLER_MIRROR);
     assert(gfx_metal_sampler_address_mode(0x2u) == GFX_SAMPLER_CLAMP);

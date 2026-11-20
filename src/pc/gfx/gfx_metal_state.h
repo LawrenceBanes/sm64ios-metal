@@ -74,6 +74,16 @@ struct GfxMetalAOAdjustments {
     float intensity_scale;
 };
 
+enum GfxMetalFogParameter {
+    GFX_METAL_FOG_DENSITY = 0,
+    GFX_METAL_FOG_START = 1,
+};
+
+struct GfxMetalFogAdjustments {
+    float density_scale;
+    float start_scale;
+};
+
 struct GfxMetalPerformanceStats {
     double cpu_frame_ms;
     double gpu_frame_ms;
@@ -124,5 +134,10 @@ struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_sanitize(
     struct GfxMetalAOAdjustments adjustments);
 struct GfxMetalAOAdjustments gfx_metal_ao_adjustments_step(
     struct GfxMetalAOAdjustments adjustments, uint32_t parameter, int direction);
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_default(void);
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_sanitize(
+    struct GfxMetalFogAdjustments adjustments);
+struct GfxMetalFogAdjustments gfx_metal_fog_adjustments_step(
+    struct GfxMetalFogAdjustments adjustments, uint32_t parameter, int direction);
 
 #endif

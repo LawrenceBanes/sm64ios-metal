@@ -106,6 +106,7 @@ static int sm64RenderDiagnosticMode;
 - (void)toggleBloom;
 - (void)openColorSettings;
 - (void)openAOSettings;
+- (void)openFogSettings;
 - (void)showGameplayActions;
 #ifdef IOS_O2R_SCENE_RUNTIME
 - (void)showImportedWorldViewSettings;
@@ -604,7 +605,7 @@ static int sm64RenderDiagnosticMode;
     self.gradeButton = [self buttonWithTitle:@"Color: Neutral" action:@selector(openColorSettings)];
     self.gradeButton.frame = CGRectMake(112, 278, 120, 30);
     [self.graphicsPanel addSubview:self.gradeButton];
-    self.fogProfileButton = [self buttonWithTitle:@"Fog: Standard" action:@selector(cycleFogProfile)];
+    self.fogProfileButton = [self buttonWithTitle:@"Fog: Standard" action:@selector(openFogSettings)];
     self.fogProfileButton.frame = CGRectMake(238, 278, 154, 30);
     [self.graphicsPanel addSubview:self.fogProfileButton];
     self.shadowButton = [self buttonWithTitle:@"Shadows: Off" action:@selector(openShadowSettings)];
@@ -924,6 +925,34 @@ static int sm64RenderDiagnosticMode;
 #endif
 }
 
+- (void)openFogSettings {
+#if defined(RAPI_METAL)
+    struct GfxMetalFogAdjustments value = gfx_metal_get_fog_adjustments();
+    static NSString *const names[] = { @"Standard", @"Light", @"Dense", @"Extended" };
+    NSString *message = [NSString stringWithFormat:@"%@ profile · density ×%.2f · start distance ×%.2f",
+        names[MIN(gfx_metal_fog_profile(), 3u)], value.density_scale, value.start_scale];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Distance Fog"
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    for (uint32_t profile = 0; profile < 4u; ++profile) {
+        uint32_t selected = profile;
+        [alert addAction:[UIAlertAction actionWithTitle:names[profile] style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *action) { gfx_metal_set_fog_profile(selected); [self refreshGraphicsSettings]; }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reduce density" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_fog(GFX_METAL_FOG_DENSITY, -1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Increase density" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_fog(GFX_METAL_FOG_DENSITY, 1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Nearer start" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_fog(GFX_METAL_FOG_START, -1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Farther start" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { gfx_metal_adjust_fog(GFX_METAL_FOG_START, 1); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reset fog tuning" style:UIAlertActionStyleDestructive
+        handler:^(UIAlertAction *action) { gfx_metal_reset_fog_adjustments(); [self refreshGraphicsSettings]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+#endif
+}
+
 - (void)cycleAOQuality {
 #if defined(RAPI_METAL)
     gfx_metal_cycle_ssao_quality();
@@ -1008,6 +1037,7 @@ static int sm64RenderDiagnosticMode;
             gfx_metal_set_bloom_profile(1u);
             gfx_metal_set_fog_enabled(false);
             gfx_metal_set_fog_profile(0u);
+            gfx_metal_reset_fog_adjustments();
             gfx_metal_set_color_grade(0u);
             gfx_metal_reset_color_adjustments();
             gfx_metal_set_sky_preset(0u);
@@ -1044,6 +1074,7 @@ static int sm64RenderDiagnosticMode;
                                         (preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 1u));
             gfx_metal_set_fog_enabled(preset == GFX_METAL_PRESET_CINEMATIC);
             gfx_metal_set_fog_profile(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
+            gfx_metal_reset_fog_adjustments();
             gfx_metal_set_color_grade(preset == GFX_METAL_PRESET_CINEMATIC ? 3u : 0u);
             gfx_metal_set_sky_preset(preset == GFX_METAL_PRESET_CINEMATIC ? 2u : 0u);
             gfx_metal_set_shadow_resolution(preset == GFX_METAL_PRESET_CINEMATIC ? 1024u : 512u);
@@ -1112,6 +1143,7 @@ static int sm64RenderDiagnosticMode;
     gfx_metal_set_color_grade(0u);
     gfx_metal_reset_color_adjustments();
     gfx_metal_set_fog_profile(0u);
+    gfx_metal_reset_fog_adjustments();
     gfx_metal_set_ssao_quality(1u);
     gfx_metal_reset_ao_adjustments();
     gfx_metal_set_sky_preset(0u);
