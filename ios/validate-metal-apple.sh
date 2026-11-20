@@ -160,6 +160,12 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-normal-texture.air" \
     -o "$shader_dir/shader64-normal-texture.metallib"
 echo "compiled and linked SHADER64 combined scene-normal and user-texture pass"
 
+compute_source="$repo_dir/ios/shaderpacks/ComputeBlur64/shaders/blur.metal"
+xcrun --sdk iphoneos metal -c "$compute_source" -o "$shader_dir/shader64-compute-blur.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-compute-blur.air" \
+    -o "$shader_dir/shader64-compute-blur.metallib"
+echo "compiled and linked SHADER64 bounded image compute reference"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \

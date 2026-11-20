@@ -69,8 +69,10 @@ struct MetalFragmentParams {
 struct MetalShader64GraphPass {
     char id[33], input[33], output[33];
     float scale;
+    unsigned int node_type;
     unsigned int resource_flags;
     id<MTLRenderPipelineState> pipeline;
+    id<MTLComputePipelineState> compute_pipeline;
     id<MTLLibrary> library;
     id<MTLTexture> target;
     NSUInteger target_width, target_height;
@@ -1536,6 +1538,7 @@ static void gfx_metal_shader64_graph_release(struct MetalShader64Graph *graph) {
     for (size_t i = 0; i < graph->count; ++i) {
         [graph->passes[i].target release];
         [graph->passes[i].pipeline release];
+        [graph->passes[i].compute_pipeline release];
         [graph->passes[i].library release];
     }
     for (NSUInteger i = 0; i < graph->pack_texture_count; ++i)
@@ -1553,7 +1556,8 @@ static id<MTLTexture> gfx_metal_shader64_target(struct MetalShader64GraphPass *p
     MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
                                                                                            width:width height:height mipmapped:NO];
     descriptor.storageMode = MTLStorageModePrivate;
-    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead |
+        (pass->node_type == GFX_SHADER64_NODE_COMPUTE ? MTLTextureUsageShaderWrite : 0u);
     pass->target = [metal_device newTextureWithDescriptor:descriptor];
     if (!pass->target) return nil;
     pass->target.label = [NSString stringWithFormat:@"SHADER64 %s output", pass->id];
@@ -1764,7 +1768,23 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         NSUInteger width = final ? drawable.texture.width : target_width;
         NSUInteger height = final ? drawable.texture.height : target_height;
         id<MTLTexture> output = final ? drawable.texture : gfx_metal_shader64_target(p, width, height);
-        if (!input || !output || !p->pipeline) { ok = false; break; }
+        if (!input || !output) { ok = false; break; }
+        if (p->node_type == GFX_SHADER64_NODE_COMPUTE) {
+            if (!p->compute_pipeline || final) { ok = false; break; }
+            id<MTLComputeCommandEncoder> compute = [command computeCommandEncoder];
+            if (!compute) { ok = false; break; }
+            [compute setComputePipelineState:p->compute_pipeline];
+            [compute setTexture:input atIndex:0];
+            [compute setTexture:output atIndex:1];
+            [compute setBytes:&parameters length:sizeof(parameters) atIndex:0];
+            NSUInteger thread_width = MAX(1u, p->compute_pipeline.threadExecutionWidth);
+            NSUInteger thread_height = MAX(1u, p->compute_pipeline.maxTotalThreadsPerThreadgroup / thread_width);
+            [compute dispatchThreads:MTLSizeMake(width, height, 1)
+                threadsPerThreadgroup:MTLSizeMake(thread_width, thread_height, 1)];
+            [compute endEncoding];
+            continue;
+        }
+        if (!p->pipeline) { ok = false; break; }
         MTLRenderPassDescriptor *descriptor = [MTLRenderPassDescriptor renderPassDescriptor];
         descriptor.colorAttachments[0].texture = output;
         descriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
@@ -1878,6 +1898,57 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         gfx_metal_shader64_graph_release(graph); return false;
     }
     for (size_t i = 0; i < pass_count; ++i) {
+        struct MetalShader64GraphPass *stored = &graph->passes[i];
+        if (passes[i].node_type == GFX_SHADER64_NODE_COMPUTE) {
+            char validation[192] = {0};
+            if (!gfx_shader64_validate_compute_pass_source(passes[i].source, passes[i].source_size,
+                                                           validation, sizeof(validation))) {
+                if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s: %.150s", passes[i].id ?: "?", validation);
+                gfx_metal_shader64_graph_release(graph); return false;
+            }
+            NSString *source = [[[NSString alloc] initWithBytes:passes[i].source length:passes[i].source_size
+                                                       encoding:NSUTF8StringEncoding] autorelease];
+            NSError *compile_error = nil;
+            id<MTLLibrary> library = source ? [metal_device newLibraryWithSource:source options:nil error:&compile_error] : nil;
+            id<MTLFunction> function = [library newFunctionWithName:@"shader64_compute"];
+            NSError *pipeline_error = nil;
+            MTLComputePipelineReflection *reflection = nil;
+            id<MTLComputePipelineState> pipeline = function ?
+                [metal_device newComputePipelineStateWithFunction:function
+                                                           options:MTLPipelineOptionArgumentInfo
+                                                        reflection:&reflection
+                                                             error:&pipeline_error] : nil;
+            [function release];
+            BOOL input_bound = NO, output_bound = NO, parameters_bound = NO;
+            if (pipeline && reflection.arguments.count == 3u) {
+                for (MTLArgument *argument in reflection.arguments) {
+                    if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
+                        argument.index == 0u && argument.access == MTLArgumentAccessReadOnly) input_bound = YES;
+                    else if (argument.type == MTLArgumentTypeTexture && argument.textureType == MTLTextureType2D &&
+                             argument.index == 1u && argument.access == MTLArgumentAccessWriteOnly) output_bound = YES;
+                    else if (argument.type == MTLArgumentTypeBuffer && argument.index == 0u) parameters_bound = YES;
+                }
+            }
+            BOOL abi_valid = input_bound && output_bound && parameters_bound;
+            if (!library || !pipeline) {
+                const char *message = (pipeline_error ?: compile_error).localizedDescription.UTF8String ?: "Metal rejected compute pass";
+                if (error_out && error_size) snprintf(error_out, error_size, "compute %.32s failed: %.300s", passes[i].id, message);
+                [pipeline release]; [library release]; gfx_metal_shader64_graph_release(graph); return false;
+            }
+            if (!abi_valid) {
+                if (error_out && error_size) snprintf(error_out, error_size,
+                    "compute %.32s resource bindings do not match the API 2 contract", passes[i].id);
+                [pipeline release]; [library release]; gfx_metal_shader64_graph_release(graph); return false;
+            }
+            snprintf(stored->id, sizeof(stored->id), "%s", passes[i].id);
+            snprintf(stored->input, sizeof(stored->input), "%s", passes[i].input);
+            snprintf(stored->output, sizeof(stored->output), "%s", passes[i].output);
+            stored->scale = passes[i].resolution_scale;
+            stored->node_type = GFX_SHADER64_NODE_COMPUTE;
+            stored->library = library;
+            stored->compute_pipeline = pipeline;
+            continue;
+        }
         char validation[192] = {0};
         bool has_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
         bool has_scene_normals = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) != 0u;
@@ -1955,11 +2026,11 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
             if (error_out && error_size) snprintf(error_out, error_size, "pass %.32s failed: %.300s", passes[i].id, message);
             [pipeline release]; [library release]; gfx_metal_shader64_graph_release(graph); return false;
         }
-        struct MetalShader64GraphPass *stored = &graph->passes[i];
         snprintf(stored->id, sizeof(stored->id), "%s", passes[i].id);
         snprintf(stored->input, sizeof(stored->input), "%s", passes[i].input);
         snprintf(stored->output, sizeof(stored->output), "%s", passes[i].output);
         stored->scale = passes[i].resolution_scale; stored->library = library; stored->pipeline = pipeline;
+        stored->node_type = GFX_SHADER64_NODE_FULLSCREEN;
         stored->resource_flags = passes[i].resource_flags;
     }
     struct MetalShader64Graph *old;
@@ -2173,9 +2244,15 @@ static void gfx_metal_restore_shader64_pack(void) {
                 [attributes[NSFileSize] unsignedLongLongValue] <= GFX_SHADER64_MAX_SOURCE_BYTES ? [NSData dataWithContentsOfFile:path] : nil;
             if (!source_data) { valid = NO; break; }
             [sources addObject:source_data];
+            NSString *type = definition[@"type"];
+            if (![type isEqualToString:@"fullscreen"] && ![type isEqualToString:@"compute"]) {
+                valid = NO; break;
+            }
+            unsigned int node_type = [type isEqualToString:@"compute"] ?
+                GFX_SHADER64_NODE_COMPUTE : GFX_SHADER64_NODE_FULLSCREEN;
             graph_passes[i] = (struct GfxShader64GraphSource){
                 [definition[@"id"] UTF8String], [definition[@"input"] UTF8String], [definition[@"output"] UTF8String],
-                source_data.bytes, source_data.length, [definition[@"scale"] floatValue], 1u,
+                source_data.bytes, source_data.length, [definition[@"scale"] floatValue], node_type,
                 ([definition[@"sceneDepth"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_DEPTH : 0u) |
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |

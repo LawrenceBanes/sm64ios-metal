@@ -1488,13 +1488,16 @@ static int sm64RenderDiagnosticMode;
             if (![pass isKindOfClass:[NSDictionary class]]) { api2 = NO; break; }
             NSString *pid = pass[@"id"], *input = pass[@"input"], *output = pass[@"output"], *path = pass[@"source"], *type = pass[@"type"];
             NSNumber *scale = pass[@"scale"];
+            BOOL compute = [type isEqualToString:@"compute"];
             BOOL passOK = [pass isKindOfClass:[NSDictionary class]] &&
                 [pid isKindOfClass:[NSString class]] && [nameRegex numberOfMatchesInString:pid options:0 range:NSMakeRange(0, pid.length)] == 1 &&
                 [input isKindOfClass:[NSString class]] && [nameRegex numberOfMatchesInString:input options:0 range:NSMakeRange(0, input.length)] == 1 &&
                 [output isKindOfClass:[NSString class]] && ([output isEqualToString:@"present"] || [nameRegex numberOfMatchesInString:output options:0 range:NSMakeRange(0, output.length)] == 1) &&
                 [path isKindOfClass:[NSString class]] && [path hasPrefix:@"shaders/"] && ![path containsString:@".."] &&
                 [[path pathComponents] count] == 2 && [path hasSuffix:@".metal"] &&
-                [type isEqualToString:@"fullscreen"] && [scale isKindOfClass:[NSNumber class]] && isfinite(scale.doubleValue) && scale.doubleValue >= 0.25 && scale.doubleValue <= 1.0;
+                ([type isEqualToString:@"fullscreen"] || compute) &&
+                [scale isKindOfClass:[NSNumber class]] && isfinite(scale.doubleValue) && scale.doubleValue >= 0.25 && scale.doubleValue <= 1.0 &&
+                (!compute || ![output isEqualToString:@"present"]);
             id sceneDepth = pass[@"sceneDepth"];
             if (sceneDepth && ![sceneDepth isKindOfClass:[NSNumber class]]) passOK = NO;
             id sceneLighting = pass[@"sceneLighting"];
@@ -1509,6 +1512,8 @@ static int sm64RenderDiagnosticMode;
                 [sceneLighting boolValue] || [sceneShadows boolValue])) passOK = NO;
             if ([sceneNormals boolValue] && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue])) passOK = NO;
+            if (compute && ([sceneDepth boolValue] || [sceneLighting boolValue] ||
+                [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }

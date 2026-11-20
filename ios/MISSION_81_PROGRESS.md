@@ -81,4 +81,13 @@
 - `python3 ios/test_shader64_pack.py`: passed, 23 tests including production import of NormalTexture64 and ASan/UBSan ZIP smoke. Shader codegen, project wiring, shell syntax, and `git diff --check` passed. Full `CC=clang tests/run_linux_checks.sh` passed.
 - The first Apple run (workflow `44813432144`) exposed an extra closing parenthesis in Objective-C wrapper selection at `gfx_metal.m:1929`; host checks do not compile that file. The selection was rewritten as explicit branches. Apple retry `44813819600` passed both full Linux regression and Xcode 27 Metal backend/MSL compilation for `a444f2e2e4106abb2c7b465048c584a6257cf363`. No runtime GPU/device visual result is established.
 
+## Current working increment — bounded API 2 compute nodes
+
+- Added a fixed-contract Metal image compute node to API 2 render graphs. Compute nodes read their declared input at texture 0, write a bounded RGBA16Float intermediate at texture 1, receive pack parameters at buffer 0, and dispatch across graph-validated output dimensions. They cannot write `present`, request engine resources, or add texture/buffer bindings.
+- Added ComputeBlur64, a two-node reference graph with a half-resolution 3×3 compute blur and fullscreen presentation pass. This exercises a pack-defined compute effect without a blur-specific engine path.
+- Added restored-pack type validation and source/graph tests for valid contracts, bad resource slots, extra unbound textures, output-to-present rejection, and bounded graph behavior.
+- Host validation before Apple CI: 25 focused Shader64 tests pass (including production importer and ASan/UBSan ZIP smoke); Metal codegen, Xcode project wiring, shell syntax, and `git diff --check` pass. `CC=clang tests/run_linux_checks.sh` completed with all suites passing; existing platform/action warnings and malformed-fixture diagnostics remain.
+- Host checks do not execute the compute kernel. Apple MSL compilation and runtime GPU/device output are pending.
+- Next: validate this increment with Apple Metal SDK CI, fix any demonstrated compiler issue, then continue to a separate scene/material capability. No `main` merge yet.
+
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.

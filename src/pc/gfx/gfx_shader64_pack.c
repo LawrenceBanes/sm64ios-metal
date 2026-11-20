@@ -316,7 +316,7 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
     }
     for (size_t i = 0; i < count; ++i) {
         const struct GfxShader64GraphPass *p = &passes[i];
-        if (p->node_type != 1u ||
+        if ((p->node_type != GFX_SHADER64_NODE_FULLSCREEN && p->node_type != GFX_SHADER64_NODE_COMPUTE) ||
             (p->resource_flags & ~(GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP |
@@ -330,6 +330,9 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                    GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP))) ||
+            (p->node_type == GFX_SHADER64_NODE_COMPUTE && p->resource_flags != 0u) ||
+            (p->node_type == GFX_SHADER64_NODE_COMPUTE && p->output &&
+             strcmp(p->output, "present") == 0) ||
             !graph_name(p->id) || !graph_name(p->input) ||
             !p->output || (!graph_name(p->output) && strcmp(p->output, "present") != 0) ||
             !isfinite(p->resolution_scale) || p->resolution_scale < 0.25f ||
@@ -590,6 +593,41 @@ int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_
         if (!contains(source, size, required[i])) {
             err(error, error_size, "source does not implement the scene-normal and pack-texture contract"); return 0;
         }
+    if (contains(source, size, "#include \"")) {
+        err(error, error_size, "local shader includes are not supported in API v2"); return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
+int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
+                                             char *error, size_t error_size) {
+    static const char *const required[] = {
+        "kernel void shader64_compute(",
+        "texture2d<float, access::read> image [[texture(0)]]",
+        "texture2d<float, access::write> output [[texture(1)]]",
+        "constant float4 &params [[buffer(0)]]",
+        "uint2 tid [[thread_position_in_grid]]",
+        "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "compute pass source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "source does not implement the bounded image compute contract"); return 0;
+        }
+    /* API 2 compute has exactly two texture inputs and one parameter buffer.
+     * Reject undeclared engine bindings rather than letting a pipeline compile
+     * with unbound resources. This is a contract check, not a Metal parser. */
+    size_t texture_bindings = 0, buffer_bindings = 0;
+    for (size_t i = 0; i + 10u <= size; ++i)
+        if (!memcmp(source + i, "[[texture(", 10u)) ++texture_bindings;
+    for (size_t i = 0; i + 9u <= size; ++i)
+        if (!memcmp(source + i, "[[buffer(", 9u)) ++buffer_bindings;
+    if (texture_bindings != 2u || buffer_bindings != 1u) {
+        err(error, error_size, "compute pass may bind only input/output textures and the parameter buffer"); return 0;
+    }
     if (contains(source, size, "#include \"")) {
         err(error, error_size, "local shader includes are not supported in API v2"); return 0;
     }

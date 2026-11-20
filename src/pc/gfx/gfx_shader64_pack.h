@@ -18,16 +18,19 @@
 #define GFX_SHADER64_RESOURCE_SHADOW_MAP 4u
 #define GFX_SHADER64_RESOURCE_PACK_TEXTURES 8u
 #define GFX_SHADER64_RESOURCE_SCENE_NORMALS 16u
+#define GFX_SHADER64_NODE_FULLSCREEN 1u
+#define GFX_SHADER64_NODE_COMPUTE 2u
 
 /* API v2 exposes bounded fullscreen raster nodes with opt-in scene-depth,
  * depth-derived view-normal, directional-light, shadow-map, or pack-texture
- * resources. Scene normals use a separate binding contract. */
+ * resources, plus bounded user compute nodes. Scene normals use a separate
+ * binding contract. */
 struct GfxShader64GraphPass {
     const char *id;
     const char *input;
     const char *output;
     float resolution_scale;
-    unsigned int node_type; /* 1 = fullscreen raster */
+    unsigned int node_type; /* GFX_SHADER64_NODE_FULLSCREEN or _COMPUTE */
     unsigned int resource_flags;
 };
 struct GfxShader64GraphSource {
@@ -67,6 +70,8 @@ int gfx_shader64_validate_normals_pass_source(const char *source, size_t size,
                                              char *error, size_t error_size);
 int gfx_shader64_validate_normals_textured_pass_source(const char *source, size_t size,
                                                       char *error, size_t error_size);
+int gfx_shader64_validate_compute_pass_source(const char *source, size_t size,
+                                             char *error, size_t error_size);
 int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size,
