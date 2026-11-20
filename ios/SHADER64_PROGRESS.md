@@ -6,7 +6,8 @@
 - Base checkpoint: `24b757afec596d883ad5aee09719f75d8eba15ff`
 - Runtime postprocess shader pack vertical slice: `9f47ddf3aefb8ab53542c067d868a3ee4af698f8`
 - Precompiled `.metallib` support: `78af713088347b1210bb2302e8e64e7e12f2f685`, loader lifetime fix `6cb36ad8`
-- Latest implementation checkpoint: `d55cf8942816e44c8e55ade67e90b62e5ea52310`
+- Latest implementation checkpoint: `46634de396c67986e75fc1ca3d7866b97eaba146`
+- Typed parameter controls (slider/toggle/selector): `46634de396c67986e75fc1ca3d7866b97eaba146`
 - Current work: API v1 postprocess-only source or compiled-library pack support; broader render stages remain unfinished
 - Physical Apple device output: not tested
 
@@ -29,10 +30,12 @@
 - `git diff --check`: passed.
 - Apple Metal/Xcode validation: [workflow 44772126993](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44772126993) passed Linux checks and iOS device/simulator Metal backend compile/link, including wrapped reference pack MSL.
 - Follow-up Apple validation: [workflow 44775116342](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44775116342) passed both jobs. Xcode 27 compiled and linked the iOS device and simulator backends and built the precompiled-library ABI reference `.metallib` for iPhoneOS.
+- Typed-controls Apple validation: [workflow 44777098917](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44777098917) passed Linux and Apple SDK jobs, including UIKit compilation and Xcode 27 Metal validation.
 - Full IPA workflow: [run 44775514937](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44775514937) passed Linux checks, Xcode 27 Metal/MSL validation, full iPhoneOS arm64 app build, packaging and private upload. The IPA was built from commit `d55cf8942816e44c8e55ade67e90b62e5ea52310` and includes compiled-library loading.
 - Private draft release: [unsigned build 44775514937.1](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-2db83db6b5051ae9a83a). Asset `sm64ios-connected-world-arm64-unsigned.ipa`, 9,375,712 bytes, SHA-256 `448238af6ecd2adb77fb04da5d9643264e672c908f6bfead8e1c07ae09dacb3e`.
 - `xcrun` is unavailable locally; Apple build evidence comes from the GitHub-hosted Xcode 27 workflows. No physical iPhone rendering, visual parity, performance, thermal, or GPU-workload safety has been verified.
 - Apple validation initially caught an invalid Dispatch destructor symbol in the new binary-library path. Replaced it with Apple's copying managed-data destructor; follow-up Apple validation and full IPA build both passed.
+- A full IPA build is still needed from the typed-controls code checkpoint; the current private IPA predates the slider/toggle/selector UI increment.
 
 ## Explicit current API 1 limitations
 
