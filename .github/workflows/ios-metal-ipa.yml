@@ -2,7 +2,7 @@ name: Native iOS Metal IPA
 
 on:
   push:
-    branches: [ios, ci/ios-metal-m57-25c, 'mission-*', unified-build]
+    branches: [main, ios, ci/ios-metal-m57-25c, 'mission-*', unified-build]
   workflow_dispatch:
     inputs:
       full_game:
@@ -50,7 +50,7 @@ jobs:
   linux-checks:
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[build-ipa]'))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +80,7 @@ jobs:
     needs: linux-checks
     if: >-
       github.repository == 'LawrenceBanes/sm64ios-metal' &&
-      (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-ipa]'))
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[build-ipa]'))
     runs-on: xcode-27
     timeout-minutes: 90
     permissions:
@@ -112,7 +112,7 @@ jobs:
       - name: Create scoped private-vault GitHub App token
         id: private-vault-token
         if: >-
-          (inputs.full_game || inputs.compile_only || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]'))) &&
+          (inputs.full_game || inputs.compile_only || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[build-ipa]')))) &&
           vars.SM64_PRIVATE_BUILD_USE_GITHUB_APP == 'true'
         uses: actions/create-github-app-token@v3
         with:
@@ -123,7 +123,7 @@ jobs:
           permission-contents: write
 
       - name: Build complete app, package IPA, and upload only to private vault
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-ipa]') && !startsWith(github.ref, 'refs/heads/metal-validation/')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.full_game && !inputs.compile_only) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || (contains(github.event.head_commit.message, '[build-ipa]') && !startsWith(github.ref, 'refs/heads/metal-validation/')))) }}
         shell: bash
         env:
           SM64_ASSET_PRIVATE_REPOSITORY: ${{ vars.SM64_ASSET_PRIVATE_REPOSITORY }}
@@ -135,8 +135,8 @@ jobs:
           IOS_HYRULE_GATE_DIAGNOSTICS: ${{ inputs.hyrule_o2r_release_tag != '' && '1' || '0' }}
           IOS_HAT_MOVEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.hat_movement && '1' || '0' }}
           IOS_CONNECTED_WORLD: ${{ github.event_name == 'workflow_dispatch' && inputs.connected_world && '1' || '0' }}
-          IOS_O2R_SCENE_RUNTIME: ${{ (inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
-          IOS_SCENE_DIAGNOSTIC: ${{ (inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
+          IOS_O2R_SCENE_RUNTIME: ${{ (github.ref == 'refs/heads/main' || inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
+          IOS_SCENE_DIAGNOSTIC: ${{ (github.ref == 'refs/heads/main' || inputs.scene_diagnostic || (github.event_name == 'push' && contains(github.event.head_commit.message, '[scene-diagnostic]'))) && '1' || '0' }}
         run: bash ios/build_ios_metal_ci.sh full
 
       - name: Upload asset-free diagnostics only
