@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Status: API 2 fullscreen DAG implementation and Bliss workload mapping in progress; not yet committed or Apple-compiled.
+- Status: first API 2 fullscreen DAG vertical slice committed and Apple-compiled; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
 ## Implemented in working tree
@@ -22,15 +22,13 @@
 - `python3 ios/test_shader64_pack.py`: passed after correcting the oversized-target fixture to exceed 32 MiB at 2048x1080. Includes ZIP smoke tests under ASan/UBSan.
 - `tests/run_linux_checks.sh`: passed (complete suite, exit 0), including API 2 source wrapper and archive tests. Existing platform/action compiler warnings and fixture-invalid-scene diagnostics remain in suite output.
 - `git diff --check`: passed at the previous checkpoint; rerun after remaining edits.
-- Apple CI not yet run for this branch.
+- Apple validation workflow `44787616391` passed both Linux and Xcode 27 iOS device/simulator compile/link jobs, including UIKit integration and wrapped API 2 GraphDemo/Bliss Metal sources. No GPU or iPhone runtime was executed.
 - No Metal SDK on this host assumed; Apple compilation is not claimed.
 
 ## Remaining work / next
 
-1. Review and fix Objective-C/UIKit/Metal compile issues; run local syntax checks where possible.
-2. Add graph source/manifest/validation regressions, run the full Linux suite and sanitizers.
-3. Run Xcode 27 validation and iPhoneOS arm64 compile CI; diagnose failures.
-4. Confirm runtime multipass pixel change on an actual device (not available in host test).
-5. Extend resource/node contracts only after providing corresponding engine data. Bliss temporal, depth, G-buffer, geometry, shadow, compute, texture and Minecraft-uniform requirements remain unsupported.
+1. Build a private device-test IPA from the validated branch commit.
+2. Confirm the imported GraphDemo and Bliss adaptation alter actual output on iPhone (no device result yet).
+3. Extend resource/node contracts only after providing corresponding engine data. Bliss temporal, depth, G-buffer, geometry, shadow, compute, texture and Minecraft-uniform requirements remain unsupported.
 
 Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary but do not establish GPU output, iPhone behavior, or Iris/OptiFine compatibility.
