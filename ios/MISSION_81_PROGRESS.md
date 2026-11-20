@@ -4,7 +4,7 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `ed6b6a0e` (records passing Apple validation for opt-in material normals). Current working increment adds optional camera-space directional lighting to that material hook; Apple validation is pending. Physical GPU output remains unverified.
+- Latest pushed checkpoint: `64e4df5c` (adds optional camera-space sun lighting to normal-aware material shaders; Apple workflow `44830456738` passed). Physical GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
 - Physical-device output: not verified.
 
@@ -164,3 +164,4 @@ Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary 
 - Added API 2 `materialShader.directionalLight:true`, valid only with `vertexNormals:true`. The hook receives normalized `sunDirectionView` and `sunIntensity` in the same camera basis as its source normals; intensity uses the existing sun setting. Added SunlitMaterial64 as a simple externally authored diffuse material example.
 - Extended the existing fragment parameter block rather than adding per-draw buffers. Direction is transformed from the configured world-space sun using the captured camera view rotation. Split matrix capture from geometry capture so this material-only path obtains camera matrices without copying the renderer's per-triangle geometry; geometry capture remains enabled for shadow consumers.
 - Added host validation for option dependencies, ABI generation, direction/normal transforms, production pack import, and matrix-only capture. Full `CC=clang tests/run_linux_checks.sh`, focused pack/codegen/scene-capture tests, project wiring, shell syntax, and diff checks pass. Targeted ASan/UBSan scene-capture and shader-codegen runs pass. Apple MSL/backend validation and physical-device output are pending.
+- Commit `64e4df5c` was pushed to `mission-81-shader64-rendergraph`. Apple validation workflow [44830456738](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44830456738) passed the full Linux suite and Xcode 27 Metal backend/MSL compilation, including the SunlitMaterial64 wrapper. This does not execute shaders on a GPU or establish visual correctness.
