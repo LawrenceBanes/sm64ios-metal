@@ -307,6 +307,42 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("isfinite(normalLength2) && normalLength2 > 1.0e-8", screen_source)
         self.assertIn("isfinite(worldNormalLength2) && worldNormalLength2 > 1.0e-8", screen_source)
 
+    def test_derivative_face_lighting_is_reversed_winding_invariant(self):
+        source = (ROOT / "ios/shaderpacks/GeometryNormal64/shaders/material.metal").read_text()
+        self.assertIn("cross(dx, dy)", source)
+        self.assertIn("abs(dot(normal, sunDirectionView / sunLength))", source)
+        self.assertIn("magnitude < 1.0e-6", source)
+        self.assertIn("if (!positionValid) return baseColor", source)
+
+        def face_normal(a, b, c):
+            dx = [b[i] - a[i] for i in range(3)]
+            dy = [c[i] - a[i] for i in range(3)]
+            n = [dx[1] * dy[2] - dx[2] * dy[1],
+                 dx[2] * dy[0] - dx[0] * dy[2],
+                 dx[0] * dy[1] - dx[1] * dy[0]]
+            length = math.sqrt(sum(v * v for v in n))
+            return None if length < 1.0e-6 else [v / length for v in n]
+
+        # Representative view-space floor, wall, and inclined/sloped faces.
+        faces = [
+            ((-300.0, -80.0, -500.0), (300.0, -80.0, -500.0), (-300.0, -80.0, 200.0)),
+            ((40.0, -100.0, -350.0), (40.0, 220.0, -350.0), (40.0, -100.0, 100.0)),
+            ((-120.0, 0.0, -420.0), (180.0, 70.0, -390.0), (-90.0, 240.0, -100.0)),
+        ]
+        sun = [0.31, -0.84, 0.44]
+        sun_len = math.sqrt(sum(v * v for v in sun))
+        sun = [v / sun_len for v in sun]
+        for a, b, c in faces:
+            forward = face_normal(a, b, c)
+            reverse = face_normal(a, c, b)
+            self.assertIsNotNone(forward)
+            self.assertIsNotNone(reverse)
+            self.assertAlmostEqual(sum(forward[i] * reverse[i] for i in range(3)), -1.0, places=6)
+            lit = abs(sum(forward[i] * sun[i] for i in range(3)))
+            lit_reversed = abs(sum(reverse[i] * sun[i] for i in range(3)))
+            self.assertAlmostEqual(lit, lit_reversed, places=6)
+        self.assertIsNone(face_normal((0, 0, 0), (1, 1, 1), (2, 2, 2)))
+
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
                   b'float4 shader64_pass_depth(float4 color, float2 uv, texture2d<float> image, '
