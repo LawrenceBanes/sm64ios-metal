@@ -1,8 +1,9 @@
 #include <metal_stdlib>
 using namespace metal;
 
-/* Visualize a geometric face normal derived from true view-space positions.
- * This is a flat, screen-space derivative normal, not a recovered smooth normal. */
+/* Flat diffuse lighting from true view-space positions. Derivative winding can
+ * reverse with projected orientation, so abs(dot) intentionally makes the
+ * material two-sided. This is not a recovered smooth vertex normal. */
 float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
                          uint materialClass, float3 viewPosition, bool positionValid,
                          float3 sunDirectionView, float sunIntensity,
@@ -17,11 +18,15 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     float magnitude = length(face);
     if (!isfinite(magnitude) || magnitude < 1.0e-6) return baseColor;
     float3 normal = face / magnitude;
-    /* Use two-sided diffuse lighting because the public hook does not receive
-     * Fast3D front/back winding as an explicit input. */
+    /* Two-sided diffuse avoids relying on front/back winding, which the hook
+     * does not expose. Both vectors are in view space. */
     float sunLength = length(sunDirectionView);
-    if (!isfinite(sunLength) || sunLength < 1.0e-6 || !isfinite(sunIntensity)) return baseColor;
-    float direct = abs(dot(normal, sunDirectionView / sunLength)) * max(sunIntensity, 0.0);
-    float illumination = clamp(0.22 + direct, 0.0, 1.5);
-    return float4(baseColor.rgb * mix(1.0, illumination, clamp(params.x, 0.0, 1.0)), baseColor.a);
+    float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 0.22;
+    float directStrength = isfinite(params.x) ? clamp(params.x, 0.0, 2.0) : 1.0;
+    if (!isfinite(sunLength) || sunLength < 1.0e-6 || !isfinite(sunIntensity))
+        return float4(baseColor.rgb * ambient, baseColor.a);
+    float diffuse = abs(dot(normal, sunDirectionView / sunLength));
+    float direct = diffuse * max(sunIntensity, 0.0) * directStrength;
+    float illumination = clamp(ambient + direct, 0.0, 2.0);
+    return float4(baseColor.rgb * illumination, baseColor.a);
 }

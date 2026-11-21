@@ -275,6 +275,32 @@ class ShaderPackTests(unittest.TestCase):
         self.assertTrue(self.api.gfx_shader64_validate_material_resources_source(
             position_lit_source, len(position_lit_source), 0, 0, 1, 1, error, len(error)), error.value)
 
+    def test_lumen_surface_integrates_geometry_texture_depth_light_and_shadow(self):
+        pack = ROOT / "ios/shaderpacks/LumenSurface64"
+        manifest = json.loads((pack / "manifest.json").read_text())
+        material = manifest["materialShader"]
+        self.assertTrue(material["packTextures"])
+        self.assertTrue(material["vertexPositions"])
+        self.assertTrue(material["directionalLight"])
+        self.assertFalse(material.get("vertexNormals", False))
+        self.assertTrue(manifest["textures"])
+        compute = next(p for p in manifest["passes"] if p["type"] == "compute")
+        self.assertTrue(all(compute.get(flag) for flag in
+                            ("sceneDepth", "sceneNormals", "sceneLighting", "sceneShadows")))
+        self.assertFalse(compute.get("packTextures", False))
+        material_source = (pack / material["source"]).read_text()
+        self.assertIn("dfdx(viewPosition)", material_source)
+        self.assertIn("dfdy(viewPosition)", material_source)
+        self.assertIn("abs(dot(normal, sun / sunLength))", material_source)
+        self.assertIn("float ambient =", material_source)
+        screen_source = (pack / compute["source"]).read_text()
+        self.assertIn("inverseProjection * clip", screen_source)
+        self.assertIn("inverseView * viewPosition", screen_source)
+        self.assertIn("dot(shadowRightMin.xyz, worldPosition)", screen_source)
+        self.assertIn("dot(shadowUpMin.xyz, worldPosition)", screen_source)
+        self.assertIn("dot(shadowForwardMin.xyz, worldPosition)", screen_source)
+        self.assertIn("shadowRanges.w * (1.0 + 2.0 * (1.0 - noL))", screen_source)
+
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
                   b'float4 shader64_pass_depth(float4 color, float2 uv, texture2d<float> image, '
@@ -663,7 +689,7 @@ class ShaderPackTests(unittest.TestCase):
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
                          "VertexNormal64", "SunlitMaterial64", "SurfacePosition64",
-                         "GeometryNormal64")
+                         "GeometryNormal64", "LumenSurface64")
         reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id

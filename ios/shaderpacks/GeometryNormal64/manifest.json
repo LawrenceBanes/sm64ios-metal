@@ -7,7 +7,8 @@
   "shaderApiVersion": 2,
   "stage": "render_graph",
   "parameters": [
-    { "name": "strength", "label": "Normal color strength", "type": "float", "default": 1.0, "min": 0.0, "max": 1.0 }
+    { "name": "directStrength", "label": "Direct light", "type": "float", "default": 1.0, "min": 0.0, "max": 2.0 },
+    { "name": "ambient", "label": "Ambient contribution", "type": "float", "default": 0.22, "min": 0.0, "max": 1.0 }
   ],
   "materialShader": { "source": "shaders/material.metal", "vertexPositions": true, "directionalLight": true },
   "passes": [
