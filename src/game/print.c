@@ -230,8 +230,11 @@ bool mod_hud_render_rect(float x, float y, float width, float height) {
 
 bool mod_hud_render_texture(const void *texture, int texture_width, int texture_height,
                             int format, int size, float x, float y, float scale_x, float scale_y) {
-    if (!texture || texture_width <= 0 || texture_height <= 0 || texture_width > 512 ||
-        texture_height > 512 || !isfinite(x) || !isfinite(y) || !isfinite(scale_x) ||
+    /* CoopDX HUD TextureInfo assets include 1024px-wide images. The signed
+     * 5-bit fixed-point texture coordinates below cap each source dimension
+     * at 1024; larger textures cannot be represented by this Fast3D path. */
+    if (!texture || texture_width <= 0 || texture_height <= 0 || texture_width > 1024 ||
+        texture_height > 1024 || !isfinite(x) || !isfinite(y) || !isfinite(scale_x) ||
         !isfinite(scale_y) || scale_x <= 0.0f || scale_y <= 0.0f ||
         (format != G_IM_FMT_RGBA && format != G_IM_FMT_IA) ||
         (size != G_IM_SIZ_16b && !(format == G_IM_FMT_RGBA && size == G_IM_SIZ_32b)) ||

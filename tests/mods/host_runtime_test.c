@@ -1189,6 +1189,23 @@ int main(int argc, char **argv) {
             assert(gMarioState->flags & MARIO_MARIO_SOUND_PLAYED);
             printf("original mod HOOK_ON_SET_MARIO_ACTION: native action sound and mapped CHAR_SOUND playback passed\n");
         }
+        if (getenv("MOD_TEST_DISPATCH_DVD_TEXTURE")) {
+            gMarioState->controller->buttonPressed = 0;
+            gMarioState->controller->buttonDown = 0;
+            gMarioState->controller->stickMag = 0;
+            /* Exercise the real idle timeout and HUD callback path used by the
+             * unmodified DVD Screensaver package, rather than calling Lua
+             * functions directly from the test. */
+            for (int frame = 0; frame < 9002; ++frame)
+                mod_runtime_before_mario_update(gMarioState);
+            mod_runtime_hud_render();
+            assert(gModHudTestRectCount == 1);
+            assert(gModHudTestTextureCount == 1 && gModHudTestTextureWidth == 1024 &&
+                   gModHudTestTextureHeight == 512);
+            if (getenv("MOD_TEST_ASSERT_UPDATE_COUNT"))
+                assert(gMarioState->actionArg == 9002);
+            printf("production importer + idle/action and HUD hooks: 1024x512 DynOS texture submitted\n");
+        }
         if (getenv("MOD_TEST_EXPECT_OMM_MODELS")) {
             for (int slot = 0xE6; slot <= 0xEB; ++slot) {
                 assert(gLoadedGraphNodes[slot] != NULL);

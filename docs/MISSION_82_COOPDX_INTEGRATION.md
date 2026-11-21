@@ -77,6 +77,21 @@ reported omission behavior.
 
 ## Authentic package probes
 
+- **DVD Screensaver** — the original CC0 package now imports and starts through
+  the production ZIP importer. Its 1024×512 PNG-backed DynOS texture resolves
+  as `TextureInfo`; the actual before-Mario-update callback was dispatched
+  9002 frames and its HUD callback submitted the texture through the native HUD
+  command boundary. This required raising the bounded DynOS/HUD texture limit
+  from 512 to 1024 pixels and binding
+  `djui_hud_render_texture_interpolated`. The binding preserves the upstream
+  argument shape but draws the current endpoint because this renderer does not
+  expose display-list interpolation; it logs that limitation once per mod.
+  Host execution is verified; Metal pixels and iPhone behavior are not.
+- **GTA Mission Passed** — the original CC0 package imports and decodes its
+  1024×256 HUD texture, but startup stops at `audio_stream_load` before hook
+  registration. Its MP3 stream API and `smlua_audio_utils_replace_sequence`
+  dependency are not yet implemented. This is a concrete runtime blocker, not
+  a successful mod execution.
 - **SM64 Coop Achievements 2.1.0** — the original MIT ZIP passes production
   import, multi-file startup, event dispatch, persistence/menu checks, and
   disable/re-enable host tests. It requests `stars_1`, which is not currently

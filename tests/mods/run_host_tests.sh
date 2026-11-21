@@ -44,6 +44,27 @@ if archive_path or member_name or model_name:
         (root / f'{model_name}.bin').write_bytes(archive.read(info))
     print(f'private DynOS actor fixture: {member_name} ({info.file_size} bytes)')
 PY
+python3 - "$BUILD/dynos-texture-fixture.zip" \
+  "$ROOT/tests/mods/fixtures/external_dynos_texture/main.lua" <<'PY'
+import struct, sys, zlib, zipfile
+from pathlib import Path
+
+archive_path, lua_path = sys.argv[1:]
+def chunk(name, payload):
+    body = struct.pack(">I", len(payload)) + name + payload
+    return body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+
+width, height = 1024, 512
+row = b"\0" + bytes((180, 90, 45, 255)) * width
+raw = row * height
+png = (b"\x89PNG\r\n\x1a\n" +
+       chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
+       chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+tex = b"\x02\x0cfixture_1024" + struct.pack("<I", len(png)) + png
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    z.write(lua_path, "fixture_1024/main.lua")
+    z.writestr("fixture_1024/textures/fixture_1024.tex", tex)
+PY
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.
 ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-sections ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_HOST_TEST -DMOD_RUNTIME_REAL_ZIP \
@@ -86,6 +107,7 @@ mkdir -p "$BUILD/mario-sound-install"
 (
   unset MOD_TEST_EXPECT_OMM_MODELS MOD_TEST_OMM_EXTRA_MODELS
   unset MOD_TEST_OMM_ANIMATION MOD_TEST_OMM_ACTIONS MOD_TEST_REQUIRE_TEXTURE_HUD
+  unset MOD_TEST_DISPATCH_DVD_TEXTURE MOD_TEST_ASSERT_UPDATE_COUNT
   MOD_TEST_DISPATCH_SET_ACTION=1 "$BUILD/mod_runtime_test" --external-zip \
     "$BUILD/mario-sound-install" "$BUILD/mario-sound-fixture.zip"
 )
@@ -100,6 +122,9 @@ if [ -n "${MOD_EXTERNAL_ZIP:-}" ]; then
   mkdir -p "$BUILD/external-zip"
   "$BUILD/mod_runtime_test" --external-zip "$BUILD/external-zip" "$MOD_EXTERNAL_ZIP"
 fi
+mkdir -p "$BUILD/dynos-texture-install"
+MOD_TEST_DISPATCH_DVD_TEXTURE=1 MOD_TEST_ASSERT_UPDATE_COUNT=1 "$BUILD/mod_runtime_test" --external-zip \
+  "$BUILD/dynos-texture-install" "$BUILD/dynos-texture-fixture.zip"
 if [ -n "${MOD_POSSESSION_ZIP:-}" ]; then
   mkdir -p "$BUILD/possession-zip"
   "$BUILD/mod_runtime_test" --possession-zip "$BUILD/possession-zip" "$MOD_POSSESSION_ZIP"

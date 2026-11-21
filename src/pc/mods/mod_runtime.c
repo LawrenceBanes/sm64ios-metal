@@ -129,7 +129,9 @@ extern s32 gInGameLanguage;
 #define MOD_MAX_DYNOS_BEHAVIORS 128u
 #define MOD_MAX_DYNOS_BEHAVIOR_TOKENS 64u
 #define MOD_MAX_DYNOS_TEXTURE_FILE_BYTES (2u * 1024u * 1024u)
-#define MOD_MAX_DYNOS_TEXTURE_DIMENSION 512u
+/* Real CoopDX packs include 1024x512 HUD textures (for example DVD Screensaver).
+ * Keep the larger decode bounded by the existing per-mod/global byte budgets. */
+#define MOD_MAX_DYNOS_TEXTURE_DIMENSION 1024u
 #define MOD_MAX_DYNOS_TEXTURES_PER_MOD 256u
 #define MOD_MAX_DYNOS_TEXTURE_BYTES_PER_MOD (32u * 1024u * 1024u)
 #define MOD_MAX_DYNOS_TEXTURE_BYTES_GLOBAL (64u * 1024u * 1024u)
@@ -257,6 +259,7 @@ struct Mod {
     unsigned dynos_behavior_count;
     bool pointer_warned;
     bool texture_lookup_warned;
+    bool hud_interpolation_warned;
     bool hud_font_fallback_warned;
     bool extended_model_warned;
     bool animation_warned;
@@ -4710,6 +4713,39 @@ static int l_djui_hud_render_texture(lua_State *L) {
     return 0;
 }
 
+/* CoopDX's HUD interpolation is tied to display-list frame interpolation,
+ * which this renderer does not currently expose. Preserve the original Lua
+ * signature and draw the requested current-frame endpoint; report the
+ * missing smoothing once per mod instead of silently claiming interpolation. */
+static int l_djui_hud_render_texture_interpolated(lua_State *L) {
+    ModTextureView texture;
+    texture_info_view_from_lua(L, 1, &texture);
+    (void)checked_lua_finite_float(L, 2, "djui_hud_render_texture_interpolated");
+    (void)checked_lua_finite_float(L, 3, "djui_hud_render_texture_interpolated");
+    float previous_scale_x = checked_lua_finite_float(L, 4, "djui_hud_render_texture_interpolated");
+    float previous_scale_y = checked_lua_finite_float(L, 5, "djui_hud_render_texture_interpolated");
+    float x = checked_lua_finite_float(L, 6, "djui_hud_render_texture_interpolated");
+    float y = checked_lua_finite_float(L, 7, "djui_hud_render_texture_interpolated");
+    float scale_x = checked_lua_finite_float(L, 8, "djui_hud_render_texture_interpolated");
+    float scale_y = checked_lua_finite_float(L, 9, "djui_hud_render_texture_interpolated");
+    if (previous_scale_x <= 0.0f || previous_scale_y <= 0.0f ||
+        scale_x <= 0.0f || scale_y <= 0.0f ||
+        (float)texture.width * previous_scale_x > 8192.0f ||
+        (float)texture.height * previous_scale_y > 8192.0f ||
+        (float)texture.width * scale_x > 8192.0f ||
+        (float)texture.height * scale_y > 8192.0f)
+        return luaL_argerror(L, 4, "interpolated texture scales must be positive and produce dimensions no larger than 8192 pixels");
+    if (sCurrentMod && !sCurrentMod->hud_interpolation_warned) {
+        mod_log("warning", sCurrentMod->name,
+                "djui_hud_render_texture_interpolated keeps the current-frame endpoint; this renderer has no display-list frame interpolation");
+        sCurrentMod->hud_interpolation_warned = true;
+    }
+    if (!mod_hud_render_texture(texture.texture, texture.width, texture.height,
+                                texture.format, texture.size, x, y, scale_x, scale_y))
+        return luaL_error(L, "djui_hud_render_texture_interpolated: unsupported texture dimensions or full HUD command queue");
+    return 0;
+}
+
 static int l_set_mario_action(lua_State *L) {
     struct MarioState *m = current_mario();
     if (!m) return luaL_error(L, "Mario state is unavailable");
@@ -6869,6 +6905,7 @@ static void register_api(void) {
     register_api_function("collision_find_surface_on_ray", l_collision_find_surface_on_ray);
     register_api_function("djui_hud_render_rect", l_djui_hud_render_rect);
     register_api_function("djui_hud_render_texture", l_djui_hud_render_texture);
+    register_api_function("djui_hud_render_texture_interpolated", l_djui_hud_render_texture_interpolated);
     register_api_function("djui_hud_get_mouse_x", l_djui_hud_pointer_unavailable);
     register_api_function("djui_hud_get_mouse_y", l_djui_hud_pointer_unavailable);
     register_api_function("djui_hud_get_mouse_buttons_pressed", l_djui_hud_pointer_unavailable);
