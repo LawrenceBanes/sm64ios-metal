@@ -1,0 +1,12 @@
+{
+  "formatVersion": 2,
+  "id": "ColorPathProbe64",
+  "name": "Color Path Probe 64",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "stage": "render_graph",
+  "passes": [
+    { "id": "color_path_probe", "type": "fullscreen", "input": "sceneColor", "output": "present", "source": "shaders/probe.metal", "scale": 1.0 }
+  ]
+}

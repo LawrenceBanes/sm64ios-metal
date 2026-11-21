@@ -312,6 +312,58 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("isfinite(normalLength2) && normalLength2 > 1.0e-8", screen_source)
         self.assertIn("isfinite(worldNormalLength2) && worldNormalLength2 > 1.0e-8", screen_source)
 
+    def test_lumen_defaults_preserve_color_and_effects_are_opt_in(self):
+        pack = ROOT / "ios/shaderpacks/LumenSurface64"
+        manifest = json.loads((pack / "manifest.json").read_text())
+        self.assertEqual(manifest["version"], "0.3.0")
+        defaults = {p["name"]: p["default"] for p in manifest["parameters"]}
+        self.assertEqual(defaults, {"directStrength": 0.0, "ambient": 1.0,
+                                    "textureMix": 0.0, "shadowStrength": 0.0})
+        compute = next(p for p in manifest["passes"] if p["type"] == "compute")
+        self.assertEqual(compute["scale"], 1.0)
+        material_source = (pack / "shaders/material.metal").read_text()
+        self.assertIn("if (textureMix <= 0.0 && ambient >= 1.0 && directStrength <= 0.0)",
+                      material_source)
+        self.assertIn("return baseColor", material_source)
+        self.assertIn("float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 1.0",
+                      material_source)
+        self.assertIn("float directStrength = isfinite(params.x) ? clamp(params.x, 0.0, 2.0) : 0.0",
+                      material_source)
+        graph_source = (pack / compute["source"]).read_text()
+        self.assertIn("if (!isfinite(params.w) || params.w <= 0.0)", graph_source)
+        self.assertIn("output.write(source, tid)", graph_source)
+        self.assertNotIn("pow(", material_source + graph_source)
+        self.assertNotIn("smoothstep(96.0", graph_source)
+        present_source = (pack / "shaders/present.metal").read_text()
+        self.assertIn("return image.sample(imageSampler, uv)", present_source)
+        self.assertNotIn("pow(", present_source)
+
+        # Host arithmetic sanity check: the neutral material path must be an
+        # identity while the diagnostic transfer curves visibly differ.
+        colors = ((0.12, 0.28, 0.74), (0.5, 0.5, 0.5), (0.92, 0.71, 0.19))
+        for color in colors:
+            neutral = tuple(channel * (1.0 + 0.0) for channel in color)
+            self.assertEqual(neutral, color)
+            self.assertNotEqual(tuple(channel ** 2.2 for channel in color), color)
+            self.assertNotEqual(tuple(channel ** (1.0 / 2.2) for channel in color), color)
+
+        metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
+        self.assertIn("MTLPixelFormatBGRA8Unorm", metal)
+        self.assertNotIn("MTLPixelFormatBGRA8Unorm_sRGB", metal)
+        self.assertIn("MTLPixelFormatRGBA16Float", metal)
+
+    def test_color_path_probe_compares_raw_and_power_transfer_paths(self):
+        pack = ROOT / "ios/shaderpacks/ColorPathProbe64"
+        manifest = json.loads((pack / "manifest.json").read_text())
+        self.assertEqual(manifest["shaderApiVersion"], 2)
+        self.assertEqual(len(manifest["passes"]), 1)
+        source = (pack / manifest["passes"][0]["source"]).read_text()
+        self.assertIn("float3 raw = image.sample(imageSampler, uv).rgb", source)
+        self.assertIn("pow(max(raw, float3(0.0)), float3(2.2))", source)
+        self.assertIn("pow(max(raw, float3(0.0)), float3(1.0 / 2.2))", source)
+        self.assertIn("float3(1.0, 0.0, 1.0)", source)
+        self.assertIn("raw input color", (pack / "README.md").read_text())
+
     def test_derivative_face_lighting_is_reversed_winding_invariant(self):
         source = (ROOT / "ios/shaderpacks/GeometryNormal64/shaders/material.metal").read_text()
         self.assertIn("cross(dx, dy)", source)
@@ -778,7 +830,7 @@ class ShaderPackTests(unittest.TestCase):
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
                          "VertexNormal64", "SunlitMaterial64", "SurfacePosition64",
                          "GeometryNormal64", "LumenSurface64")
-        reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64")
+        reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64", "ColorPathProbe64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
             manifest = json.loads((directory / "manifest.json").read_text())

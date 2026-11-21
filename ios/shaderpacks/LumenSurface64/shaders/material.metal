@@ -22,14 +22,18 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     (void)materialTexture3;
     (void)materialSampler3;
 
-    float3 texel = float3(1.0);
-    if (materialTextureCount > 0u)
-        texel = materialTexture0.sample(materialSampler0, fract(uv * 4.0)).rgb;
-    /* Keep imported world materials faithful while exercising the public
-     * character classification path on Mario's actual Fast3D material. */
     float textureMix = (materialClass == 3u && isfinite(params.z))
         ? clamp(params.z, 0.0, 1.0) : 0.0;
-    float3 albedo = mix(baseColor.rgb, baseColor.rgb * texel, textureMix);
+    float3 albedo = baseColor.rgb;
+    if (textureMix > 0.0 && materialTextureCount > 0u) {
+        float3 texel = materialTexture0.sample(materialSampler0, fract(uv * 4.0)).rgb;
+        albedo = mix(baseColor.rgb, baseColor.rgb * texel, textureMix);
+    }
+    /* Neutral settings preserve the complete Fast3D combiner/fog result. */
+    float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 1.0;
+    float directStrength = isfinite(params.x) ? clamp(params.x, 0.0, 2.0) : 0.0;
+    if (textureMix <= 0.0 && ambient >= 1.0 && directStrength <= 0.0)
+        return baseColor;
     if (!positionValid) return float4(albedo, baseColor.a);
 
     float3 dx = dfdx(viewPosition);
@@ -39,7 +43,6 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     if (!isfinite(faceLength) || faceLength < 1.0e-6)
         return float4(albedo, baseColor.a);
 
-    float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 0.22;
     float3 sun = sunDirectionView;
     float sunLength = length(sun);
     if (!isfinite(sunLength) || sunLength < 1.0e-6 || !isfinite(sunIntensity))
@@ -52,7 +55,6 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     if (dot(normal, toCamera / cameraLength) < 0.0) normal = -normal;
     /* View-facing orientation makes the one-sided diffuse stable for reversed winding. */
     float diffuse = max(dot(normal, sun / sunLength), 0.0);
-    float directStrength = isfinite(params.x) ? clamp(params.x, 0.0, 2.0) : 1.0;
     float illumination = clamp(ambient + diffuse * max(sunIntensity, 0.0) * directStrength,
                                0.0, 2.0);
     return float4(albedo * illumination, baseColor.a);

@@ -26,6 +26,12 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
     uint2 sourcePoint = min(tid * inputSize / outputSize, inputSize - 1u);
     float2 uv = (float2(tid) + 0.5) / float2(outputSize);
     float4 source = image.read(sourcePoint);
+    /* World shadows are opt-in. With the default zero strength this graph
+     * stage is an exact copy and does no depth or color-space conversion. */
+    if (!isfinite(params.w) || params.w <= 0.0) {
+        output.write(source, tid);
+        return;
+    }
     float depth = sceneDepth.sample(depthSampler, uv);
     if (depth >= 0.999999) {
         output.write(source, tid);
@@ -72,8 +78,7 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
         }
     }
     float shadowFactor = mix(1.0, shadowVisibility, clamp(params.w, 0.0, 1.0));
-
-    float fog = clamp(smoothstep(96.0, 240.0, distance) * 0.18, 0.0, 0.18);
     float3 composite = source.rgb * shadowFactor;
-    output.write(float4(mix(composite, float3(0.52, 0.67, 0.82), fog), source.a), tid);
+    /* Fast3D has already applied native scene fog before this graph stage. */
+    output.write(float4(composite, source.a), tid);
 }

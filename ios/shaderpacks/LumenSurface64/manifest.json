@@ -3,21 +3,21 @@
   "id": "LumenSurface64",
   "name": "Lumen Surface Lighting",
   "author": "SHITBOX LABZ INC.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "shaderApiVersion": 2,
   "stage": "render_graph",
   "textures": [
     { "id": "checker", "source": "textures/checker.png" }
   ],
   "parameters": [
-    { "name": "directStrength", "label": "Direct light", "type": "float", "default": 1.0, "min": 0, "max": 2 },
-    { "name": "ambient", "label": "Ambient contribution", "type": "float", "default": 0.22, "min": 0, "max": 1 },
-    { "name": "textureMix", "label": "Mario texture blend", "type": "float", "default": 0.15, "min": 0, "max": 1 },
-    { "name": "shadowStrength", "label": "World shadow strength", "type": "float", "default": 0.8, "min": 0, "max": 1 }
+    { "name": "directStrength", "label": "Direct light", "type": "float", "default": 0.0, "min": 0, "max": 2 },
+    { "name": "ambient", "label": "Ambient contribution", "type": "float", "default": 1.0, "min": 0, "max": 1 },
+    { "name": "textureMix", "label": "Mario texture blend", "type": "float", "default": 0.0, "min": 0, "max": 1 },
+    { "name": "shadowStrength", "label": "World shadow strength", "type": "float", "default": 0.0, "min": 0, "max": 1 }
   ],
   "materialShader": { "source": "shaders/material.metal", "packTextures": true, "vertexPositions": true, "directionalLight": true },
   "passes": [
-    { "id": "surface_data", "type": "compute", "input": "sceneColor", "output": "surface", "source": "shaders/surface.metal", "scale": 0.5, "sceneDepth": true, "sceneNormals": true, "sceneLighting": true, "sceneShadows": true },
+    { "id": "surface_data", "type": "compute", "input": "sceneColor", "output": "surface", "source": "shaders/surface.metal", "scale": 1.0, "sceneDepth": true, "sceneNormals": true, "sceneLighting": true, "sceneShadows": true },
     { "id": "present", "type": "fullscreen", "input": "surface", "output": "present", "source": "shaders/present.metal", "scale": 1.0 }
   ]
 }

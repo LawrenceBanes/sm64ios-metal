@@ -98,6 +98,7 @@ xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx"
     "$repo_dir/tests/shader64_wrap_v2.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
     -o "$wrapper_v2_tool"
 for source in "$repo_dir"/ios/shaderpacks/GraphDemo/shaders/*.metal \
+             "$repo_dir"/ios/shaderpacks/ColorPathProbe64/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/BlissGridlines/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/DepthDebug64/shaders/*.metal \
              "$repo_dir"/ios/shaderpacks/MaterialDebug64/shaders/*.metal; do
