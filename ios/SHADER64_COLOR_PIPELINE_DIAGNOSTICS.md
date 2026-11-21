@@ -35,6 +35,13 @@ lighting, material texture mixing, and world shadowing are opt-in; ambient is
 This is a conservative color/exposure baseline, not a claim that the new
 lighting looks correct on-device.
 
+The manifest's `parameterVersion: 2` is a pack-local settings migration marker.
+Older Lumen parameter arrays are ignored in favor of the new defaults once the
+new pack is activated; the new values are then saved with schema 2. Other packs
+use the legacy schema 1 default and retain their existing saved values. Replacing
+an already installed pack requires removing that pack in the manager and
+importing the corrected ZIP; this removes only that pack's own parameter state.
+
 ## On-device diagnostic procedure
 
 1. Use one stationary outdoor view. Compare Classic64 and LumenSurface64 with

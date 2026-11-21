@@ -5,6 +5,7 @@
   "author": "SHITBOX LABZ INC.",
   "version": "0.3.0",
   "shaderApiVersion": 2,
+  "parameterVersion": 2,
   "stage": "render_graph",
   "textures": [
     { "id": "checker", "source": "textures/checker.png" }

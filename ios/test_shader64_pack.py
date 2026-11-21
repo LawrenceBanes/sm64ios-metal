@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded ZIP and source-contract tests for the SHADER64 installer."""
 import ctypes
+import io
 import json
 import os
 import pathlib
@@ -316,6 +317,7 @@ class ShaderPackTests(unittest.TestCase):
         pack = ROOT / "ios/shaderpacks/LumenSurface64"
         manifest = json.loads((pack / "manifest.json").read_text())
         self.assertEqual(manifest["version"], "0.3.0")
+        self.assertEqual(manifest["parameterVersion"], 2)
         defaults = {p["name"]: p["default"] for p in manifest["parameters"]}
         self.assertEqual(defaults, {"directStrength": 0.0, "ambient": 1.0,
                                     "textureMix": 0.0, "shadowStrength": 0.0})
@@ -352,6 +354,23 @@ class ShaderPackTests(unittest.TestCase):
         self.assertNotIn("MTLPixelFormatBGRA8Unorm_sRGB", metal)
         self.assertIn("MTLPixelFormatRGBA16Float", metal)
 
+        ui = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
+        self.assertIn("SM64Shader64ParameterVersion.", ui)
+        self.assertIn("savedVersion ? [savedVersion integerValue] == currentVersion : currentVersion == 1", ui)
+        self.assertIn("setInteger:shader64_parameter_version(manifest)", ui)
+        runtime = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
+        self.assertIn("gfx_metal_shader64_resolve_saved_parameters", runtime)
+        self.assertIn("savedVersion ? [savedVersion integerValue] == version : version == 1", runtime)
+        self.assertIn("gfx_metal_shader64_save_pack_parameters(packID, manifest, defaults, parameters)", runtime)
+        # Schema 2 invalidates only stale Lumen parameters. Legacy schema-1
+        # packs with no marker keep their saved per-pack values.
+        def reuse(saved, stored_version, requested_version):
+            return saved if (stored_version == requested_version or
+                             (stored_version is None and requested_version == 1)) else None
+        self.assertIsNone(reuse([1.0, 0.22, 0.15, 0.8], None, 2))
+        self.assertEqual(reuse([0.7, 0.3], None, 1), [0.7, 0.3])
+        self.assertEqual(reuse([0.7, 0.3], 1, 1), [0.7, 0.3])
+
     def test_color_path_probe_compares_raw_and_power_transfer_paths(self):
         pack = ROOT / "ios/shaderpacks/ColorPathProbe64"
         manifest = json.loads((pack / "manifest.json").read_text())
@@ -363,6 +382,21 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("pow(max(raw, float3(0.0)), float3(1.0 / 2.2))", source)
         self.assertIn("float3(1.0, 0.0, 1.0)", source)
         self.assertIn("raw input color", (pack / "README.md").read_text())
+
+    def test_production_importer_accepts_flattened_device_pack_archives(self):
+        for pack_id in ("LumenSurface64", "ColorPathProbe64"):
+            root = ROOT / "ios/shaderpacks" / pack_id
+            archive_buffer = io.BytesIO()
+            with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sorted(p for p in root.rglob("*") if p.is_file() and p.name != "README.md"):
+                    archive.writestr(path.relative_to(root).as_posix(), path.read_bytes())
+            packed = archive_buffer.getvalue()
+            with zipfile.ZipFile(io.BytesIO(packed)) as archive:
+                self.assertIn("manifest.json", archive.namelist())
+                self.assertFalse(any(name.startswith(pack_id + "/") for name in archive.namelist()))
+            ok, error, installed = self.install(packed)
+            self.assertTrue(ok, f"{pack_id}: {error}")
+            self.assertTrue((installed / "manifest.json").is_file())
 
     def test_derivative_face_lighting_is_reversed_winding_invariant(self):
         source = (ROOT / "ios/shaderpacks/GeometryNormal64/shaders/material.metal").read_text()

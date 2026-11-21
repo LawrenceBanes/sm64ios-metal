@@ -45,6 +45,26 @@ static BOOL sm64OrientationSourceLogged;
 static BOOL sm64DiagnosticsEmbeddedInSDL;
 static int sm64RenderDiagnosticMode;
 
+static NSInteger shader64_parameter_version(NSDictionary *manifest) {
+    NSNumber *version = [manifest[@"parameterVersion"] isKindOfClass:[NSNumber class]]
+        ? manifest[@"parameterVersion"] : nil;
+    return version ? version.integerValue : 1;
+}
+
+static NSString *shader64_parameter_version_key(NSString *packID) {
+    return [@"SM64Shader64ParameterVersion." stringByAppendingString:packID];
+}
+
+static BOOL shader64_saved_parameters_match_version(NSUserDefaults *defaults,
+                                                     NSString *packID,
+                                                     NSDictionary *manifest) {
+    NSInteger currentVersion = shader64_parameter_version(manifest);
+    id savedVersion = [defaults objectForKey:shader64_parameter_version_key(packID)];
+    /* Legacy packs without a schema marker retain their existing preferences
+     * at schema 1. A pack explicitly moving to schema 2 gets its new defaults. */
+    return savedVersion ? [savedVersion integerValue] == currentVersion : currentVersion == 1;
+}
+
 #if TARGET_OS_IOS
 @interface SM64DiagnosticsViewController : UIViewController <MTKViewDelegate, UIDocumentPickerDelegate>
 #else
@@ -1459,6 +1479,10 @@ static int sm64RenderDiagnosticMode;
         [manifest[@"passes"] isKindOfClass:[NSArray class]] && [manifest[@"passes"] count] > 0 &&
         [manifest[@"passes"] count] <= GFX_SHADER64_MAX_GRAPH_PASSES;
     if (api2) {
+        id parameterVersionValue = manifest[@"parameterVersion"];
+        if (parameterVersionValue && (![parameterVersionValue isKindOfClass:[NSNumber class]] ||
+            [parameterVersionValue integerValue] < 1 || [parameterVersionValue integerValue] > 65535 ||
+            floor([parameterVersionValue doubleValue]) != [parameterVersionValue doubleValue])) api2 = NO;
         NSRegularExpression *nameRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,32}$" options:0 error:nil];
         id textureListValue = manifest[@"textures"];
         NSArray *textureList = [textureListValue isKindOfClass:[NSArray class]] ? textureListValue : nil;
@@ -1595,7 +1619,9 @@ static int sm64RenderDiagnosticMode;
     float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     NSArray *configured = manifest[@"parameters"];
     if (configured && (![configured isKindOfClass:[NSArray class]] || configured.count > 4)) validation = @"parameters must be an array of at most four float declarations";
-    NSArray *savedForPack = [[NSUserDefaults standardUserDefaults] arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSArray *savedForPack = shader64_saved_parameters_match_version(defaults, packID, manifest) ?
+        [defaults arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]] : nil;
     if ([configured isKindOfClass:[NSArray class]]) for (NSUInteger i = 0; i < configured.count && i < 4; ++i) {
         NSDictionary *definition = configured[i];
         if (![definition isKindOfClass:[NSDictionary class]]) { validation = @"Each parameter must be an object"; break; }
@@ -1660,7 +1686,8 @@ static int sm64RenderDiagnosticMode;
         return;
     }
     NSArray *values = @[@(parameters[0]), @(parameters[1]), @(parameters[2]), @(parameters[3])];
-    [[NSUserDefaults standardUserDefaults] setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    [defaults setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    [defaults setInteger:shader64_parameter_version(manifest) forKey:shader64_parameter_version_key(packID)];
     gfx_metal_set_shader64_parameters(parameters);
     [self refreshGraphicsSettings];
     [self appendStatus:[NSString stringWithFormat:@"Activated %@", manifest[@"name"]]];
@@ -1670,7 +1697,9 @@ static int sm64RenderDiagnosticMode;
     NSDictionary *manifest = [self shaderManifestForID:packID root:[self shaderPackRoot] error:nil];
     NSArray *definitions = manifest[@"parameters"];
     if (![definitions isKindOfClass:[NSArray class]] || !definitions.count || definitions.count > 4) return;
-    NSArray *current = [[NSUserDefaults standardUserDefaults] arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSArray *current = shader64_saved_parameters_match_version(defaults, packID, manifest) ?
+        [defaults arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]] : nil;
     NSMutableArray *values = [NSMutableArray arrayWithCapacity:definitions.count];
     for (NSUInteger i = 0; i < definitions.count; ++i) {
         NSDictionary *definition = definitions[i];
@@ -1690,7 +1719,9 @@ static int sm64RenderDiagnosticMode;
         if (!strongSelf) return;
         float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         for (NSUInteger i = 0; i < selected.count && i < 4; ++i) parameters[i] = [selected[i] floatValue];
-        [[NSUserDefaults standardUserDefaults] setObject:selected forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        [defaults setObject:selected forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+        [defaults setInteger:shader64_parameter_version(manifest) forKey:shader64_parameter_version_key(packID)];
         gfx_metal_set_shader64_parameters(parameters);
         [strongSelf appendStatus:[NSString stringWithFormat:@"Updated %@ parameters", manifest[@"name"]]];
     };
@@ -1718,6 +1749,7 @@ static int sm64RenderDiagnosticMode;
             NSError *error = nil;
             BOOL removed = [[NSFileManager defaultManager] removeItemAtPath:[root stringByAppendingPathComponent:packID] error:&error];
             [[NSUserDefaults standardUserDefaults] removeObjectForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:shader64_parameter_version_key(packID)];
             if (removed) [self appendStatus:[NSString stringWithFormat:@"Removed %@", packID]];
             else [self appendStatus:[NSString stringWithFormat:@"Could not remove %@: %@", packID, error.localizedDescription ?: @"unknown error"]];
             [self refreshGraphicsSettings];

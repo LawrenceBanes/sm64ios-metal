@@ -2387,6 +2387,53 @@ bool gfx_metal_load_shader64_library(const char *pack_id, const void *library_by
     return gfx_metal_activate_shader64_library(pack_id, library, parameters, error_out, error_size);
 }
 
+static NSInteger gfx_metal_shader64_parameter_version(NSDictionary *manifest) {
+    NSNumber *version = [manifest[@"parameterVersion"] isKindOfClass:[NSNumber class]]
+        ? manifest[@"parameterVersion"] : nil;
+    return version ? version.integerValue : 1;
+}
+
+static NSString *gfx_metal_shader64_parameter_version_key(NSString *packID) {
+    return [@"SM64Shader64ParameterVersion." stringByAppendingString:packID];
+}
+
+static void gfx_metal_shader64_resolve_saved_parameters(NSString *packID,
+                                                         NSDictionary *manifest,
+                                                         NSUserDefaults *defaults,
+                                                         float parameters[4]) {
+    parameters[0] = 1.0f; parameters[1] = 0.0f; parameters[2] = 0.0f; parameters[3] = 0.0f;
+    NSArray *definitions = [manifest[@"parameters"] isKindOfClass:[NSArray class]] ? manifest[@"parameters"] : nil;
+    if (definitions && definitions.count <= 4) {
+        NSInteger version = gfx_metal_shader64_parameter_version(manifest);
+        id savedVersion = [defaults objectForKey:gfx_metal_shader64_parameter_version_key(packID)];
+        BOOL compatible = savedVersion ? [savedVersion integerValue] == version : version == 1;
+        NSArray *saved = compatible ? [defaults arrayForKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]] : nil;
+        for (NSUInteger i = 0; i < definitions.count; ++i) {
+            NSDictionary *definition = [definitions[i] isKindOfClass:[NSDictionary class]] ? definitions[i] : nil;
+            NSNumber *defaultValue = [definition[@"default"] isKindOfClass:[NSNumber class]] ? definition[@"default"] : nil;
+            if (defaultValue && isfinite(defaultValue.doubleValue)) parameters[i] = (float)defaultValue.doubleValue;
+            if (saved.count == definitions.count && [saved[i] isKindOfClass:[NSNumber class]] &&
+                isfinite([saved[i] doubleValue])) parameters[i] = [saved[i] floatValue];
+        }
+        return;
+    }
+    /* Keep legacy API 1's existing global parameter behavior unchanged. */
+    NSArray *saved = [defaults arrayForKey:@"SM64Shader64Parameters"];
+    if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
+        if ([saved[i] isKindOfClass:[NSNumber class]] && isfinite([saved[i] doubleValue])) parameters[i] = [saved[i] floatValue];
+}
+
+static void gfx_metal_shader64_save_pack_parameters(NSString *packID,
+                                                     NSDictionary *manifest,
+                                                     NSUserDefaults *defaults,
+                                                     const float parameters[4]) {
+    NSArray *values = @[@(parameters[0]), @(parameters[1]), @(parameters[2]), @(parameters[3])];
+    [defaults setObject:values forKey:[@"SM64Shader64Parameters." stringByAppendingString:packID]];
+    [defaults setInteger:gfx_metal_shader64_parameter_version(manifest)
+                  forKey:gfx_metal_shader64_parameter_version_key(packID)];
+    [defaults setObject:values forKey:@"SM64Shader64Parameters"];
+}
+
 static void gfx_metal_restore_shader64_pack(void) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSString *packID = [defaults stringForKey:@"SM64Shader64ActivePack"];
@@ -2396,6 +2443,8 @@ static void gfx_metal_restore_shader64_pack(void) {
     NSString *packRoot = [[documents[0] stringByAppendingPathComponent:@"shaderpacks"] stringByAppendingPathComponent:packID];
     NSData *manifestData = [NSData dataWithContentsOfFile:[packRoot stringByAppendingPathComponent:@"manifest.json"]];
     NSDictionary *manifest = manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil] : nil;
+    float parameters[4];
+    gfx_metal_shader64_resolve_saved_parameters(packID, manifest, defaults, parameters);
     if ([manifest[@"shaderApiVersion"] integerValue] == 2 &&
         [manifest[@"passes"] isKindOfClass:[NSArray class]] &&
         [manifest[@"passes"] count] > 0 && [manifest[@"passes"] count] <= GFX_SHADER64_MAX_GRAPH_PASSES) {
@@ -2465,10 +2514,6 @@ static void gfx_metal_restore_shader64_pack(void) {
                 if (!material_source) valid = NO;
             }
         }
-        NSArray *saved = [defaults arrayForKey:@"SM64Shader64Parameters"];
-        float parameters[4] = {1, 0, 0, 0};
-        if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
-            if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
         char error[384] = {0};
         bool material_pack_textures = [material_definition[@"packTextures"] boolValue];
         bool material_vertex_normals = [material_definition[@"vertexNormals"] boolValue];
@@ -2483,6 +2528,8 @@ static void gfx_metal_restore_shader64_pack(void) {
             [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
             gfx_ios_diag_log("SHADER64 API v2 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
                              error[0] ? error : "graph manifest or pass source invalid");
+        } else {
+            gfx_metal_shader64_save_pack_parameters(packID, manifest, defaults, parameters);
         }
         return;
     }
@@ -2502,10 +2549,6 @@ static void gfx_metal_restore_shader64_pack(void) {
         return;
     }
     NSData *data = [NSData dataWithContentsOfFile:sourcePath];
-    NSArray *saved = [defaults arrayForKey:@"SM64Shader64Parameters"];
-    float parameters[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-    if (saved.count <= 4) for (NSUInteger i = 0; i < saved.count; ++i)
-        if ([saved[i] isKindOfClass:[NSNumber class]]) parameters[i] = [saved[i] floatValue];
     char error[384] = {0};
     bool loaded = data && (compiledLibrary ?
         gfx_metal_load_shader64_library(packID.UTF8String, data.bytes, data.length, parameters, error, sizeof(error)) :
@@ -2514,6 +2557,8 @@ static void gfx_metal_restore_shader64_pack(void) {
         [defaults removeObjectForKey:@"SM64Shader64ActivePack"];
         gfx_ios_diag_log("SHADER64 restore failed id=%s reason=%s; Classic64 retained", packID.UTF8String,
                          error[0] ? error : "source unavailable");
+    } else if ([manifest[@"parameters"] isKindOfClass:[NSArray class]]) {
+        gfx_metal_shader64_save_pack_parameters(packID, manifest, defaults, parameters);
     }
 }
 
