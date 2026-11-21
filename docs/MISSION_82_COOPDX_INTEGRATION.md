@@ -50,6 +50,7 @@ module loading is not implied by `gActiveMods` metadata.
 | DynOS | Existing bounded `.bin`/`.tex` actor path and production GeoLayout-to-Metal traversal tests | Full DynOS material/animation/`.col`/GeoLayout opcode coverage remains incomplete |
 | Audio | Existing sample decode/ownership APIs and native mixer adapter | Formats, channel behavior, and OMM-specific audio still need real-device verification |
 | Multiplayer | Explicitly isolated from this mission | CoopNet and synchronized state are unsupported by scope |
+| Action sound callbacks | `play_mario_sound` uses the native action-sound path and translates CoopDX `CHAR_SOUND_*` secondary IDs to this engine's packed Mario sound bank | Character Select sound replacement and multiplayer player interaction are unavailable |
 
 The importer now recognizes one unambiguous nested Lua package root when an
 archive also contains sibling samples or editor folders. It installs that
@@ -76,6 +77,24 @@ reported omission behavior.
   later callback errors because the expected `bowsMoveset` global is absent.
   It is therefore imported but not playable in this port. The source archive
   has not been redistributed or committed.
+- **Super Boing 64 action script** — the [CC0 source repository](https://github.com/eros71-dev/sm64-coop-mods)
+  publishes this
+  Lua script as a loose file rather than a ZIP. The source was not edited; a
+  temporary ZIP wrapper was used to exercise the production importer. Its
+  original `HOOK_ON_SET_MARIO_ACTION` callback now runs for `ACT_JUMP` and
+  invokes the native action-sound path plus the correct mapped
+  `CHAR_SOUND_TWIRL_BOUNCE` sound. The host harness verifies both sound IDs
+  and Mario's action/sound flags. This verifies host callback behavior, not
+  audible output on iPhone. Source and license: `eros71-dev/sm64-coop-mods`
+  (CC0-1.0), file `boing.lua`.
+- **California Gurls** — the original archive from the CC0
+  [community-mod collection](https://github.com/eros71-dev/sm64-coop-mods)
+  collection passes ZIP extraction and loads its large original animation
+  data. Its startup then stops at `smlua_audio_utils_replace_sequence`, which
+  is not implemented. The package has not yet run its custom action or DynOS
+  models, so it remains unsupported beyond import and animation decoding.
+  Source and repository license: `eros71-dev/sm64-coop-mods` (CC0-1.0),
+  archive `zipped/california-gurls.zip`.
 
 ## Test fixtures and provenance
 
@@ -86,12 +105,23 @@ non-redistributed test input when present; its contents are not added to Git.
 Host startup success does not establish full gameplay compatibility or iPhone
 rendering.
 
+The action-sound regression is an authored, synthetic Lua fixture under
+`tests/mods/fixtures/external_mario_sound/`; the test runner wraps that script
+in a temporary ZIP and installs it through the production importer. The
+unmodified community script and California Gurls archive remain outside the
+repository.
+
 ## Next integration work
 
-1. Run the complete regression and sanitizer suite after metadata changes.
-2. Exercise a nested-module package and an original DynOS character archive
-   through the production importer, recording API calls and unsupported
-   behavior rather than interpreting import as compatibility.
-3. Close the largest repeated runtime blockers across those unmodified mods.
-4. Run Xcode/iPhoneOS CI for the UIKit and C-runtime changes; physical device
-   import and gameplay remain separate evidence.
+1. Implement per-mod `.m64` sequence replacement in the native audio loader,
+   with bounded file reads, teardown on disable, and restoration of the stock
+   sequence. This is the first startup blocker for California Gurls.
+2. Add a production importer test for a CC0 multi-file module package, then
+   continue the original package probe after each observed blocker.
+3. Continue DynOS actor/model traversal using original licensed packs; current
+   parsing and renderer integration still omit many GeoLayout operations,
+   animation playback, and collision resource registration.
+4. Close the observed HUD texture and Character Select dependencies without
+   masking their missing engine behavior.
+5. Test UIKit Files import and actual gameplay on iPhone; host ZIP installation
+   and Apple compilation are not physical-device verification.

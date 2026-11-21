@@ -28,6 +28,7 @@
 #include "lualib.h"
 
 #include "audio/external.h"
+#include "seq_ids.h"
 #include "macros.h"
 #include "sm64.h"
 #include "level_table.h"
@@ -271,6 +272,7 @@ struct Mod {
     bool character_animation_warned;
     bool bubble_api_warned;
     bool multiplayer_settings_warned;
+    bool player_interaction_warned;
     bool sync_tables_warned;
     uint64_t star_exit_setting_order;
     bool stay_in_level_after_star;
@@ -2967,6 +2969,17 @@ static int l_hook_mario_action(lua_State *L) {
         if (interaction_value < 0 || (uint64_t)interaction_value > UINT32_MAX)
             return luaL_argerror(L, 3, "interactionType must be in 0..UINT32_MAX");
         interaction_type = (uint32_t)interaction_value;
+        /* CoopDX reserves bit 31 for player-versus-player interaction. This
+         * port has no multiplayer player targets; keep the local action
+         * hook, but don't feed an unknown interaction bit into SM64. */
+        if (interaction_type & (UINT32_C(1) << 31)) {
+            if (!sCurrentMod->player_interaction_warned) {
+                sCurrentMod->player_interaction_warned = true;
+                mod_log("warning", sCurrentMod->name,
+                        "INTERACT_PLAYER was requested by a custom action; player-versus-player interactions are unavailable in single-player, so that interaction bit is ignored");
+            }
+            interaction_type &= ~(UINT32_C(1) << 31);
+        }
     }
 
     int every = LUA_NOREF;
@@ -4906,6 +4919,45 @@ static int l_play_mario_action_sound(lua_State *L) {
     return 0;
 }
 
+static uint32_t mario_character_sound_bits(lua_Integer character_sound);
+
+/* CoopDX uses CHAR_SOUND_* indices for the secondary argument while this
+ * port's legacy helper expects packed sound bits. Preserve the upstream
+ * behavior at the adapter boundary instead of passing those enum values into
+ * the legacy sound bank. */
+static int l_play_mario_sound(lua_State *L) {
+    struct MarioState *m = checked_mario_argument(L, 1);
+    lua_Integer primary = luaL_checkinteger(L, 2);
+    lua_Integer secondary = luaL_checkinteger(L, 3);
+    if (primary < INT32_MIN || primary > INT32_MAX)
+        return luaL_argerror(L, 2, "primary sound bits must fit in s32");
+    if (secondary < INT32_MIN || secondary > INT32_MAX)
+        return luaL_argerror(L, 3, "secondary sound bits must fit in s32");
+    if (primary == SOUND_ACTION_TERRAIN_JUMP) {
+        play_mario_action_sound(m,
+            (m->flags & MARIO_METAL_CAP) ? (s32)SOUND_ACTION_METAL_JUMP
+                                          : (s32)SOUND_ACTION_TERRAIN_JUMP,
+            1);
+    } else {
+        play_sound_if_no_flag(m, (u32)(s32)primary, MARIO_ACTION_SOUND_PLAYED);
+    }
+    if (secondary == 0) play_mario_jump_sound(m);
+    if (secondary != -1 && !(m->flags & MARIO_MARIO_SOUND_PLAYED)) {
+        uint32_t sound_bits = mario_character_sound_bits(secondary);
+        if (sound_bits) {
+            if (sCurrentMod && !sCurrentMod->character_sound_warned) {
+                sCurrentMod->character_sound_warned = true;
+                mod_log("warning", sCurrentMod->name,
+                        "Character Select sound overrides and HOOK_CHARACTER_SOUND are unavailable; using the native Mario sound bank");
+            }
+            float *position = m->marioObj ? m->marioObj->header.gfx.cameraToObject : gGlobalSoundSource;
+            play_sound((s32)sound_bits, position);
+        }
+        m->flags |= MARIO_MARIO_SOUND_PLAYED;
+    }
+    return 0;
+}
+
 static int l_play_course_clear(lua_State *L) {
     (void)L;
     play_course_clear();
@@ -6449,6 +6501,50 @@ static void expose_character_sound_constants(void) {
     expose_int("CHAR_SOUND_MAX", sizeof(names) / sizeof(names[0]));
 }
 
+static void expose_sequence_constants(void) {
+    static const struct { const char *name; lua_Integer value; } constants[] = {
+        { "SEQ_SOUND_PLAYER", SEQ_SOUND_PLAYER },
+        { "SEQ_EVENT_CUTSCENE_COLLECT_STAR", SEQ_EVENT_CUTSCENE_COLLECT_STAR },
+        { "SEQ_MENU_TITLE_SCREEN", SEQ_MENU_TITLE_SCREEN },
+        { "SEQ_LEVEL_GRASS", SEQ_LEVEL_GRASS },
+        { "SEQ_LEVEL_INSIDE_CASTLE", SEQ_LEVEL_INSIDE_CASTLE },
+        { "SEQ_LEVEL_WATER", SEQ_LEVEL_WATER },
+        { "SEQ_LEVEL_HOT", SEQ_LEVEL_HOT },
+        { "SEQ_LEVEL_BOSS_KOOPA", SEQ_LEVEL_BOSS_KOOPA },
+        { "SEQ_LEVEL_SNOW", SEQ_LEVEL_SNOW },
+        { "SEQ_LEVEL_SLIDE", SEQ_LEVEL_SLIDE },
+        { "SEQ_LEVEL_SPOOKY", SEQ_LEVEL_SPOOKY },
+        { "SEQ_EVENT_PIRANHA_PLANT", SEQ_EVENT_PIRANHA_PLANT },
+        { "SEQ_LEVEL_UNDERGROUND", SEQ_LEVEL_UNDERGROUND },
+        { "SEQ_MENU_STAR_SELECT", SEQ_MENU_STAR_SELECT },
+        { "SEQ_EVENT_POWERUP", SEQ_EVENT_POWERUP },
+        { "SEQ_EVENT_METAL_CAP", SEQ_EVENT_METAL_CAP },
+        { "SEQ_EVENT_KOOPA_MESSAGE", SEQ_EVENT_KOOPA_MESSAGE },
+        { "SEQ_LEVEL_KOOPA_ROAD", SEQ_LEVEL_KOOPA_ROAD },
+        { "SEQ_EVENT_HIGH_SCORE", SEQ_EVENT_HIGH_SCORE },
+        { "SEQ_EVENT_MERRY_GO_ROUND", SEQ_EVENT_MERRY_GO_ROUND },
+        { "SEQ_EVENT_RACE", SEQ_EVENT_RACE },
+        { "SEQ_EVENT_CUTSCENE_STAR_SPAWN", SEQ_EVENT_CUTSCENE_STAR_SPAWN },
+        { "SEQ_EVENT_BOSS", SEQ_EVENT_BOSS },
+        { "SEQ_EVENT_CUTSCENE_COLLECT_KEY", SEQ_EVENT_CUTSCENE_COLLECT_KEY },
+        { "SEQ_EVENT_ENDLESS_STAIRS", SEQ_EVENT_ENDLESS_STAIRS },
+        { "SEQ_LEVEL_BOSS_KOOPA_FINAL", SEQ_LEVEL_BOSS_KOOPA_FINAL },
+        { "SEQ_EVENT_CUTSCENE_CREDITS", SEQ_EVENT_CUTSCENE_CREDITS },
+        { "SEQ_EVENT_SOLVE_PUZZLE", SEQ_EVENT_SOLVE_PUZZLE },
+        { "SEQ_EVENT_TOAD_MESSAGE", SEQ_EVENT_TOAD_MESSAGE },
+        { "SEQ_EVENT_PEACH_MESSAGE", SEQ_EVENT_PEACH_MESSAGE },
+        { "SEQ_EVENT_CUTSCENE_INTRO", SEQ_EVENT_CUTSCENE_INTRO },
+        { "SEQ_EVENT_CUTSCENE_VICTORY", SEQ_EVENT_CUTSCENE_VICTORY },
+        { "SEQ_EVENT_CUTSCENE_ENDING", SEQ_EVENT_CUTSCENE_ENDING },
+        { "SEQ_MENU_FILE_SELECT", SEQ_MENU_FILE_SELECT },
+        { "SEQ_EVENT_CUTSCENE_LAKITU", SEQ_EVENT_CUTSCENE_LAKITU },
+        { "SEQ_COUNT", SEQ_COUNT },
+        { "SEQ_VARIATION", SEQ_VARIATION },
+    };
+    for (size_t i = 0; i < sizeof(constants) / sizeof(constants[0]); ++i)
+        expose_int(constants[i].name, constants[i].value);
+}
+
 static void expose_mario_animation_constants(void) {
     static const struct { const char *name; lua_Integer value; } constants[] = {
 #include "mod_mario_animation_constants.inc"
@@ -6738,6 +6834,7 @@ static void register_api(void) {
     register_api_function("play_sound", l_play_sound);
     register_api_function("play_mario_heavy_landing_sound", l_play_mario_heavy_landing_sound);
     register_api_function("play_mario_action_sound", l_play_mario_action_sound);
+    register_api_function("play_mario_sound", l_play_mario_sound);
     register_api_function("play_course_clear", l_play_course_clear);
     register_api_function("play_flip_sounds", l_play_flip_sounds);
     register_api_function("network_send_object", l_network_send_object_single_player);
@@ -6958,6 +7055,8 @@ static void register_api(void) {
 #include "mod_behavior_constants.inc"
 #include "mod_model_constants.inc"
     expose_character_sound_constants();
+    expose_sequence_constants();
+    expose_int("INTERACT_PLAYER", (lua_Integer)(UINT32_C(1) << 31));
 
     /* Level and course identifiers are enums generated from the engine's
      * authoritative level/course lists, so they are not visible to the

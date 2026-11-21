@@ -234,6 +234,8 @@ static unsigned sMarioActionSoundCalls;
 static struct MarioState *sLastMarioActionSoundMario;
 static u32 sLastMarioActionSoundBits;
 static u32 sLastMarioActionWaveParticle;
+static unsigned sMarioFlagSoundCalls;
+static u32 sLastMarioFlagSoundBits;
 static unsigned sCourseClearCalls;
 static unsigned sObjScaleCalls;
 static struct Object *sLastObjScaleObject;
@@ -836,6 +838,21 @@ void play_sound(s32 sound_bits, f32 *position) {
     }
 }
 
+void play_sound_if_no_flag(struct MarioState *m, u32 sound_bits, u32 flags) {
+    if (m && !(m->flags & flags)) {
+        ++sMarioFlagSoundCalls;
+        sLastMarioFlagSoundBits = sound_bits;
+        play_sound(sound_bits, m->marioObj->header.gfx.cameraToObject);
+        m->flags |= flags;
+    }
+}
+void play_mario_jump_sound(struct MarioState *m) {
+    if (m && !(m->flags & MARIO_MARIO_SOUND_PLAYED)) {
+        play_sound(SOUND_MARIO_YAH_WAH_HOO, m->marioObj->header.gfx.cameraToObject);
+        m->flags |= MARIO_MARIO_SOUND_PLAYED;
+    }
+}
+
 static void reset_game_state(void) {
     for (size_t i = 0; i < sizeof(gSineTable) / sizeof(gSineTable[0]); ++i)
         gSineTable[i] = sinf((f32)i * (acosf(-1.0f) / 2048.0f));
@@ -876,6 +893,8 @@ static void reset_game_state(void) {
     sLastWaterLevelZ = 0;
     sMarioCharacterSoundCalls = 0;
     sLastMarioCharacterSoundBits = 0;
+    sMarioFlagSoundCalls = 0;
+    sLastMarioFlagSoundBits = 0;
     memset(&sMarioObject, 0, sizeof(sMarioObject));
     memset(&sCamera, 0, sizeof(sCamera));
     memset(&sArea, 0, sizeof(sArea));
@@ -1159,6 +1178,16 @@ int main(int argc, char **argv) {
         if (!mod_runtime_mod_enabled(0)) {
             mod_runtime_shutdown();
             return 1;
+        }
+        if (!possession && getenv("MOD_TEST_DISPATCH_SET_ACTION")) {
+            gMarioState->action = ACT_JUMP;
+            mod_runtime_after_set_action(gMarioState);
+            assert(sMarioFlagSoundCalls == 1);
+            assert(sLastMarioFlagSoundBits == 38u); /* CoopDX CHAR_SOUND_TWIRL_BOUNCE */
+            assert(sLastSoundBits == SOUND_MARIO_TWIRL_BOUNCE);
+            assert(gMarioState->flags & MARIO_ACTION_SOUND_PLAYED);
+            assert(gMarioState->flags & MARIO_MARIO_SOUND_PLAYED);
+            printf("original mod HOOK_ON_SET_MARIO_ACTION: native action sound and mapped CHAR_SOUND playback passed\n");
         }
         if (getenv("MOD_TEST_EXPECT_OMM_MODELS")) {
             for (int slot = 0xE6; slot <= 0xEB; ++slot) {

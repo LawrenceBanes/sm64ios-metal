@@ -72,6 +72,24 @@ mkdir -p "$BUILD/real-mod"
 "$BUILD/mod_runtime_test" --real-zip "$BUILD/real-mod" \
   "$ROOT/tests/mods/real/sm64coop-achievements-2.1.0.zip"
 
+# Exercise a CoopDX-style Mario action callback through the production ZIP
+# importer and Lua runtime. The source fixture mirrors the original
+# play_mario_sound(m, CHAR_SOUND_*, CHAR_SOUND_*) signature without packaging
+# or modifying any community archive.
+python3 - "$BUILD/mario-sound-fixture.zip" "$BUILD/fixtures/external_mario_sound/main.lua" <<'PY'
+import sys, zipfile
+archive, script = sys.argv[1:]
+with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    z.write(script, "main.lua")
+PY
+mkdir -p "$BUILD/mario-sound-install"
+(
+  unset MOD_TEST_EXPECT_OMM_MODELS MOD_TEST_OMM_EXTRA_MODELS
+  unset MOD_TEST_OMM_ANIMATION MOD_TEST_OMM_ACTIONS MOD_TEST_REQUIRE_TEXTURE_HUD
+  MOD_TEST_DISPATCH_SET_ACTION=1 "$BUILD/mod_runtime_test" --external-zip \
+    "$BUILD/mario-sound-install" "$BUILD/mario-sound-fixture.zip"
+)
+
 # Point this at a private, already-extracted CoopDX mod root to inspect its
 # original startup scripts without adding third-party package files to tests/.
 if [ -n "${MOD_EXTERNAL_ROOT:-}" ]; then
