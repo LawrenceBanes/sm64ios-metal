@@ -35,12 +35,23 @@ kernel void shader64_compute(texture2d<float, access::read> image [[texture(0)]]
     float4 clip = float4(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0,
                          depth * 2.0 - 1.0, 1.0);
     float4 view = inverseProjection * clip;
-    float distance = length(view.xyz / max(abs(view.w), 0.0001));
-    float3 normal = normalize(sceneNormals.sample(normalSampler, uv).xyz * 2.0 - 1.0);
-    float3 worldNormal = normalize((inverseView * float4(normal, 0.0)).xyz);
-    float4 viewPosition = view / max(abs(view.w), 0.0001);
+    /* Preserve the homogeneous sign used by the native inverse-projection
+     * reconstruction. A negative w must not mirror the reconstructed point. */
+    float viewW = abs(view.w) > 0.0001 ? view.w : (view.w < 0.0 ? -0.0001 : 0.0001);
+    float distance = length(view.xyz / viewW);
+    float3 encodedNormal = sceneNormals.sample(normalSampler, uv).xyz * 2.0 - 1.0;
+    float normalLength2 = dot(encodedNormal, encodedNormal);
+    float3 normal = isfinite(normalLength2) && normalLength2 > 1.0e-8
+        ? encodedNormal * rsqrt(normalLength2) : float3(0.0, 1.0, 0.0);
+    float3 worldNormalRaw = (inverseView * float4(normal, 0.0)).xyz;
+    float worldNormalLength2 = dot(worldNormalRaw, worldNormalRaw);
+    float3 worldNormal = isfinite(worldNormalLength2) && worldNormalLength2 > 1.0e-8
+        ? worldNormalRaw * rsqrt(worldNormalLength2) : float3(0.0, 1.0, 0.0);
+    float4 viewPosition = view / viewW;
     float4 worldHomogeneous = inverseView * viewPosition;
-    float3 worldPosition = worldHomogeneous.xyz / max(abs(worldHomogeneous.w), 0.0001);
+    float worldW = abs(worldHomogeneous.w) > 0.0001 ? worldHomogeneous.w
+        : (worldHomogeneous.w < 0.0 ? -0.0001 : 0.0001);
+    float3 worldPosition = worldHomogeneous.xyz / worldW;
     float sunLength = length(sunDirectionAndIntensity.xyz);
     float noL = sunLength > 1.0e-6 ? abs(dot(worldNormal, sunDirectionAndIntensity.xyz / sunLength)) : 1.0;
     float slopeBias = shadowRanges.w * (1.0 + 2.0 * (1.0 - noL));

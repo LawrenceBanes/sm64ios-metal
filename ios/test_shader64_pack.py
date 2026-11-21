@@ -300,6 +300,10 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("dot(shadowUpMin.xyz, worldPosition)", screen_source)
         self.assertIn("dot(shadowForwardMin.xyz, worldPosition)", screen_source)
         self.assertIn("shadowRanges.w * (1.0 + 2.0 * (1.0 - noL))", screen_source)
+        self.assertIn("float viewW = abs(view.w) > 0.0001 ? view.w", screen_source)
+        self.assertIn("float worldW = abs(worldHomogeneous.w) > 0.0001 ? worldHomogeneous.w", screen_source)
+        self.assertIn("isfinite(normalLength2) && normalLength2 > 1.0e-8", screen_source)
+        self.assertIn("isfinite(worldNormalLength2) && worldNormalLength2 > 1.0e-8", screen_source)
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
