@@ -4,9 +4,9 @@
 
 - Branch: `mission-81-shader64-rendergraph`
 - Base: `ae34240a53ba77eefe28676e9eb6a7f741e24aaf` (`mission-79-shader64`)
-- Latest pushed checkpoint: `d0ce486b` (position-derived directional material lighting and generated-MSL validation fix passed Apple workflow `44834002721`). Current working increment combines those material inputs with texture and depth/shadow graph resources in LumenSurface64; physical GPU output remains unverified.
+- Latest rendering checkpoint: `536dbdc938b3dcfc3c379fb2dfeb910522a280f6` on `mission-81-shader64-rendergraph`. The cohesive GeometryNormal64/LumenSurface64 implementation passed Xcode 27 iPhoneOS compilation and produced private unsigned IPA workflow `44843024329`; shader GPU output remains unverified.
 - Status: first API 2 fullscreen DAG vertical slice committed, Apple-compiled, and packaged as a private unsigned device-test IPA; larger Iris-class stages remain incomplete.
-- Physical-device output: not verified.
+- Physical-device output: not verified. The IPA is a device-test candidate, not evidence of pixels or performance.
 
 ## Implemented in current branch
 
@@ -191,4 +191,5 @@ Mission 81 is **PARTIAL**. API 1 preservation and host validation are necessary 
 
 - GeometryNormal64 now exposes separate direct-light and ambient controls. It derives flat view-space face normals from `dfdx`/`dfdy`, uses an absolute normal/sun dot for winding-independent two-sided diffuse, and safely handles invalid positions, zero/invalid sun, and degenerate derivatives. It does not claim smooth source normals.
 - Added LumenSurface64 as one cohesive pack rather than a set of new isolated examples. Its Fast3D material shader combines source base color/UVs, a bounded user-installed texture, view-space vertex positions, derivative face normals, and the engine-configured view-space sun. Its compute pass consumes depth, depth-derived normals, inverse projection/view, directional-light data, and the existing native shadow map; it uses the renderer's world-space shadow basis, a small PCF filter, and slope-scaled bias. The pack remains opt-in and inherits current resource/target budgets and missing-resource fallback behavior.
-- Added production-importer, combined ABI, graph-resource, coordinate-flow, and pack documentation coverage. `python3 ios/test_shader64_pack.py` (32 tests), `CC=clang tests/run_linux_checks.sh`, `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, Apple script syntax, and `git diff --check` pass. Targeted ASan/UBSan shader-codegen and scene-capture runs pass. Apple MSL/backend validation and the private IPA/reference ZIP are pending for this increment.
+- Added production-importer, combined ABI, graph-resource, coordinate-flow, and pack documentation coverage. `python3 ios/test_shader64_pack.py` (32 tests), `CC=clang tests/run_linux_checks.sh`, `tests/run_metal_shader_codegen_test.sh`, `tests/check_metal_project_wiring.sh`, Apple script syntax, and `git diff --check` pass. Targeted ASan/UBSan shader-codegen and scene-capture runs pass. Apple workflow [44843024329](https://github.com/LawrenceBanes/sm64ios-metal/actions/runs/44843024329) passed Linux checks, Xcode 27 Metal/MSL validation, full iPhoneOS arm64 app compilation, and unsigned IPA packaging for exact source commit `536dbdc938b3dcfc3c379fb2dfeb910522a280f6`.
+- Private draft release: [unsigned IPA and LumenSurface64 reference pack](https://github.com/LawrenceBanes/sm64ios-private-builds/releases/tag/untagged-9f31c658d29619f67c71). IPA SHA-256: `6e831893c81567bfea1ff84bb51cdcedfca5407fe95c78b463f1dd549977fb7b`; reference ZIP SHA-256: `37a79072747c880f90c062714f6fbbd99d60d6f76fc4c86aa9b2d4e2c218382d`. Physical rendering, visual correctness, and performance are pending iPhone testing.
