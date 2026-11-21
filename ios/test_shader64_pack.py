@@ -320,45 +320,74 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("magnitude < 1.0e-6", source)
         self.assertIn("if (!positionValid) return baseColor", source)
 
-        def camera_facing_normal(a, b, c):
-            dx = [b[i] - a[i] for i in range(3)]
-            dy = [c[i] - a[i] for i in range(3)]
-            n = [dx[1] * dy[2] - dx[2] * dy[1],
-                 dx[2] * dy[0] - dx[0] * dy[2],
-                 dx[0] * dy[1] - dx[1] * dy[0]]
-            length = math.sqrt(sum(v * v for v in n))
+        def dot(a, b):
+            return sum(a[i] * b[i] for i in range(3))
+
+        def cross(a, b):
+            return [a[1] * b[2] - a[2] * b[1],
+                    a[2] * b[0] - a[0] * b[2],
+                    a[0] * b[1] - a[1] * b[0]]
+
+        def plane_hit(triangle, screen_xy):
+            a, b, c = triangle
+            plane_n = cross([b[i] - a[i] for i in range(3)],
+                            [c[i] - a[i] for i in range(3)])
+            ray = [screen_xy[0], -screen_xy[1], -1.0]  # Metal viewport y points down.
+            denominator = dot(plane_n, ray)
+            if abs(denominator) < 1.0e-8:
+                return None
+            distance = dot(plane_n, a) / denominator
+            if distance <= 0.0:
+                return None
+            return [distance * value for value in ray]
+
+        def derivative_normal(triangle):
+            # Approximate Metal dfdx/dfdy by neighboring screen samples of the
+            # perspective-projected view-space plane at the projected centroid.
+            projected = [(p[0] / -p[2], -p[1] / -p[2]) for p in triangle]
+            center = [sum(p[axis] for p in projected) / 3.0 for axis in range(2)]
+            epsilon = 1.0e-4
+            p = plane_hit(triangle, center)
+            px = plane_hit(triangle, [center[0] + epsilon, center[1]])
+            py = plane_hit(triangle, [center[0], center[1] + epsilon])
+            if p is None or px is None or py is None:
+                return None
+            dx = [(px[i] - p[i]) / epsilon for i in range(3)]
+            dy = [(py[i] - p[i]) / epsilon for i in range(3)]
+            n = cross(dx, dy)
+            length = math.sqrt(dot(n, n))
             if length < 1.0e-6:
                 return None
             n = [v / length for v in n]
-            center = [(a[i] + b[i] + c[i]) / 3.0 for i in range(3)]
-            to_camera = [-v for v in center]
+            to_camera = [-v for v in p]
             camera_length = math.sqrt(sum(v * v for v in to_camera))
             if camera_length < 1.0e-6:
                 return None
             to_camera = [v / camera_length for v in to_camera]
-            if sum(n[i] * to_camera[i] for i in range(3)) < 0.0:
+            if dot(n, to_camera) < 0.0:
                 n = [-v for v in n]
             return n
 
-        # Representative view-space floor, wall, and inclined/sloped faces.
+        # Representative view-space floor, wall, and inclined/sloped faces,
+        # all in front of the camera and sampled through perspective projection.
         faces = [
-            ((-300.0, -80.0, -500.0), (300.0, -80.0, -500.0), (-300.0, -80.0, 200.0)),
-            ((40.0, -100.0, -350.0), (40.0, 220.0, -350.0), (40.0, -100.0, 100.0)),
-            ((-120.0, 0.0, -420.0), (180.0, 70.0, -390.0), (-90.0, 240.0, -100.0)),
+            ((-2.0, -1.5, -4.0), (2.0, -1.5, -4.0), (-2.0, -1.5, -10.0)),
+            ((-1.5, -2.0, -4.0), (-1.5, 2.0, -4.0), (-1.5, -2.0, -10.0)),
+            ((-2.0, -1.0, -4.0), (2.0, -0.5, -6.0), (-1.0, 2.0, -9.0)),
         ]
         sun = [0.31, -0.84, 0.44]
         sun_len = math.sqrt(sum(v * v for v in sun))
         sun = [v / sun_len for v in sun]
         for a, b, c in faces:
-            forward = camera_facing_normal(a, b, c)
-            reverse = camera_facing_normal(a, c, b)
+            forward = derivative_normal((a, b, c))
+            reverse = derivative_normal((a, c, b))
             self.assertIsNotNone(forward)
             self.assertIsNotNone(reverse)
-            self.assertAlmostEqual(sum(forward[i] * reverse[i] for i in range(3)), 1.0, places=6)
-            lit = max(sum(forward[i] * sun[i] for i in range(3)), 0.0)
-            lit_reversed = max(sum(reverse[i] * sun[i] for i in range(3)), 0.0)
+            self.assertAlmostEqual(dot(forward, reverse), 1.0, places=5)
+            lit = max(dot(forward, sun), 0.0)
+            lit_reversed = max(dot(reverse, sun), 0.0)
             self.assertAlmostEqual(lit, lit_reversed, places=6)
-        self.assertIsNone(camera_facing_normal((0, 0, 0), (1, 1, 1), (2, 2, 2)))
+        self.assertIsNone(derivative_normal(((0, 0, -2), (1, 1, -2), (2, 2, -2))))
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
