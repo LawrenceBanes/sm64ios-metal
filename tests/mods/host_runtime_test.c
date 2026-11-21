@@ -1179,6 +1179,25 @@ int main(int argc, char **argv) {
             mod_runtime_shutdown();
             return 1;
         }
+        if (getenv("MOD_TEST_DISPATCH_MP3_STREAM")) {
+            int16_t pcm[4096] = {0};
+            mod_audio_mix(pcm, 2048, 0, 1);
+            bool heard = false;
+            for (size_t i = 0; i < 4096; ++i) heard |= pcm[i] != 0;
+            assert(heard); /* Stream voices use the native music-volume channel. */
+            assert(mod_runtime_set_enabled(0, false));
+            memset(pcm, 0, sizeof(pcm));
+            mod_audio_mix(pcm, 2048, 1, 1);
+            for (size_t i = 0; i < 4096; ++i) assert(pcm[i] == 0);
+            assert(mod_runtime_set_enabled(0, true));
+            memset(pcm, 0, sizeof(pcm));
+            mod_audio_mix(pcm, 2048, 0, 1);
+            heard = false;
+            for (size_t i = 0; i < 4096; ++i) heard |= pcm[i] != 0;
+            assert(heard);
+            assert(mod_runtime_set_enabled(0, false));
+            printf("Lua MP3 stream: playback, music gain, stop, disable cleanup, and re-enable passed\n");
+        }
         if (!possession && getenv("MOD_TEST_DISPATCH_SET_ACTION")) {
             gMarioState->action = ACT_JUMP;
             mod_runtime_after_set_action(gMarioState);
@@ -1766,7 +1785,7 @@ int main(int argc, char **argv) {
            gModHudTestColor[2] == 255 && gModHudTestColor[3] == 255);
     assert(sLastSoundBits == SOUND_MENU_PINCH_MARIO_FACE); /* Upstream popup notification sound. */
     int16_t pcm[256] = {0};
-    mod_audio_mix(pcm, 128, 1);
+    mod_audio_mix(pcm, 128, 1, 1);
     bool heard = false;
     for (size_t i = 0; i < 256; i += 2) {
         assert(pcm[i] == pcm[i + 1]);
@@ -1775,7 +1794,7 @@ int main(int argc, char **argv) {
     assert(heard);
     assert(mod_runtime_set_enabled(8, false));
     memset(pcm, 0, sizeof(pcm));
-    mod_audio_mix(pcm, 128, 1);
+    mod_audio_mix(pcm, 128, 1, 1);
     for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
     mod_runtime_hud_render();
     assert(gModHudTestRectCount == 0 && gModHudTestTextCount == 0); /* Unload clears owner popups. */
@@ -1786,7 +1805,7 @@ int main(int argc, char **argv) {
     assert(gModHudTestTextureCount == 1); /* Native texture handle is restored with its owning callback. */
 #endif
     assert(mod_runtime_menu_set_value(8, 0, 0));
-    mod_audio_mix(pcm, 128, 1);
+    mod_audio_mix(pcm, 128, 1, 1);
     for (size_t i = 0; i < 256; ++i) assert(pcm[i] == 0);
     assert(sSpawnedNativeObjectCount == 3);
     assert(sSpawnedNativeModels[0] == MODEL_GOOMBA && sSpawnedNativeModels[1] == MODEL_GOOMBA);

@@ -140,7 +140,9 @@ void produce_one_frame(void) {
         }
         //printf("Audio samples before submitting: %d\n", audio_api->buffered());
 
-        mod_audio_mix(audio_buffer, 2 * num_audio_samples, (f32)configSfxVolume / 127.0f * master_mod);
+        mod_audio_mix(audio_buffer, 2 * num_audio_samples,
+                      (f32)configSfxVolume / 127.0f * master_mod,
+                      (f32)configMusicVolume / 127.0f * master_mod);
         audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
         gfx_end_frame();
         if (frame <= 3 || frame == 30) gfx_ios_diag_log("gfx_end_frame returned frame=%llu audioSamples=%u", (unsigned long long)frame, num_audio_samples);

@@ -1,0 +1,6 @@
+local stream = audio_stream_load("tone.mp3")
+assert(stream ~= nil)
+audio_stream_play(stream, false, 1.0)
+audio_stream_set_looping(stream, true)
+audio_stream_stop(stream)
+audio_stream_play(stream, true, 0.75)

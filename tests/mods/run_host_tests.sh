@@ -3,7 +3,11 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 BUILD=$(mktemp -d)
-trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
+if [ "${MOD_TEST_KEEP_BUILD:-0}" = 1 ]; then
+  echo "host test build retained at: $BUILD"
+else
+  trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
+fi
 
 LUA_SRC="$ROOT/vendor/lua53/src"
 cp -R "$ROOT/tests/mods/fixtures" "$BUILD/fixtures"
@@ -65,13 +69,23 @@ with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
     z.write(lua_path, "fixture_1024/main.lua")
     z.writestr("fixture_1024/textures/fixture_1024.tex", tex)
 PY
+python3 - "$BUILD/mp3-stream-fixture.zip" \
+  "$ROOT/tests/mods/fixtures/audio_stream/main.lua" \
+  "$ROOT/tests/mods/fixtures/audio_stream/tone.mp3" <<'PY'
+import sys, zipfile
+archive_path, lua_path, mp3_path = sys.argv[1:]
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    z.write(lua_path, "mp3_stream_fixture/main.lua")
+    z.write(mp3_path, "mp3_stream_fixture/sound/tone.mp3")
+PY
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.
 ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-sections ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_HOST_TEST -DMOD_RUNTIME_REAL_ZIP \
   -DNON_MATCHING=1 -DAVOID_UB=1 \
   -I"$ROOT/include" -I"$ROOT/src" -I"$ROOT" -I"$LUA_SRC" \
   "$ROOT/tests/mods/host_runtime_test.c" \
-  "$ROOT/src/pc/mods/mod_runtime.c" "$ROOT/src/pc/mods/mod_audio.c" "$ROOT/src/pc/mods/mod_resource.c" \
+  "$ROOT/src/pc/mods/mod_runtime.c" "$ROOT/src/pc/mods/mod_audio.c" \
+  "$ROOT/src/pc/mods/mod_audio_mp3.c" "$ROOT/src/pc/mods/mod_resource.c" \
   "$ROOT/src/pc/mods/dynos_actor.c" "$ROOT/src/pc/mods/dynos_actor_native.c" \
   "$ROOT/src/engine/geo_layout.c" "$ROOT/src/engine/graph_node.c" \
   "$ROOT/src/engine/graph_node_manager.c" "$ROOT/src/game/rendering_graph_node.c" \
@@ -125,6 +139,12 @@ fi
 mkdir -p "$BUILD/dynos-texture-install"
 MOD_TEST_DISPATCH_DVD_TEXTURE=1 MOD_TEST_ASSERT_UPDATE_COUNT=1 "$BUILD/mod_runtime_test" --external-zip \
   "$BUILD/dynos-texture-install" "$BUILD/dynos-texture-fixture.zip"
+mkdir -p "$BUILD/mp3-stream-install"
+(
+  unset MOD_TEST_DISPATCH_DVD_TEXTURE MOD_TEST_ASSERT_UPDATE_COUNT
+  MOD_TEST_DISPATCH_MP3_STREAM=1 "$BUILD/mod_runtime_test" --external-zip \
+    "$BUILD/mp3-stream-install" "$BUILD/mp3-stream-fixture.zip"
+)
 if [ -n "${MOD_POSSESSION_ZIP:-}" ]; then
   mkdir -p "$BUILD/possession-zip"
   "$BUILD/mod_runtime_test" --possession-zip "$BUILD/possession-zip" "$MOD_POSSESSION_ZIP"

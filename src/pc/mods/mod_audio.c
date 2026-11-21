@@ -1,4 +1,5 @@
 #include "mod_audio.h"
+#include "mod_audio_mp3.h"
 #include "mod_resource.h"
 
 #include <math.h>
@@ -13,7 +14,7 @@
 enum {
     MAX_SAMPLES = 48, MAX_VOICES = 24, MAX_OWNER_SAMPLES = 16,
     MAX_ENCODED = 2 * 1024 * 1024, DECODER_MEMORY = 4 * 1024 * 1024,
-    MAX_PCM_BYTES = 8 * 1024 * 1024, MAX_OWNER_PCM_BYTES = 2 * 1024 * 1024,
+    MAX_PCM_BYTES = 8 * 1024 * 1024, MAX_OWNER_PCM_BYTES = 4 * 1024 * 1024,
     MAX_SECONDS = 15, OUTPUT_RATE = 32000,
 };
 
@@ -23,12 +24,15 @@ typedef struct {
     int16_t *pcm;
     unsigned frames, rate, channels;
     uint32_t id;
+    bool stream;
+    bool looping;
 } Sample;
 
 typedef struct {
     const Sample *sample;
     uint64_t position; /* Source position measured in 1/32000 of a sample frame. */
     float left, right;
+    bool looping;
 } Voice;
 
 static Sample sSamples[MAX_SAMPLES];
@@ -82,10 +86,22 @@ static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size
     return ok;
 }
 
-uint32_t mod_audio_load(const void *owner, const char *root, const char *path, const char **error) {
+/* Decode bounded MP3 frames into the same native mixer representation as Ogg
+ * samples. This is intentionally not a streaming decoder: encoded size,
+ * decoded duration, per-mod PCM, and global PCM budgets remain bounded. */
+static bool decode_mp3(Sample *sample, const uint8_t *data, size_t size, size_t budget) {
+    return mod_audio_decode_mp3(data, size, budget, MAX_SECONDS, &sample->pcm,
+                                &sample->frames, &sample->rate, &sample->channels);
+}
+
+static uint32_t mod_audio_load_internal(const void *owner, const char *root, const char *path,
+                                        bool stream, const char **error) {
     size_t length = strlen(path);
-    if (length < 5 || length > 240 || strcasecmp(path + length - 4, ".ogg")) {
-        *error = "only mod-local Ogg Vorbis samples (.ogg) are supported";
+    bool is_ogg = length >= 4 && !strcasecmp(path + length - 4, ".ogg");
+    bool is_mp3 = length >= 4 && !strcasecmp(path + length - 4, ".mp3");
+    if (length > 240 || (stream ? (!is_ogg && !is_mp3) : !is_ogg)) {
+        *error = stream ? "only mod-local Ogg Vorbis or MP3 streams (.ogg/.mp3) are supported"
+                        : "only mod-local Ogg Vorbis samples (.ogg) are supported";
         return 0;
     }
     Sample *slot = NULL;
@@ -99,7 +115,7 @@ uint32_t mod_audio_load(const void *owner, const char *root, const char *path, c
         size_t bytes = sample_bytes(sample);
         total += bytes;
         if (sample->owner == owner) {
-            if (!strcmp(sample->path, path)) return sample->id;
+            if (!strcmp(sample->path, path) && sample->stream == stream) return sample->id;
             owned += bytes;
             ++owner_count;
         }
@@ -116,17 +132,28 @@ uint32_t mod_audio_load(const void *owner, const char *root, const char *path, c
     }
     size_t budget = MAX_OWNER_PCM_BYTES - owned;
     if (budget > MAX_PCM_BYTES - total) budget = MAX_PCM_BYTES - total;
-    bool decoded = decode_sample(slot, data, size, budget);
+    bool decoded = is_mp3 ? decode_mp3(slot, data, size, budget)
+                          : decode_sample(slot, data, size, budget);
     free(data);
     if (!decoded) {
-        *error = "invalid Ogg Vorbis sample or decoded channel, rate, duration or memory limit exceeded";
+        *error = is_mp3 ? "invalid MP3 stream or decoded channel, rate, duration or memory limit exceeded"
+                        : "invalid Ogg Vorbis sample or decoded channel, rate, duration or memory limit exceeded";
         return 0;
     }
     memcpy(slot->path, path, length + 1);
     slot->owner = owner;
     slot->id = sNextId++;
+    slot->stream = stream;
     if (!sNextId) sNextId = 1;
     return slot->id;
+}
+
+uint32_t mod_audio_load(const void *owner, const char *root, const char *path, const char **error) {
+    return mod_audio_load_internal(owner, root, path, false, error);
+}
+
+uint32_t mod_audio_load_stream(const void *owner, const char *root, const char *path, const char **error) {
+    return mod_audio_load_internal(owner, root, path, true, error);
 }
 
 bool mod_audio_play(const void *owner, uint32_t id, float volume, float pan, const char **error) {
@@ -143,6 +170,45 @@ bool mod_audio_play(const void *owner, uint32_t id, float volume, float pan, con
     }
     *error = "mod sample voice capacity exhausted";
     return false;
+}
+
+bool mod_audio_stream_play(const void *owner, uint32_t id, bool restart, float volume, const char **error) {
+    Sample *sample = find_sample(owner, id);
+    if (!sample || !sample->stream) {
+        *error = "stream is stale or belongs to another mod";
+        return false;
+    }
+    for (size_t i = 0; i < MAX_VOICES; ++i) {
+        if (sVoices[i].sample != sample) continue;
+        /* CoopDX's second argument is restart, independent of loop mode. */
+        if (restart) sVoices[i].position = 0;
+        sVoices[i].left = sVoices[i].right = volume;
+        return true;
+    }
+    for (size_t i = 0; i < MAX_VOICES; ++i) {
+        if (sVoices[i].sample) continue;
+        sVoices[i] = (Voice){ sample, 0, volume, volume, sample->looping };
+        return true;
+    }
+    *error = "mod audio voice capacity exhausted";
+    return false;
+}
+
+bool mod_audio_stream_set_looping(const void *owner, uint32_t id, bool looping) {
+    Sample *sample = find_sample(owner, id);
+    if (!sample || !sample->stream) return false;
+    sample->looping = looping;
+    for (size_t i = 0; i < MAX_VOICES; ++i)
+        if (sVoices[i].sample == sample) sVoices[i].looping = looping;
+    return true;
+}
+
+bool mod_audio_stream_stop(const void *owner, uint32_t id) {
+    Sample *sample = find_sample(owner, id);
+    if (!sample || !sample->stream) return false;
+    for (size_t i = 0; i < MAX_VOICES; ++i)
+        if (sVoices[i].sample == sample) sVoices[i] = (Voice){0};
+    return true;
 }
 
 bool mod_audio_stop(const void *owner, uint32_t id) {
@@ -173,10 +239,7 @@ static int16_t saturated_sample(float value) {
     return (int16_t)value;
 }
 
-void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain) {
-    bool playing = false;
-    for (size_t i = 0; i < MAX_VOICES; ++i) playing |= sVoices[i].sample != NULL;
-    if (!playing) return;
+void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain, float music_gain) {
     for (size_t f = 0; f < frames; ++f) {
         float left = 0, right = 0;
         for (size_t i = 0; i < MAX_VOICES; ++i) {
@@ -189,12 +252,16 @@ void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain) {
             const int16_t *a = sample->pcm + frame * sample->channels;
             const int16_t *b = sample->pcm + next * sample->channels;
             unsigned right_channel = sample->channels - 1;
-            left += voice->left * (a[0] + (b[0] - a[0]) * t);
-            right += voice->right * (a[right_channel] + (b[right_channel] - a[right_channel]) * t);
+            float gain = sample->stream ? music_gain : sfx_gain;
+            left += gain * voice->left * (a[0] + (b[0] - a[0]) * t);
+            right += gain * voice->right * (a[right_channel] + (b[right_channel] - a[right_channel]) * t);
             voice->position += sample->rate;
-            if (voice->position >= (uint64_t)sample->frames * OUTPUT_RATE) voice->sample = NULL;
+            if (voice->position >= (uint64_t)sample->frames * OUTPUT_RATE) {
+                if (voice->looping) voice->position = 0;
+                else voice->sample = NULL;
+            }
         }
-        stereo[2 * f] = saturated_sample(stereo[2 * f] + left * sfx_gain);
-        stereo[2 * f + 1] = saturated_sample(stereo[2 * f + 1] + right * sfx_gain);
+        stereo[2 * f] = saturated_sample(stereo[2 * f] + left);
+        stereo[2 * f + 1] = saturated_sample(stereo[2 * f + 1] + right);
     }
 }

@@ -87,11 +87,20 @@ reported omission behavior.
   argument shape but draws the current endpoint because this renderer does not
   expose display-list interpolation; it logs that limitation once per mod.
   Host execution is verified; Metal pixels and iPhone behavior are not.
-- **GTA Mission Passed** — the original CC0 package imports and decodes its
-  1024×256 HUD texture, but startup stops at `audio_stream_load` before hook
-  registration. Its MP3 stream API and `smlua_audio_utils_replace_sequence`
-  dependency are not yet implemented. This is a concrete runtime blocker, not
-  a successful mod execution.
+- **GTA Mission Passed** — the original CC0 package imports, decodes its
+  1024×256 HUD texture, and its two original MP3 resources now resolve from
+  their `sound/` folder when requested by basename. Startup progresses to
+  `smlua_audio_utils_replace_sequence` and stops there before hook
+  registration. MP3 stream playback/looping/stop is host-tested with a
+  generated audio fixture; the original mod's callbacks and intended
+  experience have not run. Custom `.m64` sequence replacement remains a
+  concrete engine blocker.
+- The new stream adapter decodes local MP3/Ogg resources into bounded PCM,
+  mixes them through the native audio path with the configured music gain, and
+  supports play, looping changes, stop, destroy, and per-mod unload cleanup.
+  It pre-decodes assets rather than maintaining an incremental streaming
+  decoder; pause, seek, frequency changes, and other stream controls remain
+  unsupported.
 - **SM64 Coop Achievements 2.1.0** — the original MIT ZIP passes production
   import, multi-file startup, event dispatch, persistence/menu checks, and
   disable/re-enable host tests. It requests `stars_1`, which is not currently

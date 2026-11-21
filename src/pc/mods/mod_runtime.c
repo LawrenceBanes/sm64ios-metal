@@ -501,6 +501,40 @@ static const char *relative_path(const Mod *mod, const char *fullpath) {
     return fullpath + n + 1;
 }
 
+static int compare_strings(const void *a, const void *b);
+
+/* CoopDX mods commonly reference an asset by basename while keeping it in a
+ * resource folder such as sound/. Resolve only a unique basename inside the
+ * owning mod; never search outside its sandbox or choose nondeterministically. */
+static bool mod_resolve_resource_path(Mod *mod, const char *requested, char output[241]) {
+    if (!mod || !safe_relative_path(requested)) return false;
+    if (strlen(requested) >= 241) return false;
+    char full[SYS_MAX_PATH];
+    int n = snprintf(full, sizeof(full), "%s/%s", mod->path, requested);
+    if (n > 0 && (size_t)n < sizeof(full) && fs_sys_file_exists(full)) {
+        memcpy(output, requested, strlen(requested) + 1);
+        return true;
+    }
+    if (strchr(requested, '/')) return false;
+    fs_pathlist_t paths = fs_sys_enumerate(mod->path, true);
+    if (!paths.paths) return false;
+    qsort(paths.paths, (size_t)paths.numpaths, sizeof(char *), compare_strings);
+    unsigned matches = 0;
+    for (int i = 0; i < paths.numpaths; ++i) {
+        const char *relative = relative_path(mod, paths.paths[i]);
+        if (!relative) continue;
+        const char *basename = strrchr(relative, '/');
+        basename = basename ? basename + 1 : relative;
+        if (strcmp(basename, requested)) continue;
+        if (strlen(relative) >= 241) { matches = 2; break; }
+        memcpy(output, relative, strlen(relative) + 1);
+        ++matches;
+        if (matches > 1) break;
+    }
+    fs_pathlist_free(&paths);
+    return matches == 1;
+}
+
 static int compare_strings(const void *a, const void *b) {
     const char *const *sa = a, *const *sb = b;
     return strcmp(*sa, *sb);
@@ -4858,8 +4892,15 @@ static int l_audio_sample_load(lua_State *L) {
     if (length > 240 || memchr(path, 0, length) || !safe_relative_path(path))
         return luaL_argerror(L, 1, "expected a mod-relative sample path of at most 240 bytes");
 
+    char resolved[241];
+    if (!mod_resolve_resource_path(sCurrentMod, path, resolved)) {
+        mod_logf("error", sCurrentMod->name,
+                 "audio_sample_load('%s'): resource path is missing or its basename is ambiguous", path);
+        lua_pushnil(L);
+        return 1;
+    }
     const char *error;
-    uint32_t id = mod_audio_load(sCurrentMod, sCurrentMod->path, path, &error);
+    uint32_t id = mod_audio_load(sCurrentMod, sCurrentMod->path, resolved, &error);
     if (!id) {
         mod_logf("error", sCurrentMod->name, "audio_sample_load('%s'): %s", path, error);
         lua_pushnil(L);
@@ -4927,6 +4968,68 @@ static int l_audio_sample_destroy(lua_State *L) {
     uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioSample");
     if (!mod_audio_destroy(sCurrentMod, *handle))
         return luaL_error(L, "audio_sample_destroy: sample is stale or belongs to another mod");
+    return 0;
+}
+
+static int l_audio_stream_load(lua_State *L) {
+    size_t length;
+    const char *path = luaL_checklstring(L, 1, &length);
+    if (!sCurrentMod) return luaL_error(L, "audio_stream_load requires an active mod");
+    if (length > 240 || memchr(path, 0, length) || !safe_relative_path(path))
+        return luaL_argerror(L, 1, "expected a mod-relative audio path of at most 240 bytes");
+    char resolved[241];
+    if (!mod_resolve_resource_path(sCurrentMod, path, resolved)) {
+        mod_logf("error", sCurrentMod->name,
+                 "audio_stream_load('%s'): resource path is missing or its basename is ambiguous", path);
+        lua_pushnil(L);
+        return 1;
+    }
+    const char *error;
+    uint32_t id = mod_audio_load_stream(sCurrentMod, sCurrentMod->path, resolved, &error);
+    if (!id) {
+        mod_logf("error", sCurrentMod->name, "audio_stream_load('%s'): %s", path, error);
+        lua_pushnil(L);
+        return 1;
+    }
+    mod_logf("info", sCurrentMod->name, "audio_stream_load('%s'): loaded bounded %s stream",
+             path, file_has_suffix(resolved, ".mp3") ? "MP3" : "Ogg Vorbis");
+    uint32_t *handle = lua_newuserdata(L, sizeof(*handle));
+    *handle = id;
+    luaL_getmetatable(L, "sm64.mod.AudioStream");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+static int l_audio_stream_play(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
+    bool restart = lua_toboolean(L, 2);
+    float volume = checked_lua_finite_float(L, 3, "audio_stream_play");
+    if (volume < 0 || volume > 4)
+        return luaL_argerror(L, 3, "audio stream volume must be in 0..4");
+    const char *error;
+    if (!mod_audio_stream_play(sCurrentMod, *handle, restart, volume, &error))
+        return luaL_error(L, "audio_stream_play: %s", error);
+    return 0;
+}
+
+static int l_audio_stream_set_looping(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
+    if (!mod_audio_stream_set_looping(sCurrentMod, *handle, lua_toboolean(L, 2)))
+        return luaL_error(L, "audio_stream_set_looping: stream is stale or belongs to another mod");
+    return 0;
+}
+
+static int l_audio_stream_stop(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
+    if (!mod_audio_stream_stop(sCurrentMod, *handle))
+        return luaL_error(L, "audio_stream_stop: stream is stale or belongs to another mod");
+    return 0;
+}
+
+static int l_audio_stream_destroy(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
+    if (!mod_audio_destroy(sCurrentMod, *handle))
+        return luaL_error(L, "audio_stream_destroy: stream is stale or belongs to another mod");
     return 0;
 }
 
@@ -6863,10 +6966,19 @@ static void register_api(void) {
     lua_pushliteral(sLua, "AudioSample");
     lua_setfield(sLua, -2, "__metatable");
     lua_pop(sLua, 1);
+    luaL_newmetatable(sLua, "sm64.mod.AudioStream");
+    lua_pushliteral(sLua, "AudioStream");
+    lua_setfield(sLua, -2, "__metatable");
+    lua_pop(sLua, 1);
     register_api_function("audio_sample_load", l_audio_sample_load);
     register_api_function("audio_sample_play", l_audio_sample_play);
     register_api_function("audio_sample_stop", l_audio_sample_stop);
     register_api_function("audio_sample_destroy", l_audio_sample_destroy);
+    register_api_function("audio_stream_load", l_audio_stream_load);
+    register_api_function("audio_stream_play", l_audio_stream_play);
+    register_api_function("audio_stream_set_looping", l_audio_stream_set_looping);
+    register_api_function("audio_stream_stop", l_audio_stream_stop);
+    register_api_function("audio_stream_destroy", l_audio_stream_destroy);
     register_api_function("play_sound", l_play_sound);
     register_api_function("play_mario_heavy_landing_sound", l_play_mario_heavy_landing_sound);
     register_api_function("play_mario_action_sound", l_play_mario_action_sound);
