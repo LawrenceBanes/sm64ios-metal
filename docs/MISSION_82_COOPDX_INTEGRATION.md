@@ -14,10 +14,26 @@ adapters remain the renderer boundary for supported DynOS resources.
 The Leo iOS fork is useful as a platform behavior reference (Documents access,
 touch/controller integration, and iOS packaging), but its app build selects
 SDL/OpenGL/GLES. Its rendering backend is incompatible with our Metal ownership
-and is not imported. Neither it nor the upstream repository has an explicit
-license declaration in the inspected repository metadata/tree. No external
-implementation code has been copied into this branch; source reuse remains
-subject to a separate licensing review.
+and is not imported. The latest inspected `LeoManrique/sm64coopdx-ios` main
+commit is `6bfcfede7a5c1af400daa269931a9ae13ed157ad` (2026-11-21). Its
+`platform_ios.m` exposes Documents and a UIKit document picker,
+but the picker is wired to ROM selection. The standalone `mod_import_file`
+implementation supports ZIP classification and persistent extraction, yet the
+inspected source has no route from that iOS picker to the mod importer. Its ZIP
+classification treats a ZIP containing Lua as a Lua mod and otherwise treats
+`.tex`/`.png`/`.bin` contents as a DynOS pack. The importer is a behavior
+reference; our production importer remains preferable for bounded extraction,
+transactional cleanup, and path validation.
+
+The iOS fork's DynOS path activates `.bin`, `.col`, `.tex`, `.lvl`, and `.bhv`
+resources through the regular CoopDX model/behavior systems. Its audio utility
+supports per-sequence `.m64` replacement and sequence allocation, which is a
+separate capability from ordinary decoded sample playback and is the next
+verified blocker for the California Gurls probe. Leo's port and upstream
+CoopDX report no repository license in the inspected GitHub metadata; no
+external implementation code has been copied. GitHub's repository metadata
+reports no SPDX license for either source repository. Reuse requires resolving
+code provenance and applicable licenses first.
 
 ## Upstream behavior represented here
 
