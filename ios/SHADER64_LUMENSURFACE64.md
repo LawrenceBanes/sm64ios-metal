@@ -22,3 +22,14 @@ The half-resolution compute pass uses the engine's single-sample depth and inver
 If depth, normals, camera matrices, or the native shadow map are unavailable, the runtime rejects this graph for that frame and uses its existing fallback path. These resources are not fabricated by the pack.
 
 The material input/output and shadow computation are covered by host source/contract checks and Apple MSL compile/link validation. Those checks do not prove GPU execution, shadow-space visual alignment, appearance, or performance. Physical iPhone comparison is still required.
+
+## iPhone inspection checklist
+
+1. In Graphics, open **SHADER64**, choose **Import ZIP Pack…**, and select the separately distributed `SHADER64-LumenSurface64-0.1.0.zip`.
+2. Start in a stock, UV-textured SM64 level. Compare Classic64 and Lumen Surface Lighting while Mario and the nearby terrain are both visible. The pack checker blend is applied to character class 3 only; world and object combiner colors are preserved.
+3. Open the pack's Configure screen. Vary Direct light, Ambient contribution, Mario texture blend, and World shadow strength individually. A change should be attributable to each parameter; return each to its default afterward.
+4. In Graphics settings, enable directional Sun and shadows and try another sun direction. Check Mario on the ground, a nearby wall/structure, and an unobstructed view to spot shadow-space flips or swimming.
+5. Repeat in Hyrule Field or OoT Market only if the corresponding WSC world assets are installed in the app. Compare elevated and ground-level views; watch for wrong-scale fog, incorrect shadow alignment, missing texture, or fallback to the native renderer.
+6. Switch back to Classic64 and verify the unmodified native appearance returns. Exercise a level transition and reopen the shader pack before reporting performance or resource-lifetime issues.
+
+The host derivative test checks the two-sided lighting algebra on representative view-space face orientations. It does not execute `dfdx`/`dfdy`; final normal orientation, image appearance, thermal cost, and frame rate require the physical-device comparison above.
