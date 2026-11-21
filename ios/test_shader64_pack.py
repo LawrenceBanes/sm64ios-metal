@@ -289,6 +289,8 @@ class ShaderPackTests(unittest.TestCase):
                             ("sceneDepth", "sceneNormals", "sceneLighting", "sceneShadows")))
         self.assertFalse(compute.get("packTextures", False))
         material_source = (pack / material["source"]).read_text()
+        self.assertIn("materialClass == 3u", material_source)
+        self.assertIn("float textureMix = (materialClass == 3u", material_source)
         self.assertIn("dfdx(viewPosition)", material_source)
         self.assertIn("dfdy(viewPosition)", material_source)
         self.assertIn("abs(dot(normal, sun / sunLength))", material_source)

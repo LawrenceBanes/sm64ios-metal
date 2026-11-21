@@ -12,7 +12,7 @@ Parameters are shared with the graph:
 | --- | --- | --- |
 | Direct light | 0–2 | Material diffuse gain |
 | Ambient contribution | 0–1 | Material ambient floor |
-| Pack texture blend | 0–1 | Mix the authored checker texture into Fast3D base color |
+| Mario texture blend | 0–1 | Mix the authored checker into character-class material only (class 3); world/object combiner colors are left untouched |
 | World shadow strength | 0–1 | Blend native shadow-map visibility into the composite |
 
 ## Render graph

@@ -25,7 +25,10 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     float3 texel = float3(1.0);
     if (materialTextureCount > 0u)
         texel = materialTexture0.sample(materialSampler0, fract(uv * 4.0)).rgb;
-    float textureMix = isfinite(params.z) ? clamp(params.z, 0.0, 1.0) : 0.0;
+    /* Keep imported world materials faithful while exercising the public
+     * character classification path on Mario's actual Fast3D material. */
+    float textureMix = (materialClass == 3u && isfinite(params.z))
+        ? clamp(params.z, 0.0, 1.0) : 0.0;
     float3 albedo = mix(baseColor.rgb, baseColor.rgb * texel, textureMix);
     if (!positionValid) return float4(albedo, baseColor.a);
 
