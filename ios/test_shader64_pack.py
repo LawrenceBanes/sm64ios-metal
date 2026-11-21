@@ -293,7 +293,8 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("float textureMix = (materialClass == 3u", material_source)
         self.assertIn("dfdx(viewPosition)", material_source)
         self.assertIn("dfdy(viewPosition)", material_source)
-        self.assertIn("abs(dot(normal, sun / sunLength))", material_source)
+        self.assertIn("dot(normal, sun / sunLength)", material_source)
+        self.assertIn("dot(normal, toCamera / cameraLength) < 0.0", material_source)
         self.assertIn("float ambient =", material_source)
         screen_source = (pack / compute["source"]).read_text()
         self.assertIn("inverseProjection * clip", screen_source)
@@ -314,18 +315,30 @@ class ShaderPackTests(unittest.TestCase):
     def test_derivative_face_lighting_is_reversed_winding_invariant(self):
         source = (ROOT / "ios/shaderpacks/GeometryNormal64/shaders/material.metal").read_text()
         self.assertIn("cross(dx, dy)", source)
-        self.assertIn("abs(dot(normal, sunDirectionView / sunLength))", source)
+        self.assertIn("dot(normal, sunDirectionView / sunLength)", source)
+        self.assertIn("dot(normal, toCamera / cameraLength) < 0.0", source)
         self.assertIn("magnitude < 1.0e-6", source)
         self.assertIn("if (!positionValid) return baseColor", source)
 
-        def face_normal(a, b, c):
+        def camera_facing_normal(a, b, c):
             dx = [b[i] - a[i] for i in range(3)]
             dy = [c[i] - a[i] for i in range(3)]
             n = [dx[1] * dy[2] - dx[2] * dy[1],
                  dx[2] * dy[0] - dx[0] * dy[2],
                  dx[0] * dy[1] - dx[1] * dy[0]]
             length = math.sqrt(sum(v * v for v in n))
-            return None if length < 1.0e-6 else [v / length for v in n]
+            if length < 1.0e-6:
+                return None
+            n = [v / length for v in n]
+            center = [(a[i] + b[i] + c[i]) / 3.0 for i in range(3)]
+            to_camera = [-v for v in center]
+            camera_length = math.sqrt(sum(v * v for v in to_camera))
+            if camera_length < 1.0e-6:
+                return None
+            to_camera = [v / camera_length for v in to_camera]
+            if sum(n[i] * to_camera[i] for i in range(3)) < 0.0:
+                n = [-v for v in n]
+            return n
 
         # Representative view-space floor, wall, and inclined/sloped faces.
         faces = [
@@ -337,15 +350,15 @@ class ShaderPackTests(unittest.TestCase):
         sun_len = math.sqrt(sum(v * v for v in sun))
         sun = [v / sun_len for v in sun]
         for a, b, c in faces:
-            forward = face_normal(a, b, c)
-            reverse = face_normal(a, c, b)
+            forward = camera_facing_normal(a, b, c)
+            reverse = camera_facing_normal(a, c, b)
             self.assertIsNotNone(forward)
             self.assertIsNotNone(reverse)
-            self.assertAlmostEqual(sum(forward[i] * reverse[i] for i in range(3)), -1.0, places=6)
-            lit = abs(sum(forward[i] * sun[i] for i in range(3)))
-            lit_reversed = abs(sum(reverse[i] * sun[i] for i in range(3)))
+            self.assertAlmostEqual(sum(forward[i] * reverse[i] for i in range(3)), 1.0, places=6)
+            lit = max(sum(forward[i] * sun[i] for i in range(3)), 0.0)
+            lit_reversed = max(sum(reverse[i] * sun[i] for i in range(3)), 0.0)
             self.assertAlmostEqual(lit, lit_reversed, places=6)
-        self.assertIsNone(face_normal((0, 0, 0), (1, 1, 1), (2, 2, 2)))
+        self.assertIsNone(camera_facing_normal((0, 0, 0), (1, 1, 1), (2, 2, 2)))
 
     def test_scene_depth_pass_contract_and_wrapper(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'

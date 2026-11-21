@@ -3,7 +3,7 @@
   "id": "LumenSurface64",
   "name": "Lumen Surface Lighting",
   "author": "SHITBOX LABZ INC.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "shaderApiVersion": 2,
   "stage": "render_graph",
   "textures": [

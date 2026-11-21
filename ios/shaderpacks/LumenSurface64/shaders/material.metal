@@ -3,8 +3,8 @@ using namespace metal;
 
 /* One cohesive material path: actual Fast3D UVs and the imported pack texture,
  * view-space positions, derivative face normals, and the renderer's configured
- * view-space sun. The lighting is intentionally two-sided to tolerate reversed
- * projected winding in legacy display lists. */
+ * view-space sun. Faces are oriented toward the camera before diffuse shading,
+ * tolerating reversed projected winding in legacy display lists. */
 float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
                          uint materialClass, float3 viewPosition, bool positionValid,
                          float3 sunDirectionView, float sunIntensity,
@@ -39,14 +39,19 @@ float4 shader64_material(float4 baseColor, float2 uv, float4 screenPosition,
     if (!isfinite(faceLength) || faceLength < 1.0e-6)
         return float4(albedo, baseColor.a);
 
+    float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 0.22;
     float3 sun = sunDirectionView;
     float sunLength = length(sun);
     if (!isfinite(sunLength) || sunLength < 1.0e-6 || !isfinite(sunIntensity))
-        return float4(albedo * clamp(params.y, 0.0, 1.0), baseColor.a);
+        return float4(albedo * ambient, baseColor.a);
     float3 normal = face / faceLength;
-    /* abs(dot) makes lighting invariant to derivative orientation reversal. */
-    float diffuse = abs(dot(normal, sun / sunLength));
-    float ambient = isfinite(params.y) ? clamp(params.y, 0.0, 1.0) : 0.22;
+    float3 toCamera = -viewPosition;
+    float cameraLength = length(toCamera);
+    if (!isfinite(cameraLength) || cameraLength < 1.0e-6)
+        return float4(albedo * ambient, baseColor.a);
+    if (dot(normal, toCamera / cameraLength) < 0.0) normal = -normal;
+    /* View-facing orientation makes the one-sided diffuse stable for reversed winding. */
+    float diffuse = max(dot(normal, sun / sunLength), 0.0);
     float directStrength = isfinite(params.x) ? clamp(params.x, 0.0, 2.0) : 1.0;
     float illumination = clamp(ambient + diffuse * max(sunIntensity, 0.0) * directStrength,
                                0.0, 2.0);
