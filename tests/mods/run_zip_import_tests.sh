@@ -28,6 +28,17 @@ with ZipFile(root / "traversal.zip", "w", ZIP_DEFLATED) as archive:
 with ZipFile(root / "case_collision.zip", "w", ZIP_DEFLATED) as archive:
     archive.writestr("CasePack/main.lua", "return true")
     archive.writestr("CasePack/MAIN.LUA", "return false")
+
+with ZipFile(root / "mixed_mod.zip", "w", ZIP_DEFLATED) as archive:
+    archive.writestr("Bowser Moveset/main.lua", "-- name: Bowser Moveset\nreturn true\n")
+    archive.writestr("Bowser Moveset/actions.lua", "return {}\n")
+    archive.writestr("Bowser Moveset/actors/bowser.bin", b"actor fixture")
+    archive.writestr("Template Character/example.lua", "print('not part of the mod')\n")
+    archive.writestr("Bowser Moveset/.vs/workspace.db", b"sample metadata")
+
+with ZipFile(root / "multiple_mods.zip", "w", ZIP_DEFLATED) as archive:
+    archive.writestr("One/main.lua", "return true\n")
+    archive.writestr("Two/main.lua", "return true\n")
 PY
 
 cc=${CC:-cc}

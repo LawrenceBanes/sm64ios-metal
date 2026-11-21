@@ -1,4 +1,11 @@
+-- name: Core Fixture Display Name
+-- category: test-suite
+-- description: Validates CoopDX package metadata behavior.
+-- incompatible: metadata-shared-token
+
 TEST_ACTION = allocate_mario_action(ACT_FLAG_AIR | ACT_GROUP_AIRBORNE)
+assert(MARIO_ANIM_RUNNING == 0x72)
+assert(MARIO_ANIM_CROUCHING == 0x98)
 assert((TEST_ACTION & ACT_GROUP_MASK) == ACT_GROUP_AIRBORNE)
 assert((TEST_ACTION & ACT_FLAG_CUSTOM_ACTION) ~= 0)
 assert(gMarioState.character.type == CT_MARIO)
@@ -18,6 +25,18 @@ assert(not pcall(function() bodyState.modelState = 32768 end))
 assert(not pcall(function() bodyState.headAngle.x = 1 end))
 assert(not pcall(function() return bodyState.mirrorMario end))
 assert(not pcall(function() return bodyState.allowPartRotation end))
+assert(type(gActiveMods) == "table")
+local foundMetadata = false
+for _, active in ipairs(gActiveMods) do
+    if active.relativePath == "00_core" then
+        assert(active.name == "Core Fixture Display Name")
+        assert(active.category == "test-suite")
+        assert(active.description == "Validates CoopDX package metadata behavior.")
+        assert(active.incompatible == "metadata-shared-token")
+        foundMetadata = true
+    end
+end
+assert(foundMetadata)
 local cameraState = gMarioState.statusForCamera
 assert(cameraState.cameraEvent == 0 or cameraState.cameraEvent == 31)
 cameraState.cameraEvent = 31

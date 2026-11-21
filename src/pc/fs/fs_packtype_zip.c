@@ -764,9 +764,68 @@ bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const ch
     if (contains_lua) *contains_lua = has_lua;
     if (contains_dynos) *contains_dynos = has_dynos;
 
+    /* Some community archives contain one playable mod beside editor/sample
+     * folders. Prefer the single unambiguous folder with main.lua and keep
+     * unrelated sibling content out of the installed package. Multiple
+     * candidates are rejected instead of silently choosing one. */
+    char selected_mod_root[SYS_MAX_PATH] = {0};
+    size_t selected_mod_root_len = 0;
+    bool has_selected_mod_root = false;
+    bool multiple_mod_roots = false;
+    bool has_archive_root_main = false;
+    static const char main_suffix[] = "/main.lua";
+    for (size_t i = 0; i < ctx.count; ++i) {
+        size_t name_len = strlen(ctx.names[i]);
+        size_t suffix_len = sizeof(main_suffix) - 1;
+        if (!strcmp(ctx.names[i], "main.lua")) {
+            has_archive_root_main = true;
+            continue;
+        }
+        if (name_len <= suffix_len || strcmp(ctx.names[i] + name_len - suffix_len, main_suffix)) continue;
+        size_t root_len = name_len - suffix_len;
+        if (root_len >= sizeof(selected_mod_root)) {
+            if (error && error_size) snprintf(error, error_size, "mod root path exceeds the supported length");
+            goto done;
+        }
+        if (!has_selected_mod_root) {
+            memcpy(selected_mod_root, ctx.names[i], root_len);
+            selected_mod_root[root_len] = '\0';
+            selected_mod_root_len = root_len;
+            has_selected_mod_root = true;
+        } else if (root_len != selected_mod_root_len ||
+                   memcmp(selected_mod_root, ctx.names[i], root_len)) {
+            multiple_mod_roots = true;
+            break;
+        }
+    }
+    if (has_archive_root_main && has_selected_mod_root) multiple_mod_roots = true;
+    if (multiple_mod_roots) {
+        if (error && error_size) snprintf(error, error_size,
+                                          "ZIP contains multiple Lua mod roots; import each mod separately");
+        goto done;
+    }
+    bool ignored_siblings = false;
+    if (has_selected_mod_root) {
+        for (size_t i = 0; i < ctx.count; ++i) {
+            if (strncmp(ctx.names[i], selected_mod_root, selected_mod_root_len) ||
+                ctx.names[i][selected_mod_root_len] != '/') {
+                ignored_siblings = true;
+                break;
+            }
+        }
+    }
+
     char package[128] = {0};
     size_t strip_prefix = 0;
-    if (ctx.has_common_root && ctx.common_root_len && zip_component_safe(ctx.common_root)) {
+    if (has_selected_mod_root) {
+        strip_prefix = selected_mod_root_len + 1;
+        const char *base = strrchr(selected_mod_root, '/');
+        base = base ? base + 1 : selected_mod_root;
+        snprintf(package, sizeof(package), "%s", base);
+        for (char *p = package; *p; ++p)
+            if (!(isalnum((unsigned char)*p) || *p == '-' || *p == '_' || *p == '.')) *p = '_';
+        if (!zip_component_safe(package)) snprintf(package, sizeof(package), "ImportedMod");
+    } else if (ctx.has_common_root && ctx.common_root_len && zip_component_safe(ctx.common_root)) {
         snprintf(package, sizeof(package), "%s", ctx.common_root);
         strip_prefix = ctx.common_root_len + 1;
     } else {
@@ -798,7 +857,7 @@ bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const ch
     }
     if (!stage_created) { if (error && error_size) snprintf(error, error_size, "cannot create temporary extraction folder"); goto done; }
     size_t stripped = strip_prefix;
-    if (strip_prefix) {
+    if (strip_prefix && !has_selected_mod_root) {
         for (size_t i = 0; i < ctx.count; ++i) {
             if (strncmp(ctx.names[i], ctx.common_root, ctx.common_root_len) || ctx.names[i][ctx.common_root_len] != '/') {
                 stripped = 0; break;
@@ -806,6 +865,9 @@ bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const ch
         }
     }
     for (size_t i = 0; i < ctx.count; ++i) {
+        if (has_selected_mod_root &&
+            (strncmp(ctx.names[i], selected_mod_root, selected_mod_root_len) ||
+             ctx.names[i][selected_mod_root_len] != '/')) continue;
         if (!zip_import_extract_entry(&ctx, i, staging, stripped)) {
             if (error && error_size) snprintf(error, error_size, "failed extracting or validating resource: %.160s", ctx.names[i]);
             goto done;
@@ -813,6 +875,8 @@ bool fs_zip_extract_package(const char *zip_path, const char *mods_dir, const ch
     }
     if (rename(staging, destination) != 0) { if (error && error_size) snprintf(error, error_size, "could not install extracted mod package"); goto done; }
     staging[0] = 0;
+    if (ignored_siblings && error && error_size)
+        snprintf(error, error_size, "installed the single mod in '%s'; ignored unrelated archive entries", selected_mod_root);
     if (installed_path && installed_path_size) snprintf(installed_path, installed_path_size, "%s", destination);
     ok = true;
 done:

@@ -33,6 +33,7 @@
 #include "level_table.h"
 #include "course_table.h"
 #include "types.h"
+#include "mario_animation_ids.h"
 #include "object_fields.h"
 #include "engine/behavior_script.h"
 #include "engine/graph_node.h"
@@ -90,6 +91,13 @@ extern s32 gInGameLanguage;
 
 #define MOD_MAX_COUNT 128
 #define MOD_MAX_NAME 128
+#define MOD_MAX_DISPLAY_NAME 192
+#define MOD_MAX_CATEGORY 64
+#define MOD_MAX_DESCRIPTION 384
+#define MOD_MAX_INCOMPATIBLE 256
+#define MOD_METADATA_MAX_BYTES 16384
+#define MOD_METADATA_MAX_LINES 128
+#define MOD_METADATA_MAX_LINE 1024
 #define MOD_MAX_FILES 512
 #define MOD_MEMORY_LIMIT (32u * 1024u * 1024u)
 #define MOD_INSTRUCTION_LIMIT 50000
@@ -209,6 +217,10 @@ struct ModObjectRenderOwner { Mod *owner; struct Object *object; uint32_t token;
 
 struct Mod {
     char name[MOD_MAX_NAME];
+    char display_name[MOD_MAX_DISPLAY_NAME];
+    char category[MOD_MAX_CATEGORY];
+    char description[MOD_MAX_DESCRIPTION];
+    char incompatible[MOD_MAX_INCOMPATIBLE];
     char path[SYS_MAX_PATH];
     bool enabled;
     bool loaded;
@@ -260,7 +272,6 @@ struct Mod {
     bool bubble_api_warned;
     bool multiplayer_settings_warned;
     bool sync_tables_warned;
-    bool active_mods_warned;
     uint64_t star_exit_setting_order;
     bool stay_in_level_after_star;
     uint64_t level_setting_order[MOD_LEVEL_VALUE_COUNT];
@@ -558,6 +569,119 @@ static Mod *find_mod(const char *name) {
     return NULL;
 }
 
+static void metadata_copy(char *destination, size_t capacity, const char *value) {
+    if (!destination || capacity == 0 || !value) return;
+    while (*value == ' ' || *value == '\t') ++value;
+    size_t length = strlen(value);
+    while (length && (value[length - 1] == ' ' || value[length - 1] == '\t' ||
+                      value[length - 1] == '\r' || value[length - 1] == '\n')) --length;
+    if (length >= capacity) length = capacity - 1;
+    memcpy(destination, value, length);
+    destination[length] = '\0';
+}
+
+/* CoopDX reads metadata from the initial comment block of main.lua. Parse it
+ * as bounded text before executing any script; never evaluate metadata. */
+static void read_mod_metadata(Mod *mod) {
+    if (!mod) return;
+    snprintf(mod->display_name, sizeof(mod->display_name), "%s", mod->name);
+    char path[SYS_MAX_PATH];
+    const char *metadata_script = NULL;
+    for (size_t i = 0; i < mod->file_count; ++i) {
+        const char *relative = relative_path(mod, mod->files[i]);
+        if (!relative || strchr(relative, '/')) continue;
+        if (!metadata_script || !strcmp(relative, "main.lua")) metadata_script = mod->files[i];
+        if (!strcmp(relative, "main.lua")) break;
+    }
+    if (!metadata_script) return;
+    int written = snprintf(path, sizeof(path), "%s", metadata_script);
+    if (written <= 0 || (size_t)written >= sizeof(path)) return;
+    FILE *file = fopen(path, "rb");
+    if (!file) return;
+    size_t bytes = 0;
+    unsigned lines = 0;
+    bool found_name = false;
+    char line[MOD_METADATA_MAX_LINE];
+    while (bytes < MOD_METADATA_MAX_BYTES && lines < MOD_METADATA_MAX_LINES) {
+        size_t used = 0;
+        int ch;
+        while (used + 1 < sizeof(line) && bytes < MOD_METADATA_MAX_BYTES &&
+               (ch = fgetc(file)) != EOF) {
+            ++bytes;
+            if (ch == '\n') break;
+            if (ch == '\0') { used = 0; break; }
+            line[used++] = (char)ch;
+        }
+        if (ch == EOF && used == 0) break;
+        line[used] = '\0';
+        ++lines;
+        if (line[0] != '-' || line[1] != '-') break;
+        const char *value = NULL;
+        char *colon = strchr(line + 2, ':');
+        if (!colon) continue;
+        *colon = '\0';
+        const char *key = line + 2;
+        while (*key == ' ' || *key == '\t') ++key;
+        value = colon + 1;
+        if (!strcmp(key, "name") && !found_name) {
+            metadata_copy(mod->display_name, sizeof(mod->display_name), value);
+            found_name = true;
+        } else if (!strcmp(key, "category") && !mod->category[0])
+            metadata_copy(mod->category, sizeof(mod->category), value);
+        else if (!strcmp(key, "description") && !mod->description[0])
+            metadata_copy(mod->description, sizeof(mod->description), value);
+        else if (!strcmp(key, "incompatible") && !mod->incompatible[0])
+            metadata_copy(mod->incompatible, sizeof(mod->incompatible), value);
+    }
+    fclose(file);
+}
+
+static bool incompatible_token_lists_match(const char *a, const char *b) {
+    if (!a || !b || !*a || !*b) return false;
+    const char *at = a;
+    while (*at) {
+        while (*at == ' ' || *at == '\t' || *at == '\r' || *at == '\n') ++at;
+        const char *a_end = at;
+        while (*a_end && *a_end != ' ' && *a_end != '\t' && *a_end != '\r' && *a_end != '\n') ++a_end;
+        if (a_end == at) break;
+        const char *bt = b;
+        while (*bt) {
+            while (*bt == ' ' || *bt == '\t' || *bt == '\r' || *bt == '\n') ++bt;
+            const char *b_end = bt;
+            while (*b_end && *b_end != ' ' && *b_end != '\t' && *b_end != '\r' && *b_end != '\n') ++b_end;
+            if (b_end == bt) break;
+            if ((size_t)(a_end - at) == (size_t)(b_end - bt) && !memcmp(at, bt, (size_t)(a_end - at)))
+                return true;
+            bt = b_end;
+        }
+        at = a_end;
+    }
+    return false;
+}
+
+static Mod *find_enabled_conflict(const Mod *candidate) {
+    if (!candidate) return NULL;
+    for (Mod *other = sMods; other; other = other->next) {
+        if (other == candidate || !other->enabled) continue;
+        if (incompatible_token_lists_match(candidate->incompatible, other->incompatible)) return other;
+    }
+    return NULL;
+}
+
+static void resolve_startup_mod_conflicts(void) {
+    for (Mod *mod = sMods; mod; mod = mod->next) {
+        if (!mod->enabled) continue;
+        for (Mod *earlier = sMods; earlier && earlier != mod; earlier = earlier->next) {
+            if (!earlier->enabled) continue;
+            if (!incompatible_token_lists_match(mod->incompatible, earlier->incompatible)) continue;
+            mod->enabled = false;
+            mod_logf("warning", mod->name,
+                     "disabled during deterministic startup: incompatible with earlier mod '%s'", earlier->name);
+            break;
+        }
+    }
+}
+
 static void add_mod(const char *name, const char *path) {
     pthread_mutex_lock(&sModListMutex);
     if (find_mod(name)) { pthread_mutex_unlock(&sModListMutex); return; }
@@ -627,6 +751,7 @@ static bool discover_mods(void) {
         fs_sys_walk(mod->path, mod_file_walk, mod, true);
         qsort(mod->files, mod->file_count, sizeof(char *), compare_strings);
     }
+    for (Mod *mod = sMods; mod; mod = mod->next) read_mod_metadata(mod);
 
     char dynos_root[SYS_MAX_PATH];
     snprintf(dynos_root, sizeof(dynos_root), "%s/dynos/packs", fs_writepath);
@@ -6203,9 +6328,11 @@ static bool set_mod_environment(lua_State *L, int function_index, Mod *mod) {
         for (Mod *active = sMods; active; active = active->next) {
             if (!active->enabled) continue;
             lua_newtable(L);
-            lua_pushstring(L, active->name); lua_setfield(L, -2, "name");
+            lua_pushstring(L, active->display_name[0] ? active->display_name : active->name); lua_setfield(L, -2, "name");
             lua_pushstring(L, active->name); lua_setfield(L, -2, "relativePath");
-            lua_pushliteral(L, ""); lua_setfield(L, -2, "incompatible");
+            lua_pushstring(L, active->incompatible); lua_setfield(L, -2, "incompatible");
+            lua_pushstring(L, active->category); lua_setfield(L, -2, "category");
+            lua_pushstring(L, active->description); lua_setfield(L, -2, "description");
             lua_rawseti(L, -2, active_mods_index++);
         }
         lua_setfield(L, -2, "gActiveMods");
@@ -6217,11 +6344,6 @@ static bool set_mod_environment(lua_State *L, int function_index, Mod *mod) {
             mod->sync_tables_warned = true;
             mod_log("warning", mod->name,
                     "gGlobalSyncTable and gPlayerSyncTable are isolated mod-local tables; values do not synchronize in single-player mode");
-        }
-        if (!mod->active_mods_warned) {
-            mod->active_mods_warned = true;
-            mod_log("warning", mod->name,
-                    "gActiveMods includes enabled package names/paths only; CoopDX incompatibility metadata is not imported yet");
         }
     }
     lua_rawgeti(L, LUA_REGISTRYINDEX, mod->env_ref);
@@ -6325,6 +6447,14 @@ static void expose_character_sound_constants(void) {
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         expose_int(names[i], (lua_Integer)i);
     expose_int("CHAR_SOUND_MAX", sizeof(names) / sizeof(names[0]));
+}
+
+static void expose_mario_animation_constants(void) {
+    static const struct { const char *name; lua_Integer value; } constants[] = {
+#include "mod_mario_animation_constants.inc"
+    };
+    for (size_t i = 0; i < sizeof(constants) / sizeof(constants[0]); ++i)
+        expose_int(constants[i].name, constants[i].value);
 }
 
 static void expose_string(const char *name, const char *value) {
@@ -6766,6 +6896,7 @@ static void register_api(void) {
     expose_int("GRAPH_RENDER_INVISIBLE", GRAPH_RENDER_INVISIBLE);
     expose_int("GRAPH_RENDER_HAS_ANIMATION", GRAPH_RENDER_HAS_ANIMATION);
     expose_int("GRAPH_RENDER_CYLBOARD", GRAPH_RENDER_CYLBOARD);
+    expose_mario_animation_constants();
     expose_int("ANIM_FLAG_NOLOOP", ANIM_FLAG_NOLOOP);
     expose_int("ANIM_FLAG_FORWARD", ANIM_FLAG_FORWARD);
     expose_int("ANIM_FLAG_2", ANIM_FLAG_2);
@@ -6893,6 +7024,11 @@ static bool load_mod(Mod *mod) {
     bool loaded = mod->loaded;
     pthread_mutex_unlock(&sModListMutex);
     if (loaded || mod->load_failed) return loaded;
+    Mod *conflict = find_enabled_conflict(mod);
+    if (conflict) {
+        mod_logf("warning", mod->name, "cannot enable: incompatible with active mod '%s'", conflict->name);
+        return false;
+    }
     mod->network_send_warned = false;
     if (!mod->file_count) {
         mod->load_failed = true;
@@ -7367,6 +7503,13 @@ static bool enqueue_request(int type, int index, bool enabled, const char *path)
 }
 
 bool mod_runtime_request_enabled(int index, bool enabled) {
+    if (enabled) {
+        pthread_mutex_lock(&sModListMutex);
+        Mod *target = mod_runtime_find_index(index);
+        Mod *conflict = target ? find_enabled_conflict(target) : NULL;
+        pthread_mutex_unlock(&sModListMutex);
+        if (conflict) return false;
+    }
     return index >= 0 && enqueue_request(MOD_REQUEST_ENABLE, index, enabled, NULL);
 }
 
@@ -7529,6 +7672,7 @@ void mod_runtime_host_process_requests(void) {
 
 void mod_runtime_update(void) {
     if (!sModsLoaded) {
+        resolve_startup_mod_conflicts();
         for (Mod *mod = sMods; mod; mod = mod->next) if (mod->enabled && !load_mod(mod)) {
             pthread_mutex_lock(&sModListMutex); mod->enabled = false; pthread_mutex_unlock(&sModListMutex);
         }
@@ -8002,11 +8146,41 @@ int mod_runtime_mod_count(void) {
     return n;
 }
 const char *mod_runtime_mod_name(int index) {
+    static char result[MOD_MAX_DISPLAY_NAME];
+    result[0] = 0;
+    if (index < 0) return NULL;
+    pthread_mutex_lock(&sModListMutex);
+    for (Mod *m = sMods; m; m = m->next) if (!index--) { snprintf(result, sizeof(result), "%s", m->display_name[0] ? m->display_name : m->name); break; }
+    pthread_mutex_unlock(&sModListMutex);
+    return result[0] ? result : NULL;
+}
+static const char *mod_runtime_metadata_string(int index, unsigned field) {
+    static char result[4][MOD_MAX_DESCRIPTION];
+    if (field >= 4) return NULL;
+    result[field][0] = 0;
+    if (index < 0) return NULL;
+    pthread_mutex_lock(&sModListMutex);
+    Mod *mod = mod_runtime_find_index(index);
+    if (mod) {
+        const char *value = field == 0 ? mod->name : field == 1 ? mod->description :
+                            field == 2 ? mod->category : mod->incompatible;
+        snprintf(result[field], sizeof(result[field]), "%s", value ? value : "");
+    }
+    pthread_mutex_unlock(&sModListMutex);
+    return result[field][0] ? result[field] : NULL;
+}
+const char *mod_runtime_mod_package_id(int index) { return mod_runtime_metadata_string(index, 0); }
+const char *mod_runtime_mod_description(int index) { return mod_runtime_metadata_string(index, 1); }
+const char *mod_runtime_mod_category(int index) { return mod_runtime_metadata_string(index, 2); }
+const char *mod_runtime_mod_incompatibilities(int index) { return mod_runtime_metadata_string(index, 3); }
+const char *mod_runtime_mod_enabled_conflict(int index) {
     static char result[MOD_MAX_NAME];
     result[0] = 0;
     if (index < 0) return NULL;
     pthread_mutex_lock(&sModListMutex);
-    for (Mod *m = sMods; m; m = m->next) if (!index--) { snprintf(result, sizeof(result), "%s", m->name); break; }
+    Mod *mod = mod_runtime_find_index(index);
+    Mod *conflict = mod ? find_enabled_conflict(mod) : NULL;
+    if (conflict) snprintf(result, sizeof(result), "%s", conflict->display_name[0] ? conflict->display_name : conflict->name);
     pthread_mutex_unlock(&sModListMutex);
     return result[0] ? result : NULL;
 }
@@ -8111,6 +8285,15 @@ bool mod_runtime_dispatch_chat_command(const char *name, const char *message) {
 bool mod_runtime_set_enabled(int index, bool enabled) {
     if (index < 0) return false;
     for (Mod *mod = sMods; mod; mod = mod->next) if (!index--) {
+        if (enabled) {
+            pthread_mutex_lock(&sModListMutex);
+            Mod *conflict = find_enabled_conflict(mod);
+            pthread_mutex_unlock(&sModListMutex);
+            if (conflict) {
+                mod_logf("warning", mod->name, "cannot enable: incompatible with active mod '%s'", conflict->name);
+                return false;
+            }
+        }
         pthread_mutex_lock(&sModListMutex);
         bool was_enabled = mod->enabled;
         mod->enabled = enabled;

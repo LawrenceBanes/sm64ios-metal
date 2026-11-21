@@ -1465,16 +1465,25 @@ int main(int argc, char **argv) {
     create_architecture_variant_fixture(argv[1]);
     reset_game_state();
     assert(mod_runtime_init());
-    assert(mod_runtime_mod_count() == 12);
+    assert(mod_runtime_mod_count() == 13);
     assert(mod_runtime_dynos_pack_count() == 1);
     assert(strcmp(mod_runtime_dynos_pack_name(0), "FixturePack") == 0);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "1 model bins · 2 texture assets") != NULL);
     assert(strstr(mod_runtime_dynos_pack_summary(0), "support varies") != NULL);
-    assert(strcmp(mod_runtime_mod_name(0), "00_core") == 0);
+    assert(strcmp(mod_runtime_mod_name(0), "Core Fixture Display Name") == 0);
+    assert(strcmp(mod_runtime_mod_package_id(0), "00_core") == 0);
+    assert(strcmp(mod_runtime_mod_category(0), "test-suite") == 0);
+    assert(strcmp(mod_runtime_mod_description(0), "Validates CoopDX package metadata behavior.") == 0);
+    assert(strcmp(mod_runtime_mod_incompatibilities(0), "metadata-shared-token") == 0);
     assert(mod_runtime_mod_enabled(0));
     assert(mod_runtime_mod_enabled(8));
     assert(mod_runtime_mod_enabled(9));
     mod_runtime_update();
+    assert(!mod_runtime_mod_enabled(12));
+    assert(strcmp(mod_runtime_mod_name(12), "Metadata Conflict Fixture") == 0);
+    assert(strcmp(mod_runtime_mod_enabled_conflict(12), "Core Fixture Display Name") == 0);
+    assert(!mod_runtime_set_enabled(12, true));
+    assert(!mod_runtime_mod_enabled(12));
 #ifdef MOD_RUNTIME_HOST_TEST
     if (getenv("MOD_TEST_DYNOS_GRAPH_RENDER")) {
         char model_error[400] = {0};

@@ -114,6 +114,12 @@ bool mod_runtime_import_zip(const char *zip_path, char *installed_path, unsigned
 
 int mod_runtime_mod_count(void);
 const char *mod_runtime_mod_name(int index);
+const char *mod_runtime_mod_package_id(int index);
+const char *mod_runtime_mod_description(int index);
+const char *mod_runtime_mod_category(int index);
+const char *mod_runtime_mod_incompatibilities(int index);
+/* Returns the package ID of an enabled conflicting mod, or NULL. */
+const char *mod_runtime_mod_enabled_conflict(int index);
 bool mod_runtime_mod_enabled(int index);
 enum { MOD_RUNTIME_MENU_BUTTON = 0, MOD_RUNTIME_MENU_CHECKBOX = 1, MOD_RUNTIME_MENU_SLIDER = 2 };
 typedef struct {

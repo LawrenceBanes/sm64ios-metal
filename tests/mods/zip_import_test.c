@@ -56,6 +56,27 @@ int main(int argc, char **argv) {
     snprintf(path, sizeof(path), "%s/actors/Demo/model.tex", installed);
     assert(path_exists(path));
 
+    snprintf(zip_path, sizeof(zip_path), "%s/mixed_mod.zip", argv[1]);
+    assert(fs_zip_extract_package(zip_path, mods_dir, dynos_dir, installed, sizeof(installed),
+                                  &has_lua, &has_dynos, error, sizeof(error)));
+    assert(has_lua && has_dynos);
+    assert(strstr(error, "ignored unrelated archive entries") != NULL);
+    snprintf(path, sizeof(path), "%s/main.lua", installed);
+    assert(path_exists(path));
+    snprintf(path, sizeof(path), "%s/actions.lua", installed);
+    assert(path_exists(path));
+    snprintf(path, sizeof(path), "%s/actors/bowser.bin", installed);
+    assert(path_exists(path));
+    snprintf(path, sizeof(path), "%s/Template Character/example.lua", installed);
+    assert(!path_exists(path));
+    snprintf(path, sizeof(path), "%s/.vs/workspace.db", installed);
+    assert(path_exists(path)); /* Preserve content inside the selected mod root. */
+
+    snprintf(zip_path, sizeof(zip_path), "%s/multiple_mods.zip", argv[1]);
+    assert(!fs_zip_extract_package(zip_path, mods_dir, dynos_dir, installed, sizeof(installed),
+                                   &has_lua, &has_dynos, error, sizeof(error)));
+    assert(strstr(error, "multiple Lua mod roots") != NULL);
+
     snprintf(zip_path, sizeof(zip_path), "%s/dynos_only.zip", argv[1]);
     bool extracted = fs_zip_extract_package(zip_path, mods_dir, dynos_dir, installed, sizeof(installed),
                                             &has_lua, &has_dynos, error, sizeof(error));

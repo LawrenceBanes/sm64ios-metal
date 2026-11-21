@@ -67,7 +67,19 @@
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
     const char *name = mod_runtime_mod_name((int)indexPath.row);
     cell.textLabel.text = name ? [NSString stringWithUTF8String:name] : @"Unknown mod";
-    cell.detailTextLabel.text = @"Imported into this app's sandbox";
+    const char *conflict = mod_runtime_mod_enabled_conflict((int)indexPath.row);
+    const char *description = mod_runtime_mod_description((int)indexPath.row);
+    const char *category = mod_runtime_mod_category((int)indexPath.row);
+    if (conflict) {
+        NSString *other = [NSString stringWithUTF8String:conflict];
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"Incompatible with enabled mod: %@", other ?: @"another mod"];
+    } else if (description && description[0]) {
+        cell.detailTextLabel.text = [NSString stringWithUTF8String:description];
+    } else if (category && category[0]) {
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · Installed in this app", [NSString stringWithUTF8String:category]];
+    } else {
+        cell.detailTextLabel.text = @"Installed in this app's sandbox";
+    }
     UISwitch *enabled = [[UISwitch alloc] init];
     enabled.tag = (NSInteger)indexPath.row;
     enabled.on = mod_runtime_mod_enabled((int)indexPath.row);
@@ -79,7 +91,13 @@
 - (void)enabledChanged:(UISwitch *)sender {
     if (!mod_runtime_request_enabled((int)sender.tag, sender.isOn)) {
         sender.on = !sender.isOn;
-        [self showMessage:@"The game could not queue that mod change."];
+        const char *conflict = mod_runtime_mod_enabled_conflict((int)sender.tag);
+        if (conflict) {
+            NSString *other = [NSString stringWithUTF8String:conflict];
+            [self showMessage:[NSString stringWithFormat:@"This mod cannot run alongside %@ because both declare an incompatibility.", other ?: @"an enabled mod"]];
+        } else {
+            [self showMessage:@"The game could not queue that mod change."];
+        }
     }
 }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
