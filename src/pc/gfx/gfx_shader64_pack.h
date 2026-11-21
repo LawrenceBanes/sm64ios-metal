@@ -19,6 +19,7 @@
 #define GFX_SHADER64_RESOURCE_PACK_TEXTURES 8u
 #define GFX_SHADER64_RESOURCE_SCENE_NORMALS 16u
 #define GFX_SHADER64_RESOURCE_FRAME_INFO 32u
+#define GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE 64u
 #define GFX_SHADER64_NODE_FULLSCREEN 1u
 #define GFX_SHADER64_NODE_COMPUTE 2u
 
@@ -58,6 +59,8 @@ int gfx_shader64_validate_pass_source(const char *source, size_t size,
                                       char *error, size_t error_size);
 int gfx_shader64_validate_frame_pass_source(const char *source, size_t size,
                                             char *error, size_t error_size);
+int gfx_shader64_validate_scene_color_pass_source(const char *source, size_t size,
+                                                  char *error, size_t error_size);
 int gfx_shader64_validate_depth_pass_source(const char *source, size_t size,
                                             char *error, size_t error_size);
 int gfx_shader64_validate_lit_pass_source(const char *source, size_t size,
@@ -98,6 +101,8 @@ int gfx_shader64_build_pass_wrapper(const char *source, size_t source_size,
                                     char *output, size_t output_size);
 int gfx_shader64_build_frame_pass_wrapper(const char *source, size_t source_size,
                                           char *output, size_t output_size);
+int gfx_shader64_build_scene_color_pass_wrapper(const char *source, size_t source_size,
+                                                char *output, size_t output_size);
 int gfx_shader64_build_depth_pass_wrapper(const char *source, size_t source_size,
                                           char *output, size_t output_size);
 int gfx_shader64_build_lit_pass_wrapper(const char *source, size_t source_size,

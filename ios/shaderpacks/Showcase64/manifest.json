@@ -1,0 +1,20 @@
+{
+  "formatVersion": 2,
+  "id": "Showcase64",
+  "name": "Showcase Atmosphere",
+  "author": "SHITBOX LABZ INC.",
+  "version": "0.1.0",
+  "shaderApiVersion": 2,
+  "parameterVersion": 1,
+  "stage": "render_graph",
+  "parameters": [
+    { "name": "density", "label": "Atmosphere density", "type": "float", "default": 0.018, "min": 0.004, "max": 0.06 },
+    { "name": "scattering", "label": "Sun scattering", "type": "float", "default": 1.0, "min": 0.0, "max": 2.0 },
+    { "name": "distance", "label": "Atmosphere distance", "type": "float", "default": 1.0, "min": 0.25, "max": 1.0 }
+  ],
+  "materialShader": { "source": "shaders/material.metal", "vertexPositions": true, "directionalLight": true },
+  "passes": [
+    { "id": "atmosphere", "type": "compute", "input": "sceneColor", "output": "volumeHalf", "source": "shaders/volumetric.metal", "scale": 0.5, "sceneDepth": true, "sceneNormals": true, "sceneLighting": true, "sceneShadows": true },
+    { "id": "compose", "type": "fullscreen", "input": "volumeHalf", "output": "present", "source": "shaders/compose.metal", "scale": 1.0, "sceneColorSource": true }
+  ]
+}

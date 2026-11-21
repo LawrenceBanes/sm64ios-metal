@@ -209,6 +209,23 @@ xcrun --sdk iphoneos metallib "$shader_dir/shader64-lumen-surface-compute.air" \
     -o "$shader_dir/shader64-lumen-surface-compute.metallib"
 echo "compiled and linked SHADER64 cohesive LumenSurface64 depth, normal, light, and shadow compute pass"
 
+showcase_compute_source="$repo_dir/ios/shaderpacks/Showcase64/shaders/volumetric.metal"
+xcrun --sdk iphoneos metal -c "$showcase_compute_source" -o "$shader_dir/shader64-showcase-volumetric.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-showcase-volumetric.air" \
+    -o "$shader_dir/shader64-showcase-volumetric.metallib"
+echo "compiled and linked SHADER64 Showcase64 half-resolution volumetric pass"
+
+scene_color_wrapper_tool="$output_dir/shader64-wrap-scene-color"
+xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
+    "$repo_dir/tests/shader64_wrap_scene_color.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
+    -o "$scene_color_wrapper_tool"
+showcase_compose_source="$repo_dir/ios/shaderpacks/Showcase64/shaders/compose.metal"
+"$scene_color_wrapper_tool" "$showcase_compose_source" > "$shader_dir/shader64-showcase-compose.metal"
+xcrun --sdk iphoneos metal -c "$shader_dir/shader64-showcase-compose.metal" -o "$shader_dir/shader64-showcase-compose.air"
+xcrun --sdk iphoneos metallib "$shader_dir/shader64-showcase-compose.air" \
+    -o "$shader_dir/shader64-showcase-compose.metallib"
+echo "compiled and linked SHADER64 Showcase64 full-resolution scene composite"
+
 material_wrapper_tool="$output_dir/shader64-wrap-material"
 xcrun --sdk macosx clang -std=c11 -I"$repo_dir/include" -I"$repo_dir/src/pc/gfx" \
     "$repo_dir/tests/shader64_wrap_material.c" "$repo_dir/src/pc/gfx/gfx_shader64_pack.c" \
@@ -274,7 +291,7 @@ xcrun --sdk macosx clang -std=gnu11 -D_LANGUAGE_C -DF3DEX_GBI_2E=1 \
     "$repo_dir/tests/shader64_material_codegen_emit.c" \
     "$repo_dir/src/pc/gfx/gfx_metal_shader.c" "$repo_dir/src/pc/gfx/gfx_cc.c" \
     -o "$material_codegen_tool"
-for mode_pack in "positions SurfacePosition64" "position-lit GeometryNormal64" "textured-position-lit LumenSurface64" "normals VertexNormal64" "lighting SunlitMaterial64"; do
+for mode_pack in "positions SurfacePosition64" "position-lit GeometryNormal64" "textured-position-lit LumenSurface64" "position-lit Showcase64" "normals VertexNormal64" "lighting SunlitMaterial64"; do
     read -r mode pack <<< "$mode_pack"
     source="$repo_dir/ios/shaderpacks/$pack/shaders/material.metal"
     name="shader64-generated-material-$pack"

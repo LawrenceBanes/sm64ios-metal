@@ -1880,6 +1880,10 @@ static bool gfx_metal_encode_shader64_graph(id<CAMetalDrawable> drawable,
         [encoder setRenderPipelineState:p->pipeline];
         [encoder setFragmentTexture:input atIndex:0];
         [encoder setFragmentSamplerState:metal_present_sampler atIndex:0];
+        if (p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE) {
+            [encoder setFragmentTexture:scene_source atIndex:9];
+            [encoder setFragmentSamplerState:metal_present_sampler atIndex:9];
+        }
         if (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
                                  GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                  GFX_SHADER64_RESOURCE_SHADOW_MAP)) {
@@ -2120,8 +2124,12 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         bool has_pack_textures = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) != 0u;
         bool has_scene_normals = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_NORMALS) != 0u;
         bool has_frame_info = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_FRAME_INFO) != 0u;
+        bool has_scene_color_source = (passes[i].resource_flags & GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE) != 0u;
         bool source_valid;
-        if (has_frame_info)
+        if (has_scene_color_source)
+            source_valid = gfx_shader64_validate_scene_color_pass_source(passes[i].source,
+                passes[i].source_size, validation, sizeof(validation));
+        else if (has_frame_info)
             source_valid = gfx_shader64_validate_frame_pass_source(passes[i].source,
                 passes[i].source_size, validation, sizeof(validation));
         else if (has_pack_textures && has_scene_normals)
@@ -2153,7 +2161,10 @@ bool gfx_metal_load_shader64_graph_with_material(const char *pack_id,
         char *wrapper = malloc(capacity);
         bool wrapper_ok = false;
         if (wrapper) {
-            if (has_frame_info)
+            if (has_scene_color_source)
+                wrapper_ok = gfx_shader64_build_scene_color_pass_wrapper(passes[i].source,
+                    passes[i].source_size, wrapper, capacity);
+            else if (has_frame_info)
                 wrapper_ok = gfx_shader64_build_frame_pass_wrapper(passes[i].source,
                     passes[i].source_size, wrapper, capacity);
             else if (has_pack_textures && has_scene_normals)
@@ -2467,6 +2478,8 @@ static void gfx_metal_restore_shader64_pack(void) {
                  ![definition[@"sceneNormals"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"frameInfo"] &&
                  ![definition[@"frameInfo"] isKindOfClass:[NSNumber class]]) ||
+                (definition[@"sceneColorSource"] &&
+                 ![definition[@"sceneColorSource"] isKindOfClass:[NSNumber class]]) ||
                 (definition[@"packTextures"] &&
                  ![definition[@"packTextures"] isKindOfClass:[NSNumber class]])) { valid = NO; break; }
             NSString *relative = definition[@"source"];
@@ -2492,7 +2505,8 @@ static void gfx_metal_restore_shader64_pack(void) {
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
                 ([definition[@"sceneNormals"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_NORMALS : 0u) |
                 ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) |
-                ([definition[@"frameInfo"] boolValue] ? GFX_SHADER64_RESOURCE_FRAME_INFO : 0u) };
+                ([definition[@"frameInfo"] boolValue] ? GFX_SHADER64_RESOURCE_FRAME_INFO : 0u) |
+                ([definition[@"sceneColorSource"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE : 0u) };
         }
         NSDictionary *material_definition = manifest[@"materialShader"];
         if (valid && material_definition &&

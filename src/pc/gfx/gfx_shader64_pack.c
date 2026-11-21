@@ -322,7 +322,11 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                    GFX_SHADER64_RESOURCE_SHADOW_MAP |
                                    GFX_SHADER64_RESOURCE_PACK_TEXTURES |
                                    GFX_SHADER64_RESOURCE_SCENE_NORMALS |
-                                   GFX_SHADER64_RESOURCE_FRAME_INFO)) != 0u ||
+                                   GFX_SHADER64_RESOURCE_FRAME_INFO |
+                                   GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE)) != 0u ||
+            ((p->resource_flags & GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE) &&
+             (p->node_type != GFX_SHADER64_NODE_FULLSCREEN || !p->output || strcmp(p->output, "present") != 0 ||
+              (p->resource_flags & ~GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE) != 0u)) ||
             (p->node_type == GFX_SHADER64_NODE_FULLSCREEN &&
              (p->resource_flags & GFX_SHADER64_RESOURCE_PACK_TEXTURES) &&
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
@@ -345,7 +349,8 @@ int gfx_shader64_validate_graph(const struct GfxShader64GraphPass *passes,
                                     GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT |
                                     GFX_SHADER64_RESOURCE_SHADOW_MAP |
                                     GFX_SHADER64_RESOURCE_SCENE_NORMALS |
-                                    GFX_SHADER64_RESOURCE_FRAME_INFO)) != 0u) ||
+                                   GFX_SHADER64_RESOURCE_FRAME_INFO |
+                                   GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE)) != 0u) ||
             (p->node_type == GFX_SHADER64_NODE_COMPUTE &&
              (p->resource_flags & GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT) &&
              (p->resource_flags & (GFX_SHADER64_RESOURCE_SCENE_DEPTH |
@@ -458,6 +463,28 @@ int gfx_shader64_validate_frame_pass_source(const char *source, size_t size,
     for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
         if (!contains(source, size, required[i])) {
             err(error, error_size, "source does not implement the frame-aware fullscreen contract"); return 0;
+        }
+    if (contains(source, size, "#include \"")) {
+        err(error, error_size, "local shader includes are not supported in API v2"); return 0;
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
+int gfx_shader64_validate_scene_color_pass_source(const char *source, size_t size,
+                                                  char *error, size_t error_size) {
+    static const char *const required[] = {
+        "float4 shader64_pass_scene_color(", "texture2d<float> image", "sampler imageSampler",
+        "texture2d<float> sceneColor", "sampler sceneColorSampler",
+        "constant float4 &params",
+        "#include <metal_stdlib>", "using namespace metal;"
+    };
+    if (!source || !size || size > GFX_SHADER64_MAX_SOURCE_BYTES || memchr(source, 0, size)) {
+        err(error, error_size, "scene-color pass source is missing, oversized, or contains NUL"); return 0;
+    }
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+        if (!contains(source, size, required[i])) {
+            err(error, error_size, "source does not implement the full-resolution scene-color contract"); return 0;
         }
     if (contains(source, size, "#include \"")) {
         err(error, error_size, "local shader includes are not supported in API v2"); return 0;
@@ -848,6 +875,23 @@ int gfx_shader64_build_frame_pass_wrapper(const char *source, size_t source_size
     size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
     if (!output || output_size < needed ||
         !gfx_shader64_validate_frame_pass_source(source, source_size, NULL, 0)) return 0;
+    memcpy(output, prefix, sizeof(prefix) - 1u);
+    memcpy(output + sizeof(prefix) - 1u, source, source_size);
+    memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));
+    return 1;
+}
+
+int gfx_shader64_build_scene_color_pass_wrapper(const char *source, size_t source_size,
+                                                char *output, size_t output_size) {
+    static const char prefix[] =
+        "#include <metal_stdlib>\nusing namespace metal;\n"
+        "struct Shader64In { float4 position [[position]]; float2 uv; };\n"
+        "vertex Shader64In sm64_shader64_vertex(uint id [[vertex_id]]) { Shader64In o; o.position = id == 0 ? float4(-1.0,-1.0,0.0,1.0) : (id == 1 ? float4(3.0,-1.0,0.0,1.0) : float4(-1.0,3.0,0.0,1.0)); o.uv = id == 0 ? float2(0.0,1.0) : (id == 1 ? float2(2.0,1.0) : float2(0.0,-1.0)); return o; }\n";
+    static const char suffix[] =
+        "\nfragment float4 sm64_shader64_fragment(Shader64In in [[stage_in]], texture2d<float> image [[texture(0)]], sampler imageSampler [[sampler(0)]], texture2d<float> sceneColor [[texture(9)]], sampler sceneColorSampler [[sampler(9)]], constant float4 &parameters [[buffer(0)]]) { float4 color=image.sample(imageSampler,in.uv); return shader64_pass_scene_color(color,in.uv,image,imageSampler,sceneColor,sceneColorSampler,parameters); }\n";
+    size_t needed = sizeof(prefix) - 1u + source_size + sizeof(suffix);
+    if (!output || output_size < needed ||
+        !gfx_shader64_validate_scene_color_pass_source(source, source_size, NULL, 0)) return 0;
     memcpy(output, prefix, sizeof(prefix) - 1u);
     memcpy(output + sizeof(prefix) - 1u, source, source_size);
     memcpy(output + sizeof(prefix) - 1u + source_size, suffix, sizeof(suffix));

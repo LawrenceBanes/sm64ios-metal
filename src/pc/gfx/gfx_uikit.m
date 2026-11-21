@@ -1532,6 +1532,8 @@ static BOOL shader64_saved_parameters_match_version(NSUserDefaults *defaults,
             if (sceneNormals && ![sceneNormals isKindOfClass:[NSNumber class]]) passOK = NO;
             id frameInfo = pass[@"frameInfo"];
             if (frameInfo && ![frameInfo isKindOfClass:[NSNumber class]]) passOK = NO;
+            id sceneColorSource = pass[@"sceneColorSource"];
+            if (sceneColorSource && ![sceneColorSource isKindOfClass:[NSNumber class]]) passOK = NO;
             id packTextures = pass[@"packTextures"];
             if (packTextures && ![packTextures isKindOfClass:[NSNumber class]]) passOK = NO;
             if ([packTextures boolValue] && (!textureList.count || (!compute && ([sceneDepth boolValue] ||
@@ -1543,6 +1545,9 @@ static BOOL shader64_saved_parameters_match_version(NSUserDefaults *defaults,
                                                ![sceneLighting boolValue])))) passOK = NO;
             if ([frameInfo boolValue] && (compute || [sceneDepth boolValue] || [sceneLighting boolValue] ||
                 [sceneShadows boolValue] || [sceneNormals boolValue] || [packTextures boolValue])) passOK = NO;
+            if ([sceneColorSource boolValue] && (compute || ![output isEqualToString:@"present"] ||
+                [sceneDepth boolValue] || [sceneLighting boolValue] || [sceneShadows boolValue] ||
+                [sceneNormals boolValue] || [packTextures boolValue] || [frameInfo boolValue])) passOK = NO;
             if (!passOK || [outputs containsObject:output]) { api2 = NO; break; }
             [outputs addObject:output];
         }
@@ -1603,7 +1608,8 @@ static BOOL shader64_saved_parameters_match_version(NSUserDefaults *defaults,
                 ([definition[@"sceneLighting"] boolValue] ? GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT : 0u) |
                 ([definition[@"sceneShadows"] boolValue] ? GFX_SHADER64_RESOURCE_SHADOW_MAP : 0u) |
                 ([definition[@"sceneNormals"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_NORMALS : 0u) |
-                ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) };
+                ([definition[@"packTextures"] boolValue] ? GFX_SHADER64_RESOURCE_PACK_TEXTURES : 0u) |
+                ([definition[@"sceneColorSource"] boolValue] ? GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE : 0u) };
         }
         NSDictionary *materialDefinition = manifest[@"materialShader"];
         if (validation == nil && materialDefinition) {

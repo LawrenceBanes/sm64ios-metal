@@ -102,6 +102,12 @@ class ShaderPackTests(unittest.TestCase):
             ctypes.c_int,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_compute_resource_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_validate_scene_color_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_validate_scene_color_pass_source.restype = ctypes.c_int
+        cls.api.gfx_shader64_build_scene_color_pass_wrapper.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        cls.api.gfx_shader64_build_scene_color_pass_wrapper.restype = ctypes.c_int
         cls.api.gfx_shader64_validate_lit_pass_source.argtypes = [ctypes.c_char_p, ctypes.c_size_t,
             ctypes.c_char_p, ctypes.c_size_t]
         cls.api.gfx_shader64_validate_lit_pass_source.restype = ctypes.c_int
@@ -662,6 +668,39 @@ class ShaderPackTests(unittest.TestCase):
             self.GraphPass(b"present", b"shaded", b"present", 1.0, 1, 0))
         self.assertTrue(self.api.gfx_shader64_validate_graph(
             normals_compute, 2, 1920, 1080, order, error, len(error)), error.value)
+        scene_color_composite = (self.GraphPass * 2)(
+            self.GraphPass(b"volume", b"sceneColor", b"volumeHalf", 0.5, 2, 1 | 2 | 4 | 16),
+            self.GraphPass(b"composite", b"volumeHalf", b"present", 1.0, 1, 64))
+        self.assertTrue(self.api.gfx_shader64_validate_graph(
+            scene_color_composite, 2, 1920, 1080, order, error, len(error)), error.value)
+        bad_scene_color_scale = (self.GraphPass * 1)(
+            self.GraphPass(b"composite", b"sceneColor", b"present", 0.5, 1, 64))
+        self.assertFalse(self.api.gfx_shader64_validate_graph(
+            bad_scene_color_scale, 1, 1920, 1080, order, error, len(error)))
+        bad_scene_color_compute = (self.GraphPass * 2)(
+            self.GraphPass(b"compute", b"sceneColor", b"volume", 0.5, 2, 64),
+            self.GraphPass(b"present", b"volume", b"present", 1, 1, 0))
+        self.assertFalse(self.api.gfx_shader64_validate_graph(
+            bad_scene_color_compute, 2, 1920, 1080, order, error, len(error)))
+
+    def test_scene_color_composite_source_contract(self):
+        source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
+                  b'float4 shader64_pass_scene_color(float4 color, float2 uv, texture2d<float> image, '
+                  b'sampler imageSampler, texture2d<float> sceneColor [[texture(9)]], '
+                  b'sampler sceneColorSampler [[sampler(9)]], constant float4 &params) { '
+                  b'(void)color; (void)image; (void)imageSampler; return sceneColor.sample(sceneColorSampler,uv); }')
+        error = ctypes.create_string_buffer(256)
+        self.assertTrue(self.api.gfx_shader64_validate_scene_color_pass_source(
+            source, len(source), error, len(error)), error.value)
+        wrapper = ctypes.create_string_buffer(len(source) + 4096)
+        self.assertTrue(self.api.gfx_shader64_build_scene_color_pass_wrapper(
+            source, len(source), wrapper, len(wrapper)))
+        self.assertIn(b"sceneColor [[texture(9)]]", wrapper.value)
+        self.assertIn(b"sceneColorSampler [[sampler(9)]]", wrapper.value)
+        self.assertIn(b"sceneColor.sample", wrapper.value)
+        missing_binding = source.replace(b"texture2d<float> sceneColor", b"texture2d<float> otherColor")
+        self.assertFalse(self.api.gfx_shader64_validate_scene_color_pass_source(
+            missing_binding, len(missing_binding), error, len(error)))
 
     def test_bounded_compute_contract(self):
         source = (b'#include <metal_stdlib>\nusing namespace metal;\n'
@@ -810,7 +849,7 @@ class ShaderPackTests(unittest.TestCase):
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             conflicting_resources, 1, 1920, 1080, order, error, len(error)))
         invalid_resource = (self.GraphPass * 1)(
-            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 64))
+            self.GraphPass(b"final", b"sceneColor", b"present", 1.0, 1, 128))
         self.assertFalse(self.api.gfx_shader64_validate_graph(
             invalid_resource, 1, 1920, 1080, order, error, len(error)))
         oversized = (self.GraphPass * 3)(self.GraphPass(b"a", b"sceneColor", b"aOut", 1, 1),
@@ -863,7 +902,7 @@ class ShaderPackTests(unittest.TestCase):
                          "Lumen64ShadowGraph", "TextureDemo64", "Paper64MaterialGraph", "NormalTexture64",
                          "ComputeBlur64", "ComputeTexture64", "AnimatedGraph64", "DepthCompute64",
                          "VertexNormal64", "SunlitMaterial64", "SurfacePosition64",
-                         "GeometryNormal64", "LumenSurface64")
+                         "GeometryNormal64", "LumenSurface64", "Showcase64")
         reference_ids += ("DepthNormalsCompute64", "SceneDataCompute64", "ColorPathProbe64")
         for pack_id in reference_ids:
             directory = ROOT / "ios/shaderpacks" / pack_id
@@ -882,6 +921,7 @@ class ShaderPackTests(unittest.TestCase):
                 else:
                     compute_pass = definition.get("type") == "compute"
                     frame_info_pass = bool(definition.get("frameInfo"))
+                    scene_color_source_pass = bool(definition.get("sceneColorSource"))
                     depth_pass = bool(definition.get("sceneDepth"))
                     normals_pass = bool(definition.get("sceneNormals"))
                     lighting_pass = bool(definition.get("sceneLighting"))
@@ -894,6 +934,8 @@ class ShaderPackTests(unittest.TestCase):
                             int(lighting_pass), int(shadow_pass),
                             error, len(error)), f"{pack_id}: {error.value!r}")
                         validator = None
+                    elif scene_color_source_pass:
+                        validator = self.api.gfx_shader64_validate_scene_color_pass_source
                     elif frame_info_pass:
                         validator = self.api.gfx_shader64_validate_frame_pass_source
                     elif combined_normals_textures:
@@ -915,7 +957,8 @@ class ShaderPackTests(unittest.TestCase):
                                         f"{pack_id}: {error.value!r}")
                     if not compute_pass:
                         wrapper = ctypes.create_string_buffer(len(source) + 4096)
-                        builder = (self.api.gfx_shader64_build_frame_pass_wrapper if frame_info_pass else
+                        builder = (self.api.gfx_shader64_build_scene_color_pass_wrapper if scene_color_source_pass else
+                               self.api.gfx_shader64_build_frame_pass_wrapper if frame_info_pass else
                                self.api.gfx_shader64_build_normals_textured_pass_wrapper if combined_normals_textures else
                                self.api.gfx_shader64_build_textured_pass_wrapper if texture_pass else
                                self.api.gfx_shader64_build_normals_pass_wrapper if normals_pass else
@@ -938,7 +981,8 @@ class ShaderPackTests(unittest.TestCase):
                                    (4 if p.get("sceneShadows") else 0) |
                                    (16 if p.get("sceneNormals") else 0) |
                                    (8 if p.get("packTextures") else 0) |
-                                   (32 if p.get("frameInfo") else 0)) for p in definitions])
+                                   (32 if p.get("frameInfo") else 0) |
+                                   (64 if p.get("sceneColorSource") else 0)) for p in definitions])
                 order = (ctypes.c_ubyte * 4)()
                 self.assertTrue(self.api.gfx_shader64_validate_graph(
                     graph_passes, len(definitions), 1920, 1080, order, error, len(error)),
@@ -1001,6 +1045,27 @@ class ShaderPackTests(unittest.TestCase):
                            "mix(0.62, 1.0, shadowVisibility)"):
             self.assertIn(expression, source)
 
+    def test_showcase64_combines_surface_lighting_volumetrics_and_sharp_composite(self):
+        pack = ROOT / "ios/shaderpacks/Showcase64"
+        manifest = json.loads((pack / "manifest.json").read_text())
+        self.assertEqual([p["scale"] for p in manifest["passes"]], [0.5, 1.0])
+        volume_pass, composite_pass = manifest["passes"]
+        self.assertTrue(all(volume_pass.get(flag) for flag in
+                            ("sceneDepth", "sceneNormals", "sceneLighting", "sceneShadows")))
+        self.assertTrue(composite_pass.get("sceneColorSource"))
+        volume = (pack / volume_pass["source"]).read_text()
+        for feature in ("constexpr uint sampleCount = 8u", "shadowMap.sample(shadowSampler",
+                        "inverseProjection * clip", "inverseView * float4", "radiance +=",
+                        "transmittance *=", "anisotropy = 0.72"):
+            self.assertIn(feature, volume)
+        compose = (pack / composite_pass["source"]).read_text()
+        self.assertIn("sceneColor.sample(sceneColorSampler, uv)", compose)
+        self.assertIn("source.rgb * clamp(volume.a, 0.0, 1.0) + volume.rgb", compose)
+        material = (pack / manifest["materialShader"]["source"]).read_text()
+        for feature in ("dfdx(viewPosition)", "sunDirectionView", "wrappedDiffuse",
+                        "broadHighlight", "rimTint", "return float4(max(color"):
+            self.assertIn(feature, material)
+
     def test_ios_runtime_vertical_slice_wiring(self):
         metal = (ROOT / "src/pc/gfx/gfx_metal.m").read_text()
         ui = (ROOT / "src/pc/gfx/gfx_uikit.m").read_text()
@@ -1011,6 +1076,8 @@ class ShaderPackTests(unittest.TestCase):
                       "gfx_metal_load_shader64_graph_with_material", "gfx_metal_build_shader_with_material",
                       "gfx_metal_shader64_needs_scene_depth", "gfx_metal_shader64_requires_shadows",
                       "GFX_SHADER64_RESOURCE_SHADOW_MAP", "sceneShadows",
+                      "GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE", "sceneColorSource",
+                      "setFragmentTexture:scene_source atIndex:9",
                       "gfx_metal_shader64_load_pack_textures", "graph->pack_texture_count",
                       "GFX_SHADER64_RESOURCE_PACK_TEXTURES", "packTextures",
                       "compute_scene_normals", "metal_scene_normals_texture atIndex:7",
@@ -1029,6 +1096,7 @@ class ShaderPackTests(unittest.TestCase):
         self.assertIn("GFX_SHADER64_RESOURCE_SCENE_DEPTH", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_DIRECTIONAL_LIGHT", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_SHADOW_MAP", pack_header)
+        self.assertIn("GFX_SHADER64_RESOURCE_SCENE_COLOR_SOURCE", pack_header)
         self.assertIn("GFX_SHADER64_RESOURCE_PACK_TEXTURES", pack_header)
         self.assertIn("depth2d<float>", (ROOT / "src/pc/gfx/gfx_shader64_pack.c").read_text())
         self.assertIn("shader64_material(color", (ROOT / "src/pc/gfx/gfx_metal_shader.c").read_text())
