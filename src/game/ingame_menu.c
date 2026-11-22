@@ -906,14 +906,14 @@ s16 get_dialog_id(void) {
 }
 
 void create_dialog_box(s16 dialog) {
-    if (gDialogID == -1) {
+    if (gDialogID == -1 && mod_runtime_on_dialog(dialog)) {
         gDialogID = dialog;
         gDialogBoxType = DIALOG_TYPE_ROTATE;
     }
 }
 
 void create_dialog_box_with_var(s16 dialog, s32 dialogVar) {
-    if (gDialogID == -1) {
+    if (gDialogID == -1 && mod_runtime_on_dialog(dialog)) {
         gDialogID = dialog;
         gDialogVariable = dialogVar;
         gDialogBoxType = DIALOG_TYPE_ROTATE;
@@ -921,14 +921,14 @@ void create_dialog_box_with_var(s16 dialog, s32 dialogVar) {
 }
 
 void create_dialog_inverted_box(s16 dialog) {
-    if (gDialogID == -1) {
+    if (gDialogID == -1 && mod_runtime_on_dialog(dialog)) {
         gDialogID = dialog;
         gDialogBoxType = DIALOG_TYPE_ZOOM;
     }
 }
 
 void create_dialog_box_with_response(s16 dialog) {
-    if (gDialogID == -1) {
+    if (gDialogID == -1 && mod_runtime_on_dialog(dialog)) {
         gDialogID = dialog;
         gDialogBoxType = DIALOG_TYPE_ROTATE;
         gLastDialogResponse = 1;

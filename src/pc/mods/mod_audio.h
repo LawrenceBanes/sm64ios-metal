@@ -11,6 +11,8 @@ uint32_t mod_audio_load_stream(const void *owner, const char *root, const char *
 bool mod_audio_play(const void *owner, uint32_t id, float volume, float pan, const char **error);
 bool mod_audio_stream_play(const void *owner, uint32_t id, bool restart, float volume, const char **error);
 bool mod_audio_stream_set_looping(const void *owner, uint32_t id, bool looping);
+bool mod_audio_stream_set_loop_points(const void *owner, uint32_t id,
+                                      unsigned start, unsigned end);
 bool mod_audio_stream_stop(const void *owner, uint32_t id);
 bool mod_audio_stop(const void *owner, uint32_t id);
 bool mod_audio_destroy(const void *owner, uint32_t id);

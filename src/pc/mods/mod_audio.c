@@ -14,8 +14,10 @@
 enum {
     MAX_SAMPLES = 48, MAX_VOICES = 24, MAX_OWNER_SAMPLES = 16,
     MAX_ENCODED = 2 * 1024 * 1024, DECODER_MEMORY = 4 * 1024 * 1024,
-    MAX_PCM_BYTES = 8 * 1024 * 1024, MAX_OWNER_PCM_BYTES = 4 * 1024 * 1024,
-    MAX_SECONDS = 15, OUTPUT_RATE = 32000,
+    /* A music stream may be a full menu track. It is still decoded into PCM,
+     * so keep the larger stream allowance explicit and bounded. */
+    MAX_PCM_BYTES = 16 * 1024 * 1024, MAX_OWNER_PCM_BYTES = 8 * 1024 * 1024,
+    MAX_SAMPLE_SECONDS = 15, MAX_STREAM_SECONDS = 120, OUTPUT_RATE = 32000,
     MAX_SEQUENCE_OVERRIDES = 32, MAX_SEQUENCE_OVERRIDE_BYTES = 1024 * 1024,
     MAX_SEQUENCE_OVERRIDE_TOTAL_BYTES = 4 * 1024 * 1024,
 };
@@ -34,6 +36,7 @@ typedef struct {
     char path[241];
     int16_t *pcm;
     unsigned frames, rate, channels;
+    unsigned loop_start, loop_end;
     uint32_t id;
     bool stream;
     bool looping;
@@ -69,7 +72,8 @@ static Sample *find_sample(const void *owner, uint32_t id) {
     return NULL;
 }
 
-static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size_t budget) {
+static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size_t budget,
+                          unsigned max_seconds) {
     void *memory = malloc(DECODER_MEMORY);
     if (!memory) return false;
     stb_vorbis_alloc arena = { memory, DECODER_MEMORY };
@@ -81,7 +85,7 @@ static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size
         uint64_t frames = stb_vorbis_stream_length_in_samples(decoder);
         if ((info.channels == 1 || info.channels == 2) &&
             info.sample_rate >= 8000 && info.sample_rate <= 96000 &&
-            frames > 0 && frames <= (uint64_t)info.sample_rate * MAX_SECONDS &&
+            frames > 0 && frames <= (uint64_t)info.sample_rate * max_seconds &&
             frames * info.channels * sizeof(int16_t) <= budget &&
             stb_vorbis_get_error(decoder) == VORBIS__no_error) {
             sample->pcm = malloc((size_t)frames * info.channels * sizeof(int16_t));
@@ -92,6 +96,8 @@ static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size
                     sample->frames = (unsigned)frames;
                     sample->rate = info.sample_rate;
                     sample->channels = (unsigned)info.channels;
+                    sample->loop_start = 0;
+                    sample->loop_end = (unsigned)frames;
                     ok = true;
                 } else {
                     free(sample->pcm);
@@ -108,8 +114,9 @@ static bool decode_sample(Sample *sample, const uint8_t *data, size_t size, size
 /* Decode bounded MP3 frames into the same native mixer representation as Ogg
  * samples. This is intentionally not a streaming decoder: encoded size,
  * decoded duration, per-mod PCM, and global PCM budgets remain bounded. */
-static bool decode_mp3(Sample *sample, const uint8_t *data, size_t size, size_t budget) {
-    return mod_audio_decode_mp3(data, size, budget, MAX_SECONDS, &sample->pcm,
+static bool decode_mp3(Sample *sample, const uint8_t *data, size_t size, size_t budget,
+                       unsigned max_seconds) {
+    return mod_audio_decode_mp3(data, size, budget, max_seconds, &sample->pcm,
                                 &sample->frames, &sample->rate, &sample->channels);
 }
 
@@ -151,8 +158,9 @@ static uint32_t mod_audio_load_internal(const void *owner, const char *root, con
     }
     size_t budget = MAX_OWNER_PCM_BYTES - owned;
     if (budget > MAX_PCM_BYTES - total) budget = MAX_PCM_BYTES - total;
-    bool decoded = is_mp3 ? decode_mp3(slot, data, size, budget)
-                          : decode_sample(slot, data, size, budget);
+    unsigned max_seconds = stream ? MAX_STREAM_SECONDS : MAX_SAMPLE_SECONDS;
+    bool decoded = is_mp3 ? decode_mp3(slot, data, size, budget, max_seconds)
+                          : decode_sample(slot, data, size, budget, max_seconds);
     free(data);
     if (!decoded) {
         *error = is_mp3 ? "invalid MP3 stream or decoded channel, rate, duration or memory limit exceeded"
@@ -163,6 +171,7 @@ static uint32_t mod_audio_load_internal(const void *owner, const char *root, con
     slot->owner = owner;
     slot->id = sNextId++;
     slot->stream = stream;
+    if (stream && !slot->loop_end) slot->loop_end = slot->frames;
     if (!sNextId) sNextId = 1;
     return slot->id;
 }
@@ -219,6 +228,28 @@ bool mod_audio_stream_set_looping(const void *owner, uint32_t id, bool looping) 
     sample->looping = looping;
     for (size_t i = 0; i < MAX_VOICES; ++i)
         if (sVoices[i].sample == sample) sVoices[i].looping = looping;
+    return true;
+}
+
+bool mod_audio_stream_set_loop_points(const void *owner, uint32_t id,
+                                      unsigned start, unsigned end) {
+    Sample *sample = find_sample(owner, id);
+    if (!sample || !sample->stream || start >= end || start >= sample->frames ||
+        (end > sample->frames && end - sample->frames > sample->rate / 20)) return false;
+    /* Encoders can report a rounded duration in scripts that is a few PCM
+     * frames longer than the decoded stream. Clamp only this 50 ms rounding
+     * window to the actual decoded endpoint. */
+    if (end > sample->frames) end = sample->frames;
+    if (start >= end) return false;
+    sample->loop_start = start;
+    sample->loop_end = end;
+    for (size_t i = 0; i < MAX_VOICES; ++i) {
+        Voice *voice = &sVoices[i];
+        if (voice->sample != sample) continue;
+        uint64_t end_position = (uint64_t)end * OUTPUT_RATE;
+        if (voice->position >= end_position)
+            voice->position = (uint64_t)start * OUTPUT_RATE;
+    }
     return true;
 }
 
@@ -374,7 +405,8 @@ void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain, float music_g
             const Sample *sample = voice->sample;
             if (!sample) continue;
             size_t frame = (size_t)(voice->position / OUTPUT_RATE);
-            size_t next = frame + 1 < sample->frames ? frame + 1 : frame;
+            unsigned interpolation_end = voice->looping ? sample->loop_end : sample->frames;
+            size_t next = frame + 1 < interpolation_end ? frame + 1 : frame;
             float t = (float)(voice->position % OUTPUT_RATE) / OUTPUT_RATE;
             const int16_t *a = sample->pcm + frame * sample->channels;
             const int16_t *b = sample->pcm + next * sample->channels;
@@ -383,8 +415,13 @@ void mod_audio_mix(int16_t *stereo, size_t frames, float sfx_gain, float music_g
             left += gain * voice->left * (a[0] + (b[0] - a[0]) * t);
             right += gain * voice->right * (a[right_channel] + (b[right_channel] - a[right_channel]) * t);
             voice->position += sample->rate;
-            if (voice->position >= (uint64_t)sample->frames * OUTPUT_RATE) {
-                if (voice->looping) voice->position = 0;
+            uint64_t loop_end = (uint64_t)(voice->looping ? sample->loop_end : sample->frames) * OUTPUT_RATE;
+            if (voice->position >= loop_end) {
+                if (voice->looping) {
+                    uint64_t loop_start = (uint64_t)sample->loop_start * OUTPUT_RATE;
+                    uint64_t loop_length = loop_end - loop_start;
+                    voice->position = loop_start + (voice->position - loop_end) % loop_length;
+                }
                 else voice->sample = NULL;
             }
         }

@@ -65,6 +65,9 @@
 #ifdef ACT_BREASTSTROKE
     expose_int("ACT_BREASTSTROKE", ACT_BREASTSTROKE);
 #endif
+#ifdef ACT_BUBBLED
+    expose_int("ACT_BUBBLED", ACT_BUBBLED);
+#endif
 #ifdef ACT_BURNING_FALL
     expose_int("ACT_BURNING_FALL", ACT_BURNING_FALL);
 #endif
@@ -772,6 +775,9 @@
 #endif
 #ifdef ACT_UNINITIALIZED
     expose_int("ACT_UNINITIALIZED", ACT_UNINITIALIZED);
+#endif
+#ifdef ACT_UNKNOWN_0002020E
+    expose_int("ACT_UNKNOWN_0002020E", ACT_UNKNOWN_0002020E);
 #endif
 #ifdef ACT_UNLOCKING_KEY_DOOR
     expose_int("ACT_UNLOCKING_KEY_DOOR", ACT_UNLOCKING_KEY_DOOR);

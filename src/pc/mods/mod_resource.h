@@ -7,5 +7,7 @@
 /* Read a regular file relative to an installed mod. No component may be a
  * symlink. The caller owns the returned buffer. */
 uint8_t *mod_resource_read(const char *root, const char *relative, size_t limit, size_t *size);
+/* Check for a regular mod-owned file without following symlinks. */
+int mod_resource_exists(const char *root, const char *relative);
 
 #endif

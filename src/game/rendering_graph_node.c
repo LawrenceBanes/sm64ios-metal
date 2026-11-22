@@ -1300,6 +1300,10 @@ void geo_process_node_and_siblings(struct GraphNode *firstNode) {
                 }
 #endif
             }
+#ifdef IOS_BUILD
+            if (curGraphNode->flags & GRAPH_HOOK_PROCESS)
+                mod_runtime_on_geo_process(curGraphNode, gMatStackIndex + 1);
+#endif
         } else {
             if (curGraphNode->type == GRAPH_NODE_TYPE_OBJECT) {
                 ((struct GraphNodeObject *) curGraphNode)->throwMatrix = NULL;

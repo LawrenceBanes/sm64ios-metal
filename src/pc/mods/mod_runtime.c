@@ -38,6 +38,7 @@
 #include "object_fields.h"
 #include "engine/behavior_script.h"
 #include "engine/graph_node.h"
+#include "game/rendering_graph_node.h"
 #include "engine/geo_layout.h"
 #include "engine/math_util.h"
 #include "behavior_data.h"
@@ -153,7 +154,9 @@ enum { HOOK_UPDATE = 0, HOOK_MARIO_UPDATE = 1, HOOK_BEFORE_MARIO_UPDATE = 2,
        HOOK_ON_SET_CAMERA_MODE = 19, HOOK_ON_CHANGE_CAMERA_ANGLE = 24,
        HOOK_ON_OBJECT_RENDER = 20, HOOK_OBJECT_SET_MODEL = 28,
        HOOK_ON_PACKET_RECEIVE = 22, HOOK_ON_PAUSE_EXIT = 17, HOOK_ALLOW_HAZARD_SURFACE = 26,
-       HOOK_ON_EXIT = 34, HOOK_ON_HUD_RENDER_BEHIND = 36, HOOK_MIRROR_MARIO_RENDER = 38 };
+       HOOK_ON_DIALOG = 33, HOOK_ON_EXIT = 34, HOOK_ON_HUD_RENDER_BEHIND = 36,
+       HOOK_MIRROR_MARIO_RENDER = 38, HOOK_ON_NAMETAGS_RENDER = 46,
+       HOOK_ON_GEO_PROCESS = 48 };
 
 typedef struct Mod Mod;
 typedef struct ModHook ModHook;
@@ -175,6 +178,9 @@ typedef struct ModSyncHook ModSyncHook;
 typedef struct ModTexture ModTexture;
 typedef struct DynosModel DynosModel;
 static float checked_lua_finite_float(lua_State *L, int index, const char *name);
+static int server_settings_index(lua_State *L);
+static int server_settings_newindex(lua_State *L);
+static int l_mod_storage_save(lua_State *L);
 
 struct ModHook { Mod *owner; char *file; int event; int function_ref; bool enabled; bool invalid_output_reported; ModHook *next_global; ModHook *next_owned; };
 struct ModSyncHook { Mod *owner; char *file; int table_ref; int field_ref; int tag_ref; int function_ref; bool enabled; ModSyncHook *next_global; ModSyncHook *next_owned; };
@@ -266,6 +272,7 @@ struct Mod {
     bool collision_fix_unavailable_warned;
     bool popup_markup_warned;
     bool chat_popup_warned;
+    bool dialog_text_warned;
     uint64_t behavior_lookup_warned_ids[MOD_BEHAVIOR_WARNING_WORDS];
     bool behavior_lookup_unknown_warned;
     bool network_send_warned;
@@ -1859,6 +1866,14 @@ static void push_graph_node(lua_State *L, struct GraphNode *node) {
     luaL_getmetatable(L, "sm64.mod.GraphNode"); lua_setmetatable(L, -2);
 }
 
+static int l_geo_get_current_root(lua_State *L) {
+    (void)L;
+    if (!gCurGraphNodeRoot)
+        return luaL_error(L, "geo_get_current_root is available only during GeoLayout traversal");
+    push_graph_node(L, &gCurGraphNodeRoot->node);
+    return 1;
+}
+
 static void push_direct_vector(lua_State *L, bool is_float, void *values) {
     LuaUserdata *ud = lua_newuserdata(L, sizeof(*ud));
     *ud = (LuaUserdata){ .kind = is_float ? LUA_UD_VEC_F : LUA_UD_VEC_S,
@@ -2837,6 +2852,17 @@ static int graph_node_index(lua_State *L) {
     LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_GRAPH_NODE, "sm64.mod.GraphNode");
     const char *key = luaL_checkstring(L, 2);
     if (!strcmp(key, "flags")) lua_pushinteger(L, (uint16_t)ud->graph_node->flags);
+    else if (!strcmp(key, "hookProcess")) lua_pushboolean(L, (ud->graph_node->flags & GRAPH_HOOK_PROCESS) != 0);
+    else if (ud->graph_node->type == GRAPH_NODE_TYPE_ROOT &&
+             (!strcmp(key, "x") || !strcmp(key, "y") || !strcmp(key, "width") ||
+              !strcmp(key, "height") || !strcmp(key, "areaIndex"))) {
+        struct GraphNodeRoot *root = (struct GraphNodeRoot *)ud->graph_node;
+        if (!strcmp(key, "x")) lua_pushinteger(L, root->x);
+        else if (!strcmp(key, "y")) lua_pushinteger(L, root->y);
+        else if (!strcmp(key, "width")) lua_pushinteger(L, root->width);
+        else if (!strcmp(key, "height")) lua_pushinteger(L, root->height);
+        else lua_pushinteger(L, root->areaIndex);
+    }
     else return luaL_error(L, "GraphNode field '%s' is unsupported by this adapter", key);
     return 1;
 }
@@ -2844,6 +2870,23 @@ static int graph_node_index(lua_State *L) {
 static int graph_node_newindex(lua_State *L) {
     LuaUserdata *ud = checked_object_proxy(L, 1, LUA_UD_GRAPH_NODE, "sm64.mod.GraphNode");
     const char *key = luaL_checkstring(L, 2);
+    if (!strcmp(key, "hookProcess")) {
+        if (lua_toboolean(L, 3)) ud->graph_node->flags |= GRAPH_HOOK_PROCESS;
+        else ud->graph_node->flags &= (s16)~GRAPH_HOOK_PROCESS;
+        return 0;
+    }
+    if (ud->graph_node->type == GRAPH_NODE_TYPE_ROOT &&
+        (!strcmp(key, "x") || !strcmp(key, "y") || !strcmp(key, "width") || !strcmp(key, "height"))) {
+        lua_Integer value = luaL_checkinteger(L, 3);
+        if (value < INT16_MIN || value > INT16_MAX)
+            return luaL_argerror(L, 3, "root viewport value must fit signed 16-bit coordinates");
+        struct GraphNodeRoot *root = (struct GraphNodeRoot *)ud->graph_node;
+        if (!strcmp(key, "x")) root->x = (s16)value;
+        else if (!strcmp(key, "y")) root->y = (s16)value;
+        else if (!strcmp(key, "width")) root->width = (s16)value;
+        else root->height = (s16)value;
+        return 0;
+    }
     if (strcmp(key, "flags")) return luaL_error(L, "GraphNode field '%s' is read-only or unsupported", key);
     lua_Integer flags = luaL_checkinteger(L, 3);
     if (flags < 0 || flags > UINT16_MAX) return luaL_argerror(L, 3, "graph flags must fit the engine's 16-bit field");
@@ -2904,11 +2947,13 @@ static int l_hook_event(lua_State *L) {
     luaL_checktype(L, 2, LUA_TFUNCTION);
     if (event < 0 || event >= MOD_EVENT_COUNT) return luaL_error(L, "unknown CoopDX hook event id %d", event);
     if (!sCurrentMod) return luaL_error(L, "hook_event must be called while loading a mod");
-    if (event == HOOK_ON_PACKET_RECEIVE) {
+    if (event == HOOK_ON_PACKET_RECEIVE || event == HOOK_ON_NAMETAGS_RENDER) {
         if (!sCurrentMod->packet_hook_warned) {
             sCurrentMod->packet_hook_warned = true;
             mod_log("warning", sCurrentMod->name,
-                    "HOOK_ON_PACKET_RECEIVE (22) is inactive: multiplayer packet transport is unavailable");
+                    event == HOOK_ON_PACKET_RECEIVE
+                      ? "HOOK_ON_PACKET_RECEIVE (22) is inactive: multiplayer packet transport is unavailable"
+                      : "HOOK_ON_NAMETAGS_RENDER (46) is inactive: remote players and multiplayer nametags are unavailable");
         }
         return 0;
     }
@@ -2931,7 +2976,8 @@ static int l_hook_event(lua_State *L) {
         && event != HOOK_ON_SET_CAMERA_MODE && event != HOOK_ON_CHANGE_CAMERA_ANGLE
         && event != HOOK_ON_DEATH && event != HOOK_ON_PAUSE_EXIT
         && event != HOOK_ALLOW_HAZARD_SURFACE && event != 30
-        && event != HOOK_ON_EXIT && event != HOOK_MIRROR_MARIO_RENDER)
+        && event != HOOK_ON_DIALOG && event != HOOK_ON_EXIT && event != HOOK_MIRROR_MARIO_RENDER
+        && event != HOOK_ON_GEO_PROCESS)
         return luaL_error(L, "CoopDX hook event %d is not supported by the current engine adapter", event);
     lua_pushvalue(L, 2);
     if (!add_hook(sCurrentMod, event, luaL_ref(L, LUA_REGISTRYINDEX)))
@@ -4326,6 +4372,64 @@ static int l_djui_hud_print_text(lua_State *L) {
     return 0;
 }
 
+/* Preserve CoopDX's 7-argument API used by Character Select. The current
+ * renderer records text for the current HUD frame but does not expose the
+ * engine's previous-frame display-list interpolation fraction. */
+static int l_djui_hud_print_text_interpolated(lua_State *L) {
+    if (lua_isnoneornil(L, 1)) return 0;
+    size_t length = 0;
+    const char *text = luaL_checklstring(L, 1, &length);
+    (void)checked_lua_finite_float(L, 2, "djui_hud_print_text_interpolated");
+    (void)checked_lua_finite_float(L, 3, "djui_hud_print_text_interpolated");
+    float previous_scale = checked_lua_finite_float(L, 4, "djui_hud_print_text_interpolated");
+    float x = checked_lua_finite_float(L, 5, "djui_hud_print_text_interpolated");
+    float y = checked_lua_finite_float(L, 6, "djui_hud_print_text_interpolated");
+    float scale = checked_lua_finite_float(L, 7, "djui_hud_print_text_interpolated");
+    if (length > 255) return luaL_error(L, "djui_hud_print_text_interpolated: text exceeds the 255-byte HUD limit");
+    if (previous_scale <= 0.0f || previous_scale > 64.0f || scale <= 0.0f || scale > 64.0f)
+        return luaL_argerror(L, 4, "interpolated text scales must be positive and no larger than 64");
+    if (sCurrentMod && !sCurrentMod->hud_interpolation_warned) {
+        mod_log("warning", sCurrentMod->name,
+                "djui_hud_print_text_interpolated draws the current-frame endpoint; display-list frame interpolation is unavailable");
+        sCurrentMod->hud_interpolation_warned = true;
+    }
+    if (!mod_hud_print_text(text, x, y, scale, scale))
+        return luaL_error(L, "djui_hud_print_text_interpolated: invalid font/scale or per-frame HUD command limit reached (256)");
+    return 0;
+}
+
+static int l_log_to_console(lua_State *L) {
+    size_t length = 0;
+    const char *message = luaL_checklstring(L, 1, &length);
+    int level = (int)luaL_optinteger(L, 2, 0);
+    if (length > 1023) return luaL_error(L, "log_to_console: message exceeds the 1023-byte diagnostic limit");
+    if (level < 0 || level > 2) return luaL_argerror(L, 2, "console level must be INFO (0), WARNING (1), or ERROR (2)");
+    mod_log(level == 1 ? "warning" : level == 2 ? "error" : "info",
+            sCurrentMod ? sCurrentMod->name : NULL, message);
+    return 0;
+}
+
+static int l_get_date_and_time(lua_State *L) {
+    time_t now = time(NULL);
+    struct tm local;
+    if (now == (time_t)-1 || !localtime_r(&now, &local)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 6);
+#define PUSH_DATE_FIELD(name, value) do { lua_pushinteger(L, (lua_Integer)(value)); lua_setfield(L, -2, (name)); } while (0)
+    /* Preserve the upstream CoopDX DateTime layout: year since 1900 and a
+     * zero-based month, matching struct tm. */
+    PUSH_DATE_FIELD("year", local.tm_year);
+    PUSH_DATE_FIELD("month", local.tm_mon);
+    PUSH_DATE_FIELD("day", local.tm_mday);
+    PUSH_DATE_FIELD("hour", local.tm_hour);
+    PUSH_DATE_FIELD("minute", local.tm_min);
+    PUSH_DATE_FIELD("second", local.tm_sec);
+#undef PUSH_DATE_FIELD
+    return 1;
+}
+
 /* CoopDX scripts use angle helpers in the engine's 16-bit binary-angle
  * domain. Delegate to SM64's own lookup-table implementation so Lua mods
  * observe the same rounding and quadrant behavior as native gameplay. */
@@ -4454,6 +4558,14 @@ static int l_vec3f_set(lua_State *L) {
     return 0;
 }
 
+static int l_vec3f_zero(lua_State *L) {
+    lua_createtable(L, 0, 3);
+    lua_pushnumber(L, 0.0); lua_setfield(L, -2, "x");
+    lua_pushnumber(L, 0.0); lua_setfield(L, -2, "y");
+    lua_pushnumber(L, 0.0); lua_setfield(L, -2, "z");
+    return 1;
+}
+
 static int l_vec3f_copy(lua_State *L) {
     float values[3];
     check_vec3_argument(L, 2, values, "vec3f_copy");
@@ -4553,7 +4665,12 @@ static int l_hud_get_value(lua_State *L) {
         case 2: value = gHudDisplay.stars; break;
         case 3: value = gHudDisplay.wedges; break;
         case 4: value = gHudDisplay.keys; break;
-        case 5: value = gHudDisplay.flags; break;
+        case 5: {
+            value = gHudDisplay.flags & ~HUD_DISPLAY_FLAG_CAMERA_AND_POWER;
+            if (gHudDisplay.flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER)
+                value |= 0x80 | 0x100; /* CoopDX's split camera/power view of native combined flag. */
+            break;
+        }
         case 6: value = gHudDisplay.timer; break;
         case 7: value = get_hud_camera_status(); break;
         default: return luaL_argerror(L, 1, "expected a HUD_DISPLAY_* value from 0 through 7");
@@ -4571,7 +4688,13 @@ static int l_hud_set_value(lua_State *L) {
         case 2: gHudDisplay.stars = (s16)value; break;
         case 3: gHudDisplay.wedges = (s16)value; break;
         case 4: gHudDisplay.keys = (s16)value; break;
-        case 5: gHudDisplay.flags = (s16)value; break;
+        case 5: {
+            int flags = value & ~(0x80 | 0x100 | HUD_DISPLAY_FLAG_CAMERA_AND_POWER);
+            if (value & (0x80 | 0x100 | HUD_DISPLAY_FLAG_CAMERA_AND_POWER))
+                flags |= HUD_DISPLAY_FLAG_CAMERA_AND_POWER;
+            gHudDisplay.flags = (s16)flags;
+            break;
+        }
         case 6: gHudDisplay.timer = (u16)value; break;
         case 7: set_hud_camera_status((s16)value); break;
         default: return luaL_argerror(L, 1, "expected a HUD_DISPLAY_* value from 0 through 7");
@@ -4648,6 +4771,15 @@ bool mod_runtime_native_texture_lookup(const char *name, ModRuntimeNativeTexture
         { "sparkles_seg4_texture_04029490", { "actors/sparkle/sparkle_4.rgba16", 32, 32, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
         { "sparkles_seg4_texture_04029C90", { "actors/sparkle/sparkle_5.rgba16", 32, 32, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
         { "texture_hud_char_star", { "textures/segment2/segment2.05C00.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_apostrophe", { "textures/segment2/segment2.04800.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_double_quote", { "textures/segment2/segment2.04A00.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_coin", { "textures/segment2/segment2.05800.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_mario_head", { "textures/segment2/segment2.05A00.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_camera", { "textures/segment2/segment2.07B50.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_lakitu", { "textures/segment2/segment2.07D50.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_no_camera", { "textures/segment2/segment2.07F50.rgba16", 16, 16, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_arrow_up", { "textures/segment2/segment2.08150.rgba16", 8, 8, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
+        { "texture_hud_char_arrow_down", { "textures/segment2/segment2.081D0.rgba16", 8, 8, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
         { "gd_texture_red_star_0", { "textures/intro_raw/red_star_0.rgba16", 32, 32, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
         { "gd_texture_red_star_1", { "textures/intro_raw/red_star_1.rgba16", 32, 32, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
         { "gd_texture_red_star_2", { "textures/intro_raw/red_star_2.rgba16", 32, 32, G_IM_FMT_RGBA, G_IM_SIZ_16b } },
@@ -4785,6 +4917,8 @@ static int l_set_mario_action(lua_State *L) {
     if (!m) return luaL_error(L, "Mario state is unavailable");
     uint32_t action = (uint32_t)luaL_checkinteger(L, 2);
     uint32_t arg = (uint32_t)luaL_optinteger(L, 3, 0);
+    if (action == ACT_BUBBLED)
+        return luaL_error(L, "ACT_BUBBLED requires CoopDX multiplayer bubble synchronization, unavailable in this single-player runtime");
     uint32_t result = set_mario_action(m, action, arg);
     lua_pushinteger(L, result);
     return 1;
@@ -5022,6 +5156,22 @@ static int l_audio_stream_set_looping(lua_State *L) {
     uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
     if (!mod_audio_stream_set_looping(sCurrentMod, *handle, lua_toboolean(L, 2)))
         return luaL_error(L, "audio_stream_set_looping: stream is stale or belongs to another mod");
+    return 0;
+}
+
+static int l_audio_stream_set_loop_points(lua_State *L) {
+    uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
+    lua_Number start_value = luaL_checknumber(L, 2);
+    lua_Number end_value = luaL_checknumber(L, 3);
+    if (!isfinite((double)start_value) || !isfinite((double)end_value) ||
+        start_value < 0 || end_value < 0 ||
+        start_value > UINT_MAX || end_value > UINT_MAX)
+        return luaL_error(L, "audio_stream_set_loop_points: points must be finite non-negative sample-frame positions");
+    /* CoopDX scripts commonly calculate sample positions with floating-point
+     * duration * rate expressions; match its integer-frame truncation. */
+    if (!mod_audio_stream_set_loop_points(sCurrentMod, *handle,
+                                           (unsigned)start_value, (unsigned)end_value))
+        return luaL_error(L, "audio_stream_set_loop_points: invalid stream or range outside decoded audio");
     return 0;
 }
 
@@ -5301,6 +5451,33 @@ static int l_network_send_unsupported(lua_State *L) {
 /* This runtime has no lobby transport. In its offline game loop the sole
  * local player owns world state, so server-authority checks are true while
  * packet synchronization remains explicitly unavailable. */
+static const uint8_t sDefaultMarioPalette[8][3] = {
+    { 0x00, 0x00, 0xff }, { 0xff, 0x00, 0x00 }, { 0xff, 0xff, 0xff },
+    { 0x72, 0x1c, 0x0e }, { 0x73, 0x06, 0x00 }, { 0xfe, 0xc1, 0x79 },
+    { 0xff, 0x00, 0x00 }, { 0xff, 0x00, 0x00 },
+};
+
+static int l_network_player_get_palette_color(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    int part = (int)luaL_checkinteger(L, 2);
+    if (part < 0 || part >= 8) return luaL_argerror(L, 2, "palette part must be 0..7");
+    lua_getfield(L, 1, "globalIndex");
+    bool local_player = lua_tointeger(L, -1) == 0;
+    lua_pop(L, 1);
+    if (!local_player) return luaL_error(L, "palette lookup for remote players requires multiplayer");
+    lua_newtable(L);
+    lua_pushinteger(L, sDefaultMarioPalette[part][0]); lua_setfield(L, -2, "r");
+    lua_pushinteger(L, sDefaultMarioPalette[part][1]); lua_setfield(L, -2, "g");
+    lua_pushinteger(L, sDefaultMarioPalette[part][2]); lua_setfield(L, -2, "b");
+    return 1;
+}
+
+static int l_network_player_get_override_palette_color(lua_State *L) {
+    /* No runtime recoloring exists in the native renderer yet; return the
+     * exact upstream default palette until override material binding exists. */
+    return l_network_player_get_palette_color(L);
+}
+
 static int l_network_is_server(lua_State *L) {
     if (lua_gettop(L) != 0) return luaL_error(L, "network_is_server expects no arguments");
     if (sCurrentMod && !sCurrentMod->multiplayer_settings_warned) {
@@ -6153,6 +6330,39 @@ static int l_mod_storage_load(lua_State *L) {
     return 1;
 }
 
+static int l_mod_storage_load_bool(lua_State *L) {
+    Mod *mod = sCurrentMod;
+    if (!mod) return luaL_error(L, "mod_storage_load_bool() is only available while a mod is executing");
+    size_t key_length = 0;
+    const char *key = luaL_checklstring(L, 1, &key_length);
+    bool default_value = lua_isnoneornil(L, 2) ? false : lua_toboolean(L, 2);
+    if (!key_length || key_length > MOD_STORAGE_MAX_ENTRY || memchr(key, '\0', key_length))
+        return luaL_error(L, "mod_storage_load_bool() key must contain 1..%d bytes", MOD_STORAGE_MAX_ENTRY);
+    if (!mod->storage_loaded && !mod_storage_read_file(mod) && !mod->storage_failed)
+        mod_log("error", mod->name, "could not read sandboxed mod storage");
+    ModStorageEntry *entry = mod_storage_find(mod, key, key_length);
+    lua_pushboolean(L, entry ? !strcmp(entry->value, "true") : default_value);
+    return 1;
+}
+
+static int l_mod_storage_save_bool(lua_State *L) {
+    luaL_checktype(L, 2, LUA_TBOOLEAN);
+    lua_pushvalue(L, 1);
+    lua_pushstring(L, lua_toboolean(L, 2) ? "true" : "false");
+    return l_mod_storage_save(L);
+}
+
+static int l_mod_file_exists(lua_State *L) {
+    size_t length = 0;
+    const char *relative = luaL_checklstring(L, 1, &length);
+    if (!sCurrentMod || !sCurrentMod->path[0])
+        return luaL_error(L, "mod_file_exists: no owning mod is active");
+    if (length == 0 || length >= 240 || memchr(relative, '\0', length))
+        return luaL_argerror(L, 1, "relative path must be 1..239 bytes");
+    lua_pushboolean(L, mod_resource_exists(sCurrentMod->path, relative));
+    return 1;
+}
+
 static int l_mod_storage_save(lua_State *L) {
     Mod *mod = sCurrentMod;
     if (!mod) return luaL_error(L, "mod_storage_save() is only available while a mod is executing");
@@ -6555,7 +6765,17 @@ static bool set_mod_environment(lua_State *L, int function_index, Mod *mod) {
         }
         lua_setfield(L, -2, "gPlayerSyncTable");
         lua_newtable(L);
-        int active_mods_index = 1;
+        lua_newtable(L);
+        lua_pushcfunction(L, server_settings_index); lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, server_settings_newindex); lua_setfield(L, -2, "__newindex");
+        lua_setmetatable(L, -2);
+        lua_setfield(L, -2, "gServerSettings");
+        lua_newtable(L);
+        lua_pushboolean(L, false); lua_setfield(L, -2, "showHealth");
+        lua_setfield(L, -2, "gNametagsSettings");
+        lua_newtable(L);
+        /* CoopDX exposes player/mod arrays using zero-based indices. */
+        int active_mods_index = 0;
         for (Mod *active = sMods; active; active = active->next) {
             if (!active->enabled) continue;
             lua_newtable(L);
@@ -6846,6 +7066,15 @@ static int server_settings_index(lua_State *L) {
         lua_pushinteger(L, mod_runtime_stay_in_level_after_star() ? 1 : 0);
         return 1;
     }
+    if (!strcmp(key, "enablePlayerList") || !strcmp(key, "enablePlayersInLevelDisplay")) {
+        if (sCurrentMod && !sCurrentMod->multiplayer_settings_warned) {
+            sCurrentMod->multiplayer_settings_warned = true;
+            mod_log("warning", sCurrentMod->name,
+                    "gServerSettings player-list fields are false: multiplayer UI is unavailable in this single-player runtime");
+        }
+        lua_pushboolean(L, false);
+        return 1;
+    }
     if (!strcmp(key, "playerInteractions") || !strcmp(key, "playerKnockbackStrength") ||
         !strcmp(key, "bubbleDeath")) {
         if (sCurrentMod && !sCurrentMod->multiplayer_settings_warned) {
@@ -6923,6 +7152,9 @@ static void register_api(void) {
     /* CoopDX CharacterType values; this engine currently exposes only native Mario. */
     expose_int("CT_MARIO", 0); expose_int("CT_LUIGI", 1); expose_int("CT_TOAD", 2);
     expose_int("CT_WALUIGI", 3); expose_int("CT_WARIO", 4); expose_int("CT_MAX", 5);
+    expose_int("PANTS", 0); expose_int("SHIRT", 1); expose_int("GLOVES", 2);
+    expose_int("SHOES", 3); expose_int("HAIR", 4); expose_int("SKIN", 5);
+    expose_int("CAP", 6); expose_int("EMBLEM", 7); expose_int("PLAYER_PART_MAX", 8);
     expose_int("UNKNOWN_LOCAL_INDEX", UINT8_MAX);
     expose_int("ROTATION_PIVOT_X_LEFT", 0);
     expose_int("ROTATION_PIVOT_X_RIGHT", 1);
@@ -7018,6 +7250,7 @@ static void register_api(void) {
     register_api_function("audio_stream_load", l_audio_stream_load);
     register_api_function("audio_stream_play", l_audio_stream_play);
     register_api_function("audio_stream_set_looping", l_audio_stream_set_looping);
+    register_api_function("audio_stream_set_loop_points", l_audio_stream_set_loop_points);
     register_api_function("audio_stream_stop", l_audio_stream_stop);
     register_api_function("audio_stream_destroy", l_audio_stream_destroy);
     register_api_function("smlua_audio_utils_replace_sequence", l_smlua_audio_utils_replace_sequence);
@@ -7030,6 +7263,8 @@ static void register_api(void) {
     register_api_function("network_send_object", l_network_send_object_single_player);
     register_api_function("network_send", l_network_send_unsupported);
     register_api_function("network_is_server", l_network_is_server);
+    register_api_function("network_player_get_palette_color", l_network_player_get_palette_color);
+    register_api_function("network_player_get_override_palette_color", l_network_player_get_override_palette_color);
     register_api_function("network_get_player_text_color_string", l_network_get_player_text_color_string);
     lua_pushliteral(sLua, "network_global_index_from_local");
     lua_pushcclosure(sLua, l_network_index_single_player, 1);
@@ -7048,11 +7283,15 @@ static void register_api(void) {
     register_api_function("djui_hud_reset_color", l_djui_hud_reset_color);
     register_api_function("djui_hud_measure_text", l_djui_hud_measure_text);
     register_api_function("djui_hud_print_text", l_djui_hud_print_text);
+    register_api_function("djui_hud_print_text_interpolated", l_djui_hud_print_text_interpolated);
+    register_api_function("log_to_console", l_log_to_console);
+    register_api_function("get_date_and_time", l_get_date_and_time);
     register_api_function("atan2s", l_atan2s);
     register_api_function("sins", l_sins);
     register_api_function("coss", l_coss);
     register_api_function("approach_s32", l_approach_s32);
     register_api_function("vec3f_set", l_vec3f_set);
+    register_api_function("gVec3fZero", l_vec3f_zero);
     register_api_function("vec3f_copy", l_vec3f_copy);
     register_api_function("vec3f_normalize", l_vec3f_normalize);
     register_api_function("vec3f_dist", l_vec3f_dist);
@@ -7070,6 +7309,7 @@ static void register_api(void) {
     register_api_function("hud_get_value", l_hud_get_value);
     register_api_function("hud_set_value", l_hud_set_value);
     register_api_function("get_texture_info", l_get_texture_info);
+    register_api_function("geo_get_current_root", l_geo_get_current_root);
     register_api_function("is_game_paused", l_is_game_paused);
     register_api_function("mario_set_forward_vel", l_mario_set_forward_vel);
     register_api_function("set_mario_animation", l_set_mario_animation);
@@ -7081,6 +7321,9 @@ static void register_api(void) {
     register_api_function("require", l_mod_require);
     register_api_function("mod_storage_load", l_mod_storage_load);
     register_api_function("mod_storage_save", l_mod_storage_save);
+    register_api_function("mod_storage_load_bool", l_mod_storage_load_bool);
+    register_api_function("mod_storage_save_bool", l_mod_storage_save_bool);
+    register_api_function("mod_file_exists", l_mod_file_exists);
     register_api_function("hook_mod_menu_button", l_hook_mod_menu_button);
     register_api_function("hook_mod_menu_checkbox", l_hook_mod_menu_checkbox);
     register_api_function("hook_mod_menu_slider", l_hook_mod_menu_slider);
@@ -7127,6 +7370,18 @@ static void register_api(void) {
     expose_int("FONT_CUSTOM_HUD", 4);
     expose_int("FONT_RECOLOR_HUD", 5);
     expose_int("FONT_SPECIAL", 6);
+    expose_int("FONT_COUNT", 7);
+    /* This port's vanilla MarioAnimID range contains 209 entries (0..208). */
+    expose_int("CHAR_ANIM_MAX", 209);
+    /* Character Select's compatibility guard checks the CoopDX v41 API
+     * floor, not the host game's upstream build string. Individual absent
+     * APIs remain gated and diagnosed by this native runtime. */
+    expose_int("VERSION_NUMBER", 41);
+    expose_int("CONSOLE_MESSAGE_INFO", 0);
+    expose_int("CONSOLE_MESSAGE_WARNING", 1);
+    expose_int("CONSOLE_MESSAGE_ERROR", 2);
+    /* This build has only one local MarioState and no network player array. */
+    expose_int("MAX_PLAYERS", 1);
     expose_int("HOOK_ALLOW_INTERACT", HOOK_ALLOW_INTERACT);
     expose_int("HOOK_ON_INTERACT", HOOK_ON_INTERACT);
     expose_int("HOOK_ON_DEATH", HOOK_ON_DEATH);
@@ -7141,6 +7396,18 @@ static void register_api(void) {
     expose_int("HUD_DISPLAY_FLAGS", 5);
     expose_int("HUD_DISPLAY_TIMER", 6);
     expose_int("HUD_DISPLAY_CAMERA_STATUS", 7);
+    expose_int("HUD_DISPLAY_FLAG_LIVES", 0x0001);
+    expose_int("HUD_DISPLAY_FLAG_COIN_COUNT", 0x0002);
+    expose_int("HUD_DISPLAY_FLAG_STAR_COUNT", 0x0004);
+    expose_int("HUD_DISPLAY_FLAG_CAMERA_AND_POWER", 0x0008);
+    expose_int("HUD_DISPLAY_FLAG_KEYS", 0x0010);
+    expose_int("HUD_DISPLAY_FLAG_UNKNOWN_0020", 0x0020);
+    expose_int("HUD_DISPLAY_FLAG_TIMER", 0x0040);
+    expose_int("HUD_DISPLAY_FLAG_CAMERA", 0x0080);
+    expose_int("HUD_DISPLAY_FLAG_POWER", 0x0100);
+    expose_int("HUD_DISPLAY_FLAG_EMPHASIZE_POWER", 0x8000);
+    expose_int("HUD_DISPLAY_NONE", 0x0000);
+    expose_int("HUD_DISPLAY_DEFAULT", 0x003F);
     expose_int("HAZARD_TYPE_LAVA_FLOOR", 0);
     expose_int("HAZARD_TYPE_LAVA_WALL", 1);
     expose_int("HAZARD_TYPE_QUICKSAND", 2);
@@ -7162,6 +7429,9 @@ static void register_api(void) {
     expose_int("CAM_ANGLE_MARIO", CAM_ANGLE_MARIO);
     expose_int("CAM_ANGLE_LAKITU", CAM_ANGLE_LAKITU);
     expose_int("HOOK_ON_EXIT", HOOK_ON_EXIT);
+    expose_int("HOOK_ON_DIALOG", HOOK_ON_DIALOG);
+    expose_int("HOOK_ON_NAMETAGS_RENDER", HOOK_ON_NAMETAGS_RENDER);
+    expose_int("HOOK_ON_GEO_PROCESS", HOOK_ON_GEO_PROCESS);
     expose_int("HOOK_MIRROR_MARIO_RENDER", HOOK_MIRROR_MARIO_RENDER);
 
     push_camera(sLua);
@@ -7639,6 +7909,42 @@ bool mod_runtime_on_death(struct MarioState *m) {
     return allow_death;
 }
 
+void mod_runtime_on_geo_process(struct GraphNode *node, int matrix_stack_index) {
+    if (!sLua || !node || !(node->flags & GRAPH_HOOK_PROCESS)) return;
+    for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
+        if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_ON_GEO_PROCESS) continue;
+        push_graph_node(sLua, node);
+        lua_pushinteger(sLua, matrix_stack_index);
+        if (!call_ref(hook->owner, hook->file, hook->function_ref,
+                      "HOOK_ON_GEO_PROCESS", 2, 0)) {
+            hook->enabled = false;
+            release_ref(&hook->function_ref);
+        }
+    }
+}
+
+bool mod_runtime_on_dialog(int dialog_id) {
+    bool allow_dialog = true;
+    if (!sLua) return true;
+    for (ModHook *hook = sHooks; hook; hook = hook->next_global) {
+        if (!hook->enabled || !hook->owner->enabled || hook->event != HOOK_ON_DIALOG) continue;
+        lua_pushinteger(sLua, dialog_id);
+        if (!call_ref(hook->owner, hook->file, hook->function_ref, "HOOK_ON_DIALOG", 1, 2)) {
+            hook->enabled = false;
+            release_ref(&hook->function_ref);
+            continue;
+        }
+        if (lua_isboolean(sLua, -2) && !lua_toboolean(sLua, -2)) allow_dialog = false;
+        if (lua_isstring(sLua, -1) && !hook->owner->dialog_text_warned) {
+            hook->owner->dialog_text_warned = true;
+            mod_log("warning", hook->owner->name,
+                    "HOOK_ON_DIALOG text overrides are not rendered by the native dialog path yet; original text remains visible");
+        }
+        lua_pop(sLua, 2);
+    }
+    return allow_dialog;
+}
+
 bool mod_runtime_on_pause_exit(bool used_exit_to_castle) {
     bool allow_exit = true;
     if (!sLua) return true;
@@ -7749,6 +8055,36 @@ bool mod_runtime_use_act_select(int32_t level, bool *use_act_select) {
     return false;
 }
 
+static void install_global_textures(void) {
+    static const struct { const char *field, *texture; } entries[] = {
+        { "camera", "texture_hud_char_camera" },
+        { "lakitu", "texture_hud_char_lakitu" },
+        { "no_camera", "texture_hud_char_no_camera" },
+        { "arrow_up", "texture_hud_char_arrow_up" },
+        { "arrow_down", "texture_hud_char_arrow_down" },
+        { "coin", "texture_hud_char_coin" },
+        { "star", "texture_hud_char_star" },
+        { "apostrophe", "texture_hud_char_apostrophe" },
+        { "double_quote", "texture_hud_char_double_quote" },
+        { "mario_head", "texture_hud_char_mario_head" },
+        /* CoopDX-only alternate character icons remain explicitly unavailable. */
+    };
+    lua_newtable(sLua);
+    for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i) {
+        ModRuntimeNativeTexture texture;
+        if (!mod_runtime_native_texture_lookup(entries[i].texture, &texture)) continue;
+        lua_newtable(sLua);
+        lua_pushlightuserdata(sLua, (void *)texture.asset_path); lua_setfield(sLua, -2, "texture");
+        lua_pushinteger(sLua, texture.width); lua_setfield(sLua, -2, "width");
+        lua_pushinteger(sLua, texture.height); lua_setfield(sLua, -2, "height");
+        lua_pushinteger(sLua, texture.format); lua_setfield(sLua, -2, "format");
+        lua_pushinteger(sLua, texture.size); lua_setfield(sLua, -2, "size");
+        lua_pushstring(sLua, entries[i].texture); lua_setfield(sLua, -2, "name");
+        lua_setfield(sLua, -2, entries[i].field);
+    }
+    lua_setglobal(sLua, "gTextures");
+}
+
 bool mod_runtime_init(void) {
     if (sInitialized) return true;
     sLua = lua_newstate(lua_mod_alloc, &sAllocator);
@@ -7758,6 +8094,7 @@ bool mod_runtime_init(void) {
     lua_sethook(sLua, lua_instruction_budget, LUA_MASKCOUNT, MOD_INSTRUCTION_QUANTUM);
     open_safe_libraries(sLua);
     register_api();
+    install_global_textures();
     discover_mods();
     sInitialized = true;
     return true;

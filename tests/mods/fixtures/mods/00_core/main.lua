@@ -27,7 +27,9 @@ assert(not pcall(function() return bodyState.mirrorMario end))
 assert(not pcall(function() return bodyState.allowPartRotation end))
 assert(type(gActiveMods) == "table")
 local foundMetadata = false
-for _, active in ipairs(gActiveMods) do
+for i = 0, #gActiveMods do
+    local active = gActiveMods[i]
+    if active == nil then goto continue_active_mods end
     if active.relativePath == "00_core" then
         assert(active.name == "Core Fixture Display Name")
         assert(active.category == "test-suite")
@@ -35,6 +37,7 @@ for _, active in ipairs(gActiveMods) do
         assert(active.incompatible == "metadata-shared-token")
         foundMetadata = true
     end
+    ::continue_active_mods::
 end
 assert(foundMetadata)
 local cameraState = gMarioState.statusForCamera

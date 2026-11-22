@@ -14,6 +14,8 @@
 #define GRAPH_RENDER_INVISIBLE      (1 << 4)
 #define GRAPH_RENDER_HAS_ANIMATION  (1 << 5)
 #define GRAPH_RENDER_CYLBOARD       (1 << 6)
+/* Preserve the older graph-node ABI while providing CoopDX's opt-in geo hook. */
+#define GRAPH_HOOK_PROCESS          0x8000
 
 // Whether the node type has a function pointer of type GraphNodeFunc
 #define GRAPH_NODE_TYPE_FUNCTIONAL            0x100

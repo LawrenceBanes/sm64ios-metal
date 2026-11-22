@@ -24,6 +24,7 @@ struct MarioState;
 struct Object;
 struct Camera;
 struct GraphNodeObject;
+struct GraphNode;
 
 typedef struct ModRuntimeNativeTexture {
     const char *asset_path;
@@ -47,6 +48,10 @@ void mod_runtime_after_mario_update(struct MarioState *m);
 bool mod_runtime_on_death(struct MarioState *m);
 /* Returns false when a Lua HOOK_ON_PAUSE_EXIT callback vetoes the pause-menu exit. */
 bool mod_runtime_on_pause_exit(bool used_exit_to_castle);
+void mod_runtime_on_geo_process(struct GraphNode *node, int matrix_stack_index);
+/* Allows HOOK_ON_DIALOG callbacks to cancel opening. Text replacement remains
+ * observable as unsupported until the native dialog text bridge is active. */
+bool mod_runtime_on_dialog(int dialog_id);
 /* Returns false when HOOK_ON_SET_CAMERA_MODE vetoes the engine camera change. */
 bool mod_runtime_on_set_camera_mode(struct Camera *camera, int16_t mode, int16_t frames);
 /* Returns false when HOOK_ON_CHANGE_CAMERA_ANGLE vetoes a Lakitu/Mario angle change. */
