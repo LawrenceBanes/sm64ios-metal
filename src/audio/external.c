@@ -1,4 +1,5 @@
 #include <ultra64.h>
+#include <string.h>
 #include "sm64.h"
 #include "heap.h"
 #include "load.h"
@@ -13,6 +14,7 @@
 #include "seq_ids.h"
 #include "dialog_ids.h"
 #include "level_table.h"
+#include "pc/mods/mod_audio.h"
 
 #ifdef VERSION_EU
 #define EU_FLOAT(x) x ## f
@@ -445,6 +447,39 @@ u8 sBackgroundMusicDefaultVolume[] = {
 
 STATIC_ASSERT(ARRAY_COUNT(sBackgroundMusicDefaultVolume) == SEQ_COUNT,
               "change this array if you are adding sequences");
+
+static u8 sBackgroundMusicDefaultVolumeOriginal[SEQ_COUNT];
+static u8 sBackgroundMusicDefaultVolumeOriginalCaptured;
+
+static void audio_capture_background_music_default_volumes(void) {
+    if (sBackgroundMusicDefaultVolumeOriginalCaptured) return;
+    memcpy(sBackgroundMusicDefaultVolumeOriginal, sBackgroundMusicDefaultVolume,
+           sizeof(sBackgroundMusicDefaultVolumeOriginal));
+    sBackgroundMusicDefaultVolumeOriginalCaptured = TRUE;
+}
+
+void audio_mod_sequence_set_default_volume(u32 sequence_id, u8 volume) {
+    if (sequence_id >= SEQ_COUNT) return;
+    audio_capture_background_music_default_volumes();
+    sBackgroundMusicDefaultVolume[sequence_id] = volume;
+}
+
+void audio_mod_sequence_reset_default_volume(u32 sequence_id) {
+    if (sequence_id >= SEQ_COUNT) return;
+    audio_capture_background_music_default_volumes();
+    sBackgroundMusicDefaultVolume[sequence_id] = sBackgroundMusicDefaultVolumeOriginal[sequence_id];
+}
+
+static u8 audio_get_background_music_default_volume(u32 sequence_id) {
+    uint8_t bank_id, volume;
+    const uint8_t *data;
+    size_t size;
+    const void *owner;
+    if (mod_audio_sequence_override_lookup(sequence_id, &bank_id, &volume,
+            &data, &size, &owner))
+        return volume;
+    return sequence_id < SEQ_COUNT ? sBackgroundMusicDefaultVolume[sequence_id] : 0;
+}
 
 u8 sPlayer0CurSeqId = SEQUENCE_NONE;
 u8 sMusicDynamicDelay = 0;
@@ -1839,7 +1874,8 @@ u8 func_803200E4(u16 fadeTimer) {
             func_8031D838(SEQ_PLAYER_LEVEL, fadeTimer, vol);
         } else {
 #if defined(VERSION_JP) || defined(VERSION_US)
-            gSequencePlayers[SEQ_PLAYER_LEVEL].volume = sBackgroundMusicDefaultVolume[sPlayer0CurSeqId] / 127.0f;
+            gSequencePlayers[SEQ_PLAYER_LEVEL].volume =
+                audio_get_background_music_default_volume(sPlayer0CurSeqId) / 127.0f;
 #endif
             func_8031D7B0(SEQ_PLAYER_LEVEL, fadeTimer);
         }

@@ -59,6 +59,9 @@ void play_race_fanfare(void);
 void play_toads_jingle(void);
 void sound_reset(u8 presetId);
 void audio_set_sound_mode(u8 arg0);
+/* CoopDX mod sequence support; IDs outside the native volume table are ignored. */
+void audio_mod_sequence_set_default_volume(u32 sequence_id, u8 volume);
+void audio_mod_sequence_reset_default_volume(u32 sequence_id);
 
 void audio_init(void); // in load.c
 

@@ -4814,6 +4814,12 @@ static int l_perform_ground_step(lua_State *L) {
     return 1;
 }
 
+static int l_stationary_ground_step(lua_State *L) {
+    struct MarioState *m = checked_mario_argument(L, 1);
+    lua_pushinteger(L, stationary_ground_step(m));
+    return 1;
+}
+
 static int l_perform_air_step(lua_State *L) {
     struct MarioState *m = checked_mario_argument(L, 1);
     uint32_t step_arg = (uint32_t)luaL_optinteger(L, 2, 0);
@@ -5030,6 +5036,40 @@ static int l_audio_stream_destroy(lua_State *L) {
     uint32_t *handle = luaL_checkudata(L, 1, "sm64.mod.AudioStream");
     if (!mod_audio_destroy(sCurrentMod, *handle))
         return luaL_error(L, "audio_stream_destroy: stream is stale or belongs to another mod");
+    return 0;
+}
+
+/* CoopDX-compatible sequence override. Assets are resolved only inside the
+ * active mod's sandbox; the upstream short name maps to sound/<name>.m64. */
+static int l_smlua_audio_utils_replace_sequence(lua_State *L) {
+    lua_Integer sequence_id = luaL_checkinteger(L, 1);
+    lua_Integer bank_id = luaL_checkinteger(L, 2);
+    lua_Integer default_volume = luaL_checkinteger(L, 3);
+    const char *name = luaL_checkstring(L, 4);
+    if (!sCurrentMod)
+        return luaL_error(L, "smlua_audio_utils_replace_sequence requires an active mod");
+    if (sequence_id < 0 || sequence_id > UINT8_MAX || bank_id < 0 || bank_id >= 64 ||
+        default_volume < 0 || default_volume > UINT8_MAX)
+        return luaL_error(L, "smlua_audio_utils_replace_sequence arguments are out of range");
+    if (!safe_relative_path(name) || strchr(name, '/') || strchr(name, '\\') ||
+        strlen(name) > 230)
+        return luaL_error(L, "sequence name must be a safe mod-local basename");
+    char relative_path[241];
+    int written = snprintf(relative_path, sizeof(relative_path), "sound/%s.m64", name);
+    if (written <= 0 || (size_t)written >= sizeof(relative_path))
+        return luaL_error(L, "sequence name is too long");
+    char resolved[241];
+    if (!mod_resolve_resource_path(sCurrentMod, relative_path, resolved))
+        return luaL_error(L, "smlua_audio_utils_replace_sequence: missing mod-local %s", relative_path);
+    const char *error = NULL;
+    if (!mod_audio_sequence_override_load(sCurrentMod, (uint8_t)sequence_id,
+            (uint8_t)bank_id, (uint8_t)default_volume, sCurrentMod->path, resolved, &error))
+        return luaL_error(L, "smlua_audio_utils_replace_sequence('%s'): %s",
+                          relative_path, error ? error : "registration failed");
+    audio_mod_sequence_set_default_volume((u32)sequence_id, (u8)default_volume);
+    mod_logf("info", sCurrentMod->name,
+             "registered sequence override %u using bank %u and %s",
+             (unsigned)sequence_id, (unsigned)bank_id, relative_path);
     return 0;
 }
 
@@ -6951,6 +6991,7 @@ static void register_api(void) {
     register_api_function("obj_scale_random", l_obj_scale_random);
     register_api_function("set_mario_action", l_set_mario_action);
     register_api_function("perform_ground_step", l_perform_ground_step);
+    register_api_function("stationary_ground_step", l_stationary_ground_step);
     register_api_function("perform_air_step", l_perform_air_step);
     register_api_function("mario_bonk_reflection", l_mario_bonk_reflection);
     register_api_function("mario_get_floor_class", l_mario_get_floor_class);
@@ -6979,6 +7020,7 @@ static void register_api(void) {
     register_api_function("audio_stream_set_looping", l_audio_stream_set_looping);
     register_api_function("audio_stream_stop", l_audio_stream_stop);
     register_api_function("audio_stream_destroy", l_audio_stream_destroy);
+    register_api_function("smlua_audio_utils_replace_sequence", l_smlua_audio_utils_replace_sequence);
     register_api_function("play_sound", l_play_sound);
     register_api_function("play_mario_heavy_landing_sound", l_play_mario_heavy_landing_sound);
     register_api_function("play_mario_action_sound", l_play_mario_action_sound);
@@ -7128,6 +7170,7 @@ static void register_api(void) {
     lua_setglobal(sLua, "gLakituState");
 
     expose_int("A_BUTTON", A_BUTTON); expose_int("B_BUTTON", B_BUTTON);
+    expose_int("X_BUTTON", X_BUTTON); expose_int("Y_BUTTON", Y_BUTTON);
     expose_int("Z_TRIG", Z_TRIG); expose_int("START_BUTTON", START_BUTTON);
     expose_int("U_JPAD", U_JPAD); expose_int("D_JPAD", D_JPAD);
     expose_int("L_JPAD", L_JPAD); expose_int("R_JPAD", R_JPAD);
@@ -7387,6 +7430,7 @@ static void unload_mod(Mod *mod) {
     restore_mod_visibility(mod);
     remove_render_hook_owners(mod, NULL);
     remove_native_behavior_states(mod, NULL);
+    mod_audio_sequence_override_unload(mod);
     mod_audio_unload(mod);
     mod->star_exit_setting_order = 0;
     for (int i = 0; i < MOD_LEVEL_VALUE_COUNT; ++i) {

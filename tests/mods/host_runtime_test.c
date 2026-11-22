@@ -27,6 +27,7 @@
 
 #include "sm64.h"
 #include "audio_defines.h"
+#include "audio/external.h"
 #include "level_commands.h"
 #include "macro_preset_types.h"
 #include "game/area.h"
@@ -74,6 +75,17 @@ struct GraphNode **gLoadedGraphNodes = sLoadedGraphNodeStorage;
 Gfx *gDisplayListHead;
 u8 *gGfxPoolEnd;
 struct GfxDimensions gfx_current_dimensions = { 640, 480, 4.0f / 3.0f };
+static unsigned sAudioSequenceOwnerUnloadCalls;
+static unsigned sStationaryGroundStepCalls;
+void audio_mod_sequence_owner_unload(const void *owner) {
+    assert(owner != NULL);
+    ++sAudioSequenceOwnerUnloadCalls;
+}
+void audio_mod_sequence_set_default_volume(u32 sequence_id, u8 volume) {
+    (void)sequence_id;
+    (void)volume;
+}
+void audio_mod_sequence_reset_default_volume(u32 sequence_id) { (void)sequence_id; }
 void *alloc_only_pool_alloc(struct AllocOnlyPool *pool, s32 size) {
     if (!pool || size <= 0) return NULL;
     size = (size + 7) & ~7;
@@ -698,6 +710,12 @@ s32 perform_ground_step(struct MarioState *m) {
     return GROUND_STEP_HIT_WALL;
 }
 
+s32 stationary_ground_step(struct MarioState *m) {
+    assert(m == gMarioState);
+    ++sStationaryGroundStepCalls;
+    return GROUND_STEP_NONE;
+}
+
 s32 perform_air_step(struct MarioState *m, u32 step_arg) {
     assert(m == gMarioState);
     return (s32)(100 + step_arg);
@@ -1197,6 +1215,49 @@ int main(int argc, char **argv) {
             assert(heard);
             assert(mod_runtime_set_enabled(0, false));
             printf("Lua MP3 stream: playback, music gain, stop, disable cleanup, and re-enable passed\n");
+        }
+        if (getenv("MOD_TEST_ASSERT_AUDIO_SEQUENCE")) {
+            uint8_t bank = 0, volume = 0;
+            const uint8_t *data = NULL;
+            size_t size = 0;
+            const void *owner = NULL;
+            assert(mod_audio_sequence_override_lookup(1, &bank, &volume, &data, &size, &owner));
+            assert(bank == 34 && volume == 0 && size == 16 && owner != NULL && data[0] == 0xd3);
+            unsigned unloads = sAudioSequenceOwnerUnloadCalls;
+            assert(mod_runtime_set_enabled(0, false));
+            assert(sAudioSequenceOwnerUnloadCalls == unloads + 1);
+            assert(!mod_audio_sequence_override_lookup(1, &bank, &volume, &data, &size, &owner));
+            assert(mod_runtime_set_enabled(0, true));
+            assert(mod_audio_sequence_override_lookup(1, &bank, &volume, &data, &size, &owner));
+            assert(bank == 34 && size == 16);
+            printf("Lua M64 sequence override: mod-local registration, lookup, disable cleanup, and re-enable passed\n");
+        }
+        if (getenv("MOD_TEST_DISPATCH_GTA_MISSION")) {
+            gMarioState->action = ACT_STAR_DANCE_EXIT;
+            mod_runtime_after_set_action(gMarioState);
+            int16_t pcm[4096] = {0};
+            mod_audio_mix(pcm, 2048, 0, 1);
+            bool heard = false;
+            for (size_t i = 0; i < 4096; ++i) heard |= pcm[i] != 0;
+            assert(heard);
+            mod_runtime_hud_render();
+            assert(gModHudTestTextureCount > 0 && gModHudTestTextureWidth == 1024 &&
+                   gModHudTestTextureHeight == 256);
+            printf("GTA Mission Passed original Lua: star-action stream playback and 1024x256 HUD texture submission passed in host runtime\n");
+        }
+        if (getenv("MOD_TEST_DISPATCH_CALIFORNIA")) {
+            int64_t custom_action = 0;
+            assert(mod_runtime_host_get_lua_integer("ACT_CALIFORNIA", &custom_action));
+            gMarioState->action = ACT_IDLE;
+            gMarioState->controller->buttonPressed = Y_BUTTON;
+            mod_runtime_after_mario_update(gMarioState);
+            assert(gMarioState->action == (uint32_t)custom_action);
+            gMarioState->marioObj = &sMarioObject;
+            int in_loop = 0;
+            assert(mod_runtime_mario_action(gMarioState, &in_loop));
+            assert(sStationaryGroundStepCalls > 0);
+            printf("California Gurls original Lua: Y_BUTTON entered custom action %u; animation callback reached the host stationary-ground-step shim\n",
+                   (unsigned)custom_action);
         }
         if (!possession && getenv("MOD_TEST_DISPATCH_SET_ACTION")) {
             gMarioState->action = ACT_JUMP;

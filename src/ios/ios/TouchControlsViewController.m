@@ -156,6 +156,7 @@ static int ios_next_touch_id = 1;
     
     GestureRecognizer *gestureRecognizer;
     OverlayImageView *dpadDownButton;
+    OverlayImageView *coopYButton;
 #ifdef IOS_HAT_MOVEMENT
     OverlayImageView *hatButton;
 #endif
@@ -168,7 +169,7 @@ static int ios_next_touch_id = 1;
     if (CGRectEqualToRect(lastLoggedBounds, self.view.bounds)) return;
     lastLoggedBounds = self.view.bounds;
     gfx_ios_diag_log("UIKit touch layout bounds=(%.1f,%.1f %.1fx%.1f) frame=(%.1f,%.1f %.1fx%.1f) window=%@ scene=%@ interaction=%d", self.view.bounds.origin.x, self.view.bounds.origin.y, self.view.bounds.size.width, self.view.bounds.size.height, self.view.frame.origin.x, self.view.frame.origin.y, self.view.frame.size.width, self.view.frame.size.height, self.view.window, self.view.window.windowScene.session.persistentIdentifier, self.view.userInteractionEnabled);
-    OverlayImageView *controls[] = { self.m_iv_l, self.m_iv_r, self.m_iv_a, self.m_iv_b, self.m_iv_z, self.m_iv_up, self.m_iv_down, self.m_iv_left, self.m_iv_right, self.m_iv_start, self.m_iv_menu, self.m_iv_joystick, self.m_iv_joystick_bg, dpadDownButton };
+    OverlayImageView *controls[] = { self.m_iv_l, self.m_iv_r, self.m_iv_a, self.m_iv_b, self.m_iv_z, self.m_iv_up, self.m_iv_down, self.m_iv_left, self.m_iv_right, self.m_iv_start, self.m_iv_menu, self.m_iv_joystick, self.m_iv_joystick_bg, dpadDownButton, coopYButton };
     for (NSUInteger i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
         OverlayImageView *control = controls[i];
         if (!control) continue;
@@ -219,6 +220,23 @@ static int ios_next_touch_id = 1;
     dpadLabel.textAlignment = NSTextAlignmentCenter;
     dpadLabel.userInteractionEnabled = NO;
     [dpadDownButton addSubview:dpadLabel];
+
+    /* CoopDX community movesets commonly bind an action to Y_BUTTON. Keep a
+     * dedicated touch input in the unused lower-right A/B cluster slot. */
+    coopYButton = [[[OverlayImageView alloc] initWithFrame:CGRectMake(72, 72, 56, 56)] autorelease];
+    coopYButton.image = [UIImage imageNamed:@"touch_button"];
+    coopYButton.buttonTag = Y_BUTTON;
+    coopYButton.accessibilityLabel = @"Y button";
+    coopYButton.isAccessibilityElement = YES;
+    [self.m_group_main addSubview:coopYButton];
+
+    UILabel *coopYLabel = [[[UILabel alloc] initWithFrame:coopYButton.bounds] autorelease];
+    coopYLabel.text = @"Y";
+    coopYLabel.textColor = [UIColor whiteColor];
+    coopYLabel.font = [UIFont boldSystemFontOfSize:17.0];
+    coopYLabel.textAlignment = NSTextAlignmentCenter;
+    coopYLabel.userInteractionEnabled = NO;
+    [coopYButton addSubview:coopYLabel];
     
 #ifdef IOS_HAT_MOVEMENT
     // The lower left slot in the A/B/Z cluster is unused.
@@ -271,6 +289,7 @@ static int ios_next_touch_id = 1;
     [imageViews addObject:self.m_iv_joystick];
     [imageViews addObject:self.m_iv_joystick_bg];
     [imageViews addObject:dpadDownButton];
+    [imageViews addObject:coopYButton];
     touchscreen_set_imageviews(imageViews);
 }
 

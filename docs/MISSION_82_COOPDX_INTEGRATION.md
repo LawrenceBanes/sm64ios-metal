@@ -94,12 +94,13 @@ reported omission behavior.
   committed.
 - **GTA Mission Passed** — the original CC0 package imports, decodes its
   1024×256 HUD texture, and its two original MP3 resources now resolve from
-  their `sound/` folder when requested by basename. Startup progresses to
-  `smlua_audio_utils_replace_sequence` and stops there before hook
-  registration. MP3 stream playback/looping/stop is host-tested with a
-  generated audio fixture; the original mod's callbacks and intended
-  experience have not run. Custom `.m64` sequence replacement remains a
-  concrete engine blocker.
+  their `sound/` folder when requested by basename. Its original
+  `smlua_audio_utils_replace_sequence` call now registers the mod-local M64
+  data and bank. A host probe dispatches the original star-action callback,
+  mixes its requested MP3, and reaches its HUD texture submission. The native
+  sequence loader has an ownership-aware M64 override path, but playback of
+  the original M64 through the game audio engine is not yet runtime-verified.
+  MP3 stream playback/looping/stop is also covered with a generated fixture.
 - The new stream adapter decodes local MP3/Ogg resources into bounded PCM,
   mixes them through the native audio path with the configured music gain, and
   supports play, looping changes, stop, destroy, and per-mod unload cleanup.
@@ -134,12 +135,26 @@ reported omission behavior.
   (CC0-1.0), file `boing.lua`.
 - **California Gurls** — the original archive from the CC0
   [community-mod collection](https://github.com/eros71-dev/sm64-coop-mods)
-  collection passes ZIP extraction and loads its large original animation
-  data. Its startup then stops at `smlua_audio_utils_replace_sequence`, which
-  is not implemented. The package has not yet run its custom action or DynOS
-  models, so it remains unsupported beyond import and animation decoding.
+  collection imports unchanged, decodes its 14,478-value animation, registers
+  its M64 track, and reaches its original `Y_BUTTON` custom-action transition.
+  Its host callback dispatch reaches animation selection and the
+  `stationary_ground_step` binding through a test shim. This does not validate
+  native collision stepping, model rendering, music playback, or iPhone input.
   Source and repository license: `eros71-dev/sm64-coop-mods` (CC0-1.0),
   archive `zipped/california-gurls.zip`.
+
+- `smlua_audio_utils_replace_sequence` now has bounded mod-local `.m64`
+  loading (1 MiB per track, 4 MiB globally), bank validation, latest-loaded
+  override precedence, player redirection before resource release, and
+  disable/re-enable cleanup. The native player-0 volume path handles custom
+  sequence IDs outside the stock sequence table. Synthetic production-importer
+  tests cover registration, lookup, lifetime, and re-enable; actual native
+  audio playback and malformed M64 command-stream safety still need testing.
+- CoopDX `X_BUTTON` / `Y_BUTTON` constants are exposed; SDL face inputs map to
+  them. iOS touch UI now has a dedicated Y button. In builds with the legacy
+  hat movement control, the physical SDL Y input still emits both Y and hat
+  bits to preserve the existing control while making the CoopDX binding
+  reachable.
 
 ## Test fixtures and provenance
 

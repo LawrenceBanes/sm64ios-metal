@@ -5,9 +5,11 @@
 #include "heap.h"
 #include "load.h"
 #include "seqplayer.h"
+#include "seq_ids.h"
 
 #include "pc/platform.h"
 #include "pc/fs/fs.h"
+#include "pc/mods/mod_audio.h"
 
 #define ALIGN16(val) (((val) + 0xF) & ~0xF)
 
@@ -66,6 +68,32 @@ ALSeqFile *gAlCtlHeader;
 ALSeqFile *gAlTbl;
 u8 *gAlBankSets;
 u16 gSequenceCount;
+
+static const void *sModSequencePlayerOwners[SEQUENCE_PLAYERS];
+
+void audio_mod_sequence_owner_unload(const void *owner) {
+    if (!owner) return;
+    for (u32 player = 0; player < SEQUENCE_PLAYERS; ++player) {
+        struct SequencePlayer *seqPlayer = &gSequencePlayers[player];
+        if (sModSequencePlayerOwners[player] != owner) continue;
+        u8 sequenceId = seqPlayer->seqId;
+        sModSequencePlayerOwners[player] = NULL;
+        if (sequenceId < SEQ_COUNT) {
+            uint8_t bankId, defaultVolume;
+            const uint8_t *data;
+            size_t size;
+            const void *fallbackOwner;
+            if (mod_audio_sequence_override_lookup(sequenceId, &bankId, &defaultVolume,
+                    &data, &size, &fallbackOwner))
+                audio_mod_sequence_set_default_volume(sequenceId, defaultVolume);
+            else
+                audio_mod_sequence_reset_default_volume(sequenceId);
+            load_sequence(player, sequenceId, 0);
+        } else {
+            sequence_player_disable(seqPlayer);
+        }
+    }
+}
 
 struct CtlEntry *gCtlEntries;
 
@@ -821,11 +849,46 @@ void load_sequence_internal(u32 player, u32 seqId, s32 loadAsync) {
     struct SequencePlayer *seqPlayer = &gSequencePlayers[player];
     UNUSED u32 padding[2];
 
+    /* CoopDX-compatible mod sequence override. The registry owns this M64
+     * buffer until the owning mod is unloaded; unload first redirects any
+     * active player through audio_mod_sequence_owner_unload(). */
+    {
+        uint8_t bankId, defaultVolume;
+        const uint8_t *modSequenceData;
+        size_t modSequenceSize;
+        const void *owner;
+        if (mod_audio_sequence_override_lookup(seqId, &bankId, &defaultVolume,
+                &modSequenceData, &modSequenceSize, &owner)) {
+            UNUSED modSequenceSize;
+            sequence_player_disable(seqPlayer);
+            sModSequencePlayerOwners[player] = NULL;
+            seqPlayer->defaultBank[0] = bankId;
+            if (get_bank_or_seq(&gBankLoadedPool, 0, bankId) == NULL) {
+                if (!bank_load_immediate(bankId, 0)) return;
+            } else if (gBankLoadStatus[bankId] == SOUND_LOAD_STATUS_DISCARDABLE) {
+                gBankLoadStatus[bankId] = SOUND_LOAD_STATUS_COMPLETE;
+            }
+            seqPlayer->seqId = seqId;
+            gSeqLoadStatus[seqId] = SOUND_LOAD_STATUS_COMPLETE;
+            init_sequence_player(player);
+            seqPlayer->scriptState.depth = 0;
+            seqPlayer->delay = 0;
+            seqPlayer->enabled = TRUE;
+            seqPlayer->seqData = (u8 *)modSequenceData;
+            seqPlayer->scriptState.pc = (u8 *)modSequenceData;
+            sModSequencePlayerOwners[player] = owner;
+            if (seqId < SEQ_COUNT)
+                audio_mod_sequence_set_default_volume(seqId, defaultVolume);
+            return;
+        }
+    }
+
     if (seqId >= gSequenceCount) {
         return;
     }
 
     sequence_player_disable(seqPlayer);
+    sModSequencePlayerOwners[player] = NULL;
     if (loadAsync) {
         s32 numMissingBanks = 0;
         s32 dummy = 0;

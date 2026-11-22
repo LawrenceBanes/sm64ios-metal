@@ -78,6 +78,16 @@ with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
     z.write(lua_path, "mp3_stream_fixture/main.lua")
     z.write(mp3_path, "mp3_stream_fixture/sound/tone.mp3")
 PY
+python3 - "$BUILD/audio-sequence-fixture.zip" \
+  "$ROOT/tests/mods/fixtures/audio_sequence/main.lua" <<'PY'
+import sys, zipfile
+archive_path, lua_path = sys.argv[1:]
+sequence = bytes((0xd3, 0x80, 0xd7, 0x00, 0x00, 0xdb, 0x58, 0xdd,
+                  0x8c, 0xfd, 0x83, 0x60, 0xd6, 0x00, 0x00, 0xff))
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    z.write(lua_path, "audio_sequence_fixture/main.lua")
+    z.writestr("audio_sequence_fixture/sound/silent_star.m64", sequence)
+PY
 # MOD_TEST_CFLAGS is intentionally split into compiler arguments so this same
 # host fixture can be run with sanitizers without changing its build command.
 ${CC:-cc} -std=gnu99 -O1 -g -ffunction-sections -fdata-sections -Wl,--gc-sections ${MOD_TEST_CFLAGS:-} -D_LANGUAGE_C -DF3DEX_GBI_2 -DMOD_RUNTIME_HOST_TEST -DMOD_RUNTIME_REAL_ZIP \
@@ -122,6 +132,8 @@ mkdir -p "$BUILD/mario-sound-install"
   unset MOD_TEST_EXPECT_OMM_MODELS MOD_TEST_OMM_EXTRA_MODELS
   unset MOD_TEST_OMM_ANIMATION MOD_TEST_OMM_ACTIONS MOD_TEST_REQUIRE_TEXTURE_HUD
   unset MOD_TEST_DISPATCH_DVD_TEXTURE MOD_TEST_ASSERT_UPDATE_COUNT
+  unset MOD_TEST_DISPATCH_GTA_MISSION MOD_TEST_ASSERT_AUDIO_SEQUENCE
+  unset MOD_TEST_DISPATCH_CALIFORNIA
   MOD_TEST_DISPATCH_SET_ACTION=1 "$BUILD/mod_runtime_test" --external-zip \
     "$BUILD/mario-sound-install" "$BUILD/mario-sound-fixture.zip"
 )
@@ -137,13 +149,24 @@ if [ -n "${MOD_EXTERNAL_ZIP:-}" ]; then
   "$BUILD/mod_runtime_test" --external-zip "$BUILD/external-zip" "$MOD_EXTERNAL_ZIP"
 fi
 mkdir -p "$BUILD/dynos-texture-install"
-MOD_TEST_DISPATCH_DVD_TEXTURE=1 MOD_TEST_ASSERT_UPDATE_COUNT=1 "$BUILD/mod_runtime_test" --external-zip \
-  "$BUILD/dynos-texture-install" "$BUILD/dynos-texture-fixture.zip"
+(
+  unset MOD_TEST_DISPATCH_GTA_MISSION MOD_TEST_DISPATCH_CALIFORNIA
+  MOD_TEST_DISPATCH_DVD_TEXTURE=1 MOD_TEST_ASSERT_UPDATE_COUNT=1 "$BUILD/mod_runtime_test" --external-zip \
+    "$BUILD/dynos-texture-install" "$BUILD/dynos-texture-fixture.zip"
+)
 mkdir -p "$BUILD/mp3-stream-install"
 (
   unset MOD_TEST_DISPATCH_DVD_TEXTURE MOD_TEST_ASSERT_UPDATE_COUNT
+  unset MOD_TEST_DISPATCH_GTA_MISSION MOD_TEST_DISPATCH_CALIFORNIA
   MOD_TEST_DISPATCH_MP3_STREAM=1 "$BUILD/mod_runtime_test" --external-zip \
     "$BUILD/mp3-stream-install" "$BUILD/mp3-stream-fixture.zip"
+)
+mkdir -p "$BUILD/audio-sequence-install"
+(
+  unset MOD_TEST_DISPATCH_DVD_TEXTURE MOD_TEST_ASSERT_UPDATE_COUNT MOD_TEST_DISPATCH_MP3_STREAM
+  unset MOD_TEST_DISPATCH_GTA_MISSION MOD_TEST_DISPATCH_CALIFORNIA
+  MOD_TEST_ASSERT_AUDIO_SEQUENCE=1 "$BUILD/mod_runtime_test" --external-zip \
+    "$BUILD/audio-sequence-install" "$BUILD/audio-sequence-fixture.zip"
 )
 if [ -n "${MOD_POSSESSION_ZIP:-}" ]; then
   mkdir -p "$BUILD/possession-zip"
