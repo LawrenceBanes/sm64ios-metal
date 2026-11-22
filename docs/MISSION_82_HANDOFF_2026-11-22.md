@@ -1,5 +1,9 @@
 # Mission 82 checkpoint — 2026-11-22
 
+**Resume cue:** If the user returns with this Mission 82 campaign and says
+“pickles,” resume from the latest commit on this branch and read this handoff
+first.
+
 ## Where to resume
 
 - Worktree: `/home/larry/Projects/sm64ios-mission82`
