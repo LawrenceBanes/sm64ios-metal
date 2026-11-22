@@ -77,7 +77,9 @@ reported omission behavior.
 
 ## Authentic package probes
 
-- **DVD Screensaver** — the original CC0 package now imports and starts through
+- **DVD Screensaver** — the original package from the CC0
+  [`eros71-dev/sm64-coop-mods`](https://github.com/eros71-dev/sm64-coop-mods)
+  collection now imports and starts through
   the production ZIP importer. Its 1024×512 PNG-backed DynOS texture resolves
   as `TextureInfo`; the actual before-Mario-update callback was dispatched
   9002 frames and its HUD callback submitted the texture through the native HUD
@@ -87,6 +89,9 @@ reported omission behavior.
   argument shape but draws the current endpoint because this renderer does not
   expose display-list interpolation; it logs that limitation once per mod.
   Host execution is verified; Metal pixels and iPhone behavior are not.
+  The original archive remains local because its description credits third
+  party DVD logo artwork; only the authored synthetic regression fixture is
+  committed.
 - **GTA Mission Passed** — the original CC0 package imports, decodes its
   1024×256 HUD texture, and its two original MP3 resources now resolve from
   their `sound/` folder when requested by basename. Startup progresses to
